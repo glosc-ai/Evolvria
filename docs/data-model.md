@@ -26,9 +26,13 @@ ID 应由系统生成，不依赖名称。
     "calendar_label": "第一纪元 1001 年 春"
   },
   "summary": "世界阶段摘要",
+  "phase_summaries": [],
+  "summary_event_cursor": 0,
   "rules": [],
   "themes": [],
   "content_limits": [],
+  "map_image": {},
+  "map_routes": [],
   "created_at": "2026-06-29T00:00:00Z",
   "schema_version": 1
 }
@@ -77,6 +81,8 @@ ID 应由系统生成，不依赖名称。
   },
   "connected_location_ids": [],
   "controlling_faction_id": null,
+  "known_to_player": true,
+  "visibility": "known_to_player",
   "state_tags": ["safe", "market"],
   "event_ids": []
 }
@@ -111,6 +117,7 @@ ID 应由系统生成，不依赖名称。
   "scope": "character",
   "owner_id": "char_001",
   "text": "艾琳记得主角帮她摆脱了追兵。",
+  "facts": ["主角帮助艾琳", "地点是黑石镇"],
   "event_id": "evt_001",
   "importance": 0.8,
   "confidence": 1.0,
@@ -123,6 +130,15 @@ ID 应由系统生成，不依赖名称。
 ```
 
 ## AIRequestLog
+
+`purpose` 当前支持：
+
+- `world_expand`
+- `player_action`
+- `npc_simulation`
+- `memory_extract`
+- `summary_update`
+- `consistency_check`
 
 ```json
 {
@@ -155,9 +171,12 @@ ID 应由系统生成，不依赖名称。
     "world": "world.json",
     "characters": "characters.json",
     "locations": "locations.json",
+    "factions": "factions.json",
+    "threads": "threads.json",
     "timeline": "timeline.jsonl",
-    "memories": "memories.jsonl"
-  }
+    "memories": "memories.jsonl",
+    "ai_logs": "ai_logs.jsonl"
+  },
+  "maps": ["maps/map_001.png"]
 }
 ```
-

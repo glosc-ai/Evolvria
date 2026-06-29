@@ -6,6 +6,8 @@ var _previous_auto_save_enabled: bool = true
 var _previous_content_preferences: String = ""
 var _previous_log_level: String = "debug"
 var _previous_developer_mode: bool = false
+var _previous_glosc_base_url: String = ""
+var _previous_glosc_token: String = ""
 var _cancelled_ai_result: Dictionary = {}
 
 func _ready() -> void:
@@ -18,12 +20,16 @@ func _run() -> void:
 	_previous_content_preferences = str(SettingsStore.get_value("content_preferences", ""))
 	_previous_log_level = str(SettingsStore.get_value("log_level", "debug"))
 	_previous_developer_mode = bool(SettingsStore.get_value("developer_mode", false))
+	_previous_glosc_base_url = str(SettingsStore.get_value("glosc_base_url", ""))
+	_previous_glosc_token = str(SettingsStore.get_value("glosc_token", ""))
 	SettingsStore.settings["confirm_ai_calls"] = false
 	SettingsStore.settings["show_usage_estimate"] = true
 	SettingsStore.settings["auto_save_enabled"] = true
 	SettingsStore.settings["content_preferences"] = "已禁用：极端血腥、酷刑描写；偏好：严肃冒险、低剧透。"
 	SettingsStore.settings["log_level"] = "debug"
 	SettingsStore.settings["developer_mode"] = false
+	SettingsStore.settings["glosc_base_url"] = ""
+	SettingsStore.settings["glosc_token"] = ""
 	var seed := {
 		"world_name": "烟测世界",
 		"genre": "奇幻",
@@ -480,6 +486,9 @@ func _run() -> void:
 	SettingsStore.settings["content_preferences"] = _previous_content_preferences
 	SettingsStore.settings["log_level"] = _previous_log_level
 	SettingsStore.settings["developer_mode"] = _previous_developer_mode
+	SettingsStore.settings["glosc_base_url"] = _previous_glosc_base_url
+	SettingsStore.settings["glosc_token"] = _previous_glosc_token
+	SettingsStore.save_settings()
 	print("Evolvria smoke test passed: %d events, %d memories" % [WorldStore.timeline.size(), WorldStore.memories.size()])
 	WorldStore.reset_world()
 	get_tree().quit()
@@ -564,6 +573,9 @@ func _assert(condition: bool, message: String) -> void:
 	SettingsStore.settings["content_preferences"] = _previous_content_preferences
 	SettingsStore.settings["log_level"] = _previous_log_level
 	SettingsStore.settings["developer_mode"] = _previous_developer_mode
+	SettingsStore.settings["glosc_base_url"] = _previous_glosc_base_url
+	SettingsStore.settings["glosc_token"] = _previous_glosc_token
+	SettingsStore.save_settings()
 	push_error(message)
 	WorldStore.reset_world()
 	get_tree().quit(1)

@@ -5,6 +5,8 @@ const APP_SCENE := preload("res://scenes/app.tscn")
 var _previous_confirm_ai_calls: bool = true
 var _previous_show_usage_estimate: bool = true
 var _previous_developer_mode: bool = false
+var _previous_glosc_base_url: String = ""
+var _previous_glosc_token: String = ""
 var _app: Control
 
 func _ready() -> void:
@@ -14,9 +16,13 @@ func _run() -> void:
 	_previous_confirm_ai_calls = bool(SettingsStore.get_value("confirm_ai_calls", true))
 	_previous_show_usage_estimate = bool(SettingsStore.get_value("show_usage_estimate", true))
 	_previous_developer_mode = bool(SettingsStore.get_value("developer_mode", false))
+	_previous_glosc_base_url = str(SettingsStore.get_value("glosc_base_url", ""))
+	_previous_glosc_token = str(SettingsStore.get_value("glosc_token", ""))
 	SettingsStore.settings["confirm_ai_calls"] = false
 	SettingsStore.settings["show_usage_estimate"] = true
 	SettingsStore.settings["developer_mode"] = true
+	SettingsStore.settings["glosc_base_url"] = ""
+	SettingsStore.settings["glosc_token"] = ""
 	var seed := {
 		"world_name": "布局烟测",
 		"genre": "奇幻",
@@ -76,8 +82,8 @@ func _run() -> void:
 				_assert(_has_button_text(_app, "新建世界"), "%s main menu should expose new world action" % size_name)
 			elif route == &"onboarding":
 				_assert(_count_labels_containing(_app, "初始化配置") >= 1, "%s onboarding should render first-run setup" % size_name)
-				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") >= 1, "%s onboarding should default to Glosc AI" % size_name)
-				_assert(_has_line_edit_placeholder(_app, "搜索模型"), "%s onboarding should expose model search" % size_name)
+				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") == 0, "%s onboarding should not show default-provider prompt" % size_name)
+				_assert(_has_line_edit_placeholder(_app, "搜索或选择模型"), "%s onboarding should expose combined model search/select" % size_name)
 				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s onboarding should expose Glosc AI key acquisition link" % size_name)
 				_assert(_has_button_text(_app, "保存并开始"), "%s onboarding should expose setup completion" % size_name)
 			elif route == &"new_world":
@@ -129,11 +135,12 @@ func _run() -> void:
 				_assert(_has_check_text(_app, "全屏模式"), "%s settings should expose fullscreen window mode toggle" % size_name)
 				_assert(_count_labels_containing(_app, "上下文面板宽度") >= 1, "%s settings should expose adjustable context panel width" % size_name)
 				_assert(_has_button_text(_app, "应用布局设置"), "%s settings should allow applying layout width settings" % size_name)
-				_assert(_has_check_text(_app, "我理解访问令牌会保存在本机设置文件中"), "%s settings should expose local token risk acknowledgement" % size_name)
+				_assert(_has_check_text(_app, "允许本机保存访问令牌"), "%s settings should expose local token risk acknowledgement" % size_name)
 				_assert(_count_labels_containing(_app, "连接状态") >= 1, "%s settings should show Glosc connection status" % size_name)
 				_assert(_count_labels_containing(_app, "AI 请求前状态") >= 1, "%s settings should describe AI pre-request recovery" % size_name)
 				_assert(_count_labels_containing(_app, "settings.json") >= 1, "%s settings should explain local token storage risk" % size_name)
-				_assert(_has_line_edit_placeholder(_app, "搜索模型"), "%s settings should expose model search" % size_name)
+				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") == 0, "%s settings should not show default-provider prompt" % size_name)
+				_assert(_has_line_edit_placeholder(_app, "搜索或选择模型"), "%s settings should expose combined model search/select" % size_name)
 				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s settings should expose Glosc AI key acquisition link" % size_name)
 				_assert(_has_button_text(_app, "测试连接"), "%s settings should expose Glosc connection test" % size_name)
 				_assert(_has_button_text(_app, "清除 AI 日志"), "%s settings should expose AI log clearing" % size_name)
@@ -228,6 +235,8 @@ func _run() -> void:
 	SettingsStore.settings["confirm_ai_calls"] = _previous_confirm_ai_calls
 	SettingsStore.settings["show_usage_estimate"] = _previous_show_usage_estimate
 	SettingsStore.settings["developer_mode"] = _previous_developer_mode
+	SettingsStore.settings["glosc_base_url"] = _previous_glosc_base_url
+	SettingsStore.settings["glosc_token"] = _previous_glosc_token
 	WorldStore.reset_world()
 	get_tree().quit()
 
@@ -376,6 +385,8 @@ func _assert(condition: bool, message: String) -> void:
 	SettingsStore.settings["confirm_ai_calls"] = _previous_confirm_ai_calls
 	SettingsStore.settings["show_usage_estimate"] = _previous_show_usage_estimate
 	SettingsStore.settings["developer_mode"] = _previous_developer_mode
+	SettingsStore.settings["glosc_base_url"] = _previous_glosc_base_url
+	SettingsStore.settings["glosc_token"] = _previous_glosc_token
 	push_error(message)
 	WorldStore.reset_world()
 	get_tree().quit(1)

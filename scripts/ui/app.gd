@@ -1,30 +1,33 @@
 extends Control
 
-const BG := Color("#171820")
-const BG_ALT := Color("#20222d")
-const SURFACE := Color("#272934")
-const SURFACE_ALT := Color("#303342")
-const FG := Color("#f0eadf")
-const MUTED := Color("#aaa194")
-const BORDER := Color("#464250")
-const ACCENT := Color("#d89a42")
-const ACCENT_DIM := Color("#b8782f")
-const SUCCESS := Color("#58b986")
-const DANGER := Color("#cf5b55")
-const INFO := Color("#6093d8")
-const WARN := Color("#d9ba55")
+const BG := Color("#e8dcc0")          # 主背景 - 旧羊皮纸
+const BG_ALT := Color("#ddcfa8")      # 侧栏/导航 - 略深羊皮纸
+const SURFACE := Color("#f4ecd8")     # 卡片/输入框 - 浅羊皮纸（比底色亮，纸面感）
+const SURFACE_ALT := Color("#ece0c4") # hover - 介于二者之间
+const FG := Color("#2b2118")          # 主文字 - 墨褐
+const MUTED := Color("#6f5d45")       # 次文字/说明 - 淡墨
+const BORDER := Color("#b9a47e")      # 边框 - 浅褐
+const ACCENT := Color("#8a5a2b")      # 主强调 - 铜金/赭
+const ACCENT_DIM := Color("#6f461f")  # pressed - 暗赭
+const SUCCESS := Color("#5a7d3c")     # 成功 - 苔绿
+const DANGER := Color("#a33b2e")      # 危险 - 朱砂
+const INFO := Color("#3f6079")        # 信息 - 靛蓝
+const WARN := Color("#9a6b1f")        # 警告 - 琥珀
 const UI_FONT_PATH := "res://assets/fonts/NotoSansCJKsc-Regular.otf"
+const HEADING_FONT_PATH := "res://assets/fonts/NotoSerifCJKsc-Regular.otf"
 const DEFAULT_GLOSC_PROVIDER := "Glosc AI"
 const DEFAULT_GLOSC_BASE_URL := "https://one.gloscai.com"
 const DEFAULT_GLOSC_MODEL := "deepseek/deepseek-v4-pro"
 const GLOSC_KEYS_URL := "https://one.gloscai.com/keys"
 const TIMELINE_PAGE_SIZE := 30
 const AI_LOG_PAGE_SIZE := 8
+const MODEL_DROPDOWN_LIMIT := 12
 const MAP_LONG_PRESS_MS := 550
 const NEW_WORLD_TOTAL_STEPS := 5
 
 var _root: Control
 var _ui_font: Font
+var _heading_font: Font
 var _busy: bool = false
 var _active_operation: StringName = &""
 var _last_failed_operation: StringName = &""
@@ -79,8 +82,7 @@ var _npc_frequency_input: OptionButton
 var _action_input: LineEdit
 var _settings_base_url: LineEdit
 var _settings_token: LineEdit
-var _settings_model_search: LineEdit
-var _settings_model: OptionButton
+var _settings_model: LineEdit
 var _settings_timeout: SpinBox
 var _settings_quota_units: SpinBox
 var _settings_fullscreen: CheckBox
@@ -97,10 +99,10 @@ var _settings_content_preferences: TextEdit
 var _onboarding_base_url: LineEdit
 var _onboarding_token: LineEdit
 var _onboarding_token_ack: CheckBox
-var _onboarding_model_search: LineEdit
-var _onboarding_model: OptionButton
+var _onboarding_model: LineEdit
 var _model_status_label: Label
 var _model_search_text: String = ""
+var _model_input_programmatic_update: bool = false
 var _map_location_name: LineEdit
 var _map_location_type: LineEdit
 var _map_location_desc: TextEdit
@@ -334,6 +336,15 @@ func _apply_ui_theme() -> void:
 			var load_error := font_file.load_dynamic_font(UI_FONT_PATH)
 			if load_error == OK:
 				_ui_font = font_file
+	if _heading_font == null:
+		var heading_resource := ResourceLoader.load(HEADING_FONT_PATH)
+		if heading_resource is Font:
+			_heading_font = heading_resource
+		else:
+			var heading_file := FontFile.new()
+			var heading_error := heading_file.load_dynamic_font(HEADING_FONT_PATH)
+			if heading_error == OK:
+				_heading_font = heading_file
 	var ui_theme := Theme.new()
 	if _ui_font != null:
 		ui_theme.default_font = _ui_font
@@ -412,11 +423,9 @@ func _render() -> void:
 func _clear_glosc_form_refs() -> void:
 	_settings_base_url = null
 	_settings_token = null
-	_settings_model_search = null
 	_settings_model = null
 	_onboarding_base_url = null
 	_onboarding_token = null
-	_onboarding_model_search = null
 	_onboarding_model = null
 	_model_status_label = null
 
@@ -438,11 +447,11 @@ func _render_main_menu() -> void:
 	mark.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	mark.custom_minimum_size = Vector2(72, 72)
 	mark.add_theme_font_size_override("font_size", 34)
-	mark.add_theme_color_override("font_color", Color.WHITE)
+	mark.add_theme_color_override("font_color", SURFACE)
 	mark.add_theme_stylebox_override("normal", _style(ACCENT, ACCENT, 36))
 	stack.add_child(_centered(mark))
 
-	var title := _label("Evolvria", 56, FG, HORIZONTAL_ALIGNMENT_CENTER)
+	var title := _label("Evolvria", 56, FG, HORIZONTAL_ALIGNMENT_CENTER, true)
 	stack.add_child(title)
 	stack.add_child(_label("AI 驱动的开放世界叙事模拟", 15, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 	stack.add_child(_spacer(18))
@@ -473,24 +482,34 @@ func _render_main_menu() -> void:
 	_root.add_child(footer)
 
 func _render_onboarding() -> void:
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.add_theme_constant_override("margin_left", 20)
-	center.add_theme_constant_override("margin_right", 20)
-	_root.add_child(center)
+	var scroll := _scroll()
+	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(scroll)
+
+	var margin := MarginContainer.new()
+	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.add_theme_constant_override("margin_left", 20)
+	margin.add_theme_constant_override("margin_right", 20)
+	margin.add_theme_constant_override("margin_top", 24)
+	margin.add_theme_constant_override("margin_bottom", 24)
+	scroll.add_child(margin)
+
+	var center := HBoxContainer.new()
+	center.alignment = BoxContainer.ALIGNMENT_CENTER
+	center.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margin.add_child(center)
 
 	var stack := VBoxContainer.new()
 	stack.custom_minimum_size = Vector2(520 if _wide() else 0, 0)
-	stack.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stack.size_flags_horizontal = Control.SIZE_SHRINK_CENTER if _wide() else Control.SIZE_EXPAND_FILL
 	stack.add_theme_constant_override("separation", 14)
 	center.add_child(stack)
 
-	stack.add_child(_label("初始化配置", 38 if _wide() else 30, FG, HORIZONTAL_ALIGNMENT_CENTER))
-	stack.add_child(_label("连接默认渠道商 Glosc AI 后，Evolvria 就能调用远端 AI 生成世界与推进叙事。", 14, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
+	stack.add_child(_label("初始化配置", 38 if _wide() else 30, FG, HORIZONTAL_ALIGNMENT_CENTER, true))
+	stack.add_child(_label("连接 Glosc AI 后，Evolvria 就能调用远端 AI 生成世界与推进叙事。", 14, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 
 	var form := VBoxContainer.new()
 	form.add_theme_constant_override("separation", 12)
-	form.add_child(_status_box("默认渠道商：%s" % DEFAULT_GLOSC_PROVIDER, INFO))
 	_onboarding_base_url = _line_edit(str(SettingsStore.get_value("glosc_base_url", DEFAULT_GLOSC_BASE_URL)))
 	if _onboarding_base_url.text.strip_edges().is_empty():
 		_onboarding_base_url.text = DEFAULT_GLOSC_BASE_URL
@@ -509,12 +528,11 @@ func _render_onboarding() -> void:
 	key_row.add_child(onboarding_key_help)
 	form.add_child(key_row)
 	form.add_child(_label(SettingsStore.local_token_risk_text(), 12, WARN))
-	_onboarding_token_ack = _check("我理解 Key 会保存在本机设置文件中", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
+	_onboarding_token_ack = _check("允许本机保存 Key", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
 	form.add_child(_onboarding_token_ack)
 	var onboarding_model_value := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
-	_onboarding_model_search = _model_search_input()
-	_onboarding_model = _model_options(onboarding_model_value)
-	form.add_child(_field("默认模型", _model_picker(_onboarding_model_search, _onboarding_model)))
+	_onboarding_model = _model_input(onboarding_model_value)
+	form.add_child(_field("默认模型", _model_picker(_onboarding_model)))
 	form.add_child(_model_status())
 
 	var actions: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
@@ -546,7 +564,6 @@ func _render_new_world() -> void:
 
 	stack.add_child(_new_world_step_indicator())
 	stack.add_child(_new_world_step_content())
-	stack.add_child(_new_world_step_footer())
 	if _ai_confirm_waiting:
 		stack.add_child(_ai_confirmation_panel())
 	if _busy:
@@ -555,6 +572,7 @@ func _render_new_world() -> void:
 		stack.add_child(_status_box(AppState.last_error, DANGER))
 		if _last_failed_operation != &"":
 			stack.add_child(_retry_ai_panel())
+	page.add_child(_new_world_step_footer())
 
 func _new_world_step_content() -> Control:
 	match _new_world_step:
@@ -614,9 +632,20 @@ func _new_world_hero_step() -> Control:
 func _new_world_characters_step() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 14)
-	box.add_child(_section_title("3. 关键角色", "每行一个角色：姓名 | 身份/定位 | 关系 | 性格关键词 | 秘密/目标 | 行动倾向 | 简述。可覆盖女主、女二、女三、男二等核心角色。"))
-	_key_characters_input = _text_edit(str(_new_world_draft.get("key_characters", "")), 204)
+	box.add_child(_section_title("3. 关键角色", "每行一个角色：姓名 | 身份/定位 | 关系 | 性格关键词 | 秘密/目标 | 行动倾向 | 简述。也支持中文竖线、分号、制表符或空格分隔。"))
+	_key_characters_input = _text_edit(str(_new_world_draft.get("key_characters", "")), 168)
+	_enable_outer_scroll_for_text_edit(_key_characters_input)
 	box.add_child(_panel(_field("角色列表", _key_characters_input)))
+	var preview := VBoxContainer.new()
+	preview.add_theme_constant_override("separation", 6)
+	_fill_key_character_preview(preview, _key_characters_input.text, 4)
+	box.add_child(_panel(preview, 12, Color(INFO, 0.04), BORDER))
+	_key_characters_input.text_changed.connect(func() -> void:
+		if not is_instance_valid(_key_characters_input):
+			return
+		_new_world_draft["key_characters"] = _key_characters_input.text.strip_edges()
+		_fill_key_character_preview(preview, _key_characters_input.text, 4)
+	)
 	box.add_child(_button("+ 添加角色模板", func() -> void:
 		_append_key_character_template()
 	, false))
@@ -1106,17 +1135,13 @@ func _render_settings() -> void:
 	key_row.add_child(_button("获取 Glosc AI Key", func() -> void:
 		_open_glosc_keys_page()
 	, false, INFO))
-	var settings_key_help := _label("默认渠道商：Glosc AI", 12, MUTED)
-	settings_key_help.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	key_row.add_child(settings_key_help)
 	api.add_child(key_row)
 	api.add_child(_label(SettingsStore.local_token_risk_text(), 12, WARN))
-	_settings_token_ack = _check("我理解访问令牌会保存在本机设置文件中", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
+	_settings_token_ack = _check("允许本机保存访问令牌", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
 	api.add_child(_settings_token_ack)
 	var settings_model_value := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
-	_settings_model_search = _model_search_input()
-	_settings_model = _model_options(settings_model_value)
-	api.add_child(_field("默认模型", _model_picker(_settings_model_search, _settings_model)))
+	_settings_model = _model_input(settings_model_value)
+	api.add_child(_field("默认模型", _model_picker(_settings_model)))
 	api.add_child(_model_status())
 	_settings_timeout = SpinBox.new()
 	_settings_timeout.min_value = 5
@@ -1940,7 +1965,7 @@ func _new_world_step_footer() -> Control:
 		else:
 			_set_new_world_step(_new_world_step + 1)
 	, true)
-	next.disabled = _busy
+	next.disabled = _busy or _ai_confirm_waiting
 	row.add_child(next)
 	return _panel(row, 10, BG_ALT, BORDER)
 
@@ -1966,6 +1991,14 @@ func _new_world_preview_panel(seed: Dictionary, estimate: Dictionary) -> Control
 		if not name.is_empty():
 			character_names.append(name)
 	box.add_child(_preview_row("关键角色", ", ".join(character_names) if not character_names.is_empty() else "暂无关键角色"))
+	var parsed_characters := seed.get("key_characters", []) as Array
+	if not parsed_characters.is_empty():
+		box.add_child(_label("关键角色解析", 13, MUTED))
+		var limit := mini(parsed_characters.size(), 6)
+		for index in range(limit):
+			box.add_child(_label(_key_character_preview_text(parsed_characters[index] as Dictionary, index + 1), 12, FG))
+		if parsed_characters.size() > limit:
+			box.add_child(_label("还有 %d 位关键角色会一并提交。" % (parsed_characters.size() - limit), 12, MUTED))
 	box.add_child(_preview_row("AI 行为", "%s · NPC %s" % [seed.get("narrative_detail", "适中"), seed.get("npc_autonomy_frequency", "中频")]))
 	box.add_child(_preview_row("预计 AI 调用", AIService.estimate_usage_text(estimate)))
 	box.add_child(_label("确认后会按设置触发 Glosc One 或本地回退；取消/失败不会覆盖当前世界状态。", 11, INFO))
@@ -1985,25 +2018,234 @@ func _preview_row(title: String, value: String) -> Control:
 func _parse_key_characters(text: String) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	for line in text.split("\n", false):
-		var parts := line.split("|", false)
-		if parts.is_empty():
+		var character := _parse_key_character_line(line)
+		if str(character.get("name", "")).strip_edges().is_empty():
 			continue
-		var character := {
-			"name": parts[0].strip_edges(),
-			"role": parts[1].strip_edges() if parts.size() > 1 else "关键角色",
-			"relationship": parts[2].strip_edges() if parts.size() > 2 else "未知",
-			"description": "仍有许多未知之处。"
-		}
-		if parts.size() >= 7:
-			character["personality"] = parts[3].strip_edges()
-			character["goal"] = parts[4].strip_edges()
-			character["secret"] = parts[4].strip_edges()
-			character["action_tendency"] = parts[5].strip_edges()
-			character["description"] = parts[6].strip_edges()
-		elif parts.size() > 3:
-			character["description"] = parts[3].strip_edges()
 		result.append(character)
 	return result
+
+func _parse_key_character_line(raw_line: String) -> Dictionary:
+	var line := raw_line.strip_edges()
+	if line.is_empty():
+		return {}
+	var parts := _key_character_parts(line)
+	if parts.is_empty():
+		return {}
+	var name := _key_character_part(parts, 0)
+	if name.is_empty():
+		return {}
+	var role := _key_character_part(parts, 1)
+	var relationship := _key_character_part(parts, 2)
+	var personality := ""
+	var goal := ""
+	var action_tendency := ""
+	var description := ""
+	if parts.size() >= 7:
+		personality = _key_character_part(parts, 3)
+		goal = _key_character_part(parts, 4)
+		action_tendency = _key_character_part(parts, 5)
+		description = _key_character_part(parts, 6)
+	elif parts.size() == 6:
+		personality = _key_character_part(parts, 3)
+		goal = _key_character_part(parts, 4)
+		action_tendency = _key_character_part(parts, 5)
+		description = action_tendency
+	elif parts.size() == 5:
+		personality = _key_character_part(parts, 3)
+		goal = _key_character_part(parts, 4)
+		description = goal
+	elif parts.size() == 4:
+		description = _key_character_part(parts, 3)
+	var character := {
+		"name": name,
+		"role": role if not role.is_empty() else "关键角色",
+		"relationship": relationship if not relationship.is_empty() else "未知",
+		"description": description if not description.is_empty() else "仍有许多未知之处。"
+	}
+	if not personality.is_empty():
+		character["personality"] = personality
+	if not goal.is_empty():
+		character["goal"] = goal
+		character["secret"] = goal
+	if not action_tendency.is_empty():
+		character["action_tendency"] = action_tendency
+	return character
+
+func _key_character_parts(line: String) -> Array[String]:
+	var labeled_parts := _labeled_key_character_parts(line)
+	if not labeled_parts.is_empty():
+		return labeled_parts
+	for delimiter in ["|", "｜", "\t", "；", ";", " / ", " ／ "]:
+		if not line.contains(delimiter):
+			continue
+		var parts := _trimmed_key_character_parts(line.split(delimiter, false))
+		if parts.size() > 1:
+			return parts
+	var word_parts := _whitespace_key_character_parts(line)
+	if word_parts.size() >= 4:
+		return word_parts
+	for delimiter in ["，", ","]:
+		if not line.contains(delimiter):
+			continue
+		var comma_parts := _trimmed_key_character_parts(line.split(delimiter, false))
+		if comma_parts.size() >= 4:
+			return comma_parts
+	return [line]
+
+func _labeled_key_character_parts(line: String) -> Array[String]:
+	var regex := RegEx.new()
+	var compile_error := regex.compile("(身份/定位|行动倾向|性格关键词|秘密/目标|relationship|personality|description|名字|姓名|身份|定位|关系|性格|关键词|秘密|目标|行动|倾向|简述|描述|role|goal|action|name)\\s*[：:=]\\s*")
+	if compile_error != OK:
+		return []
+	var matches := regex.search_all(line)
+	if matches.is_empty():
+		return []
+	var fields: Array[String] = ["", "", "", "", "", "", ""]
+	var prefix := line.substr(0, matches[0].get_start()).strip_edges()
+	if not prefix.is_empty():
+		fields[0] = prefix
+	for index in range(matches.size()):
+		var match := matches[index] as RegExMatch
+		var label := match.get_string(1)
+		var field_index := _key_character_label_index(label)
+		if field_index < 0:
+			continue
+		var value_start := match.get_end()
+		var value_end := line.length() if index == matches.size() - 1 else (matches[index + 1] as RegExMatch).get_start()
+		var value := line.substr(value_start, value_end - value_start).strip_edges()
+		value = value.trim_prefix("|").trim_prefix("｜").trim_prefix(";").trim_prefix("；").trim_prefix(",").trim_prefix("，").strip_edges()
+		if not value.is_empty():
+			fields[field_index] = value
+	while not fields.is_empty() and fields[fields.size() - 1].is_empty():
+		fields.remove_at(fields.size() - 1)
+	var has_meaningful_field := false
+	for field in fields:
+		if not field.strip_edges().is_empty():
+			has_meaningful_field = true
+			break
+	return fields if has_meaningful_field else []
+
+func _key_character_label_index(label: String) -> int:
+	match label.to_lower():
+		"姓名", "名字", "name":
+			return 0
+		"身份/定位", "身份", "定位", "role":
+			return 1
+		"关系", "relationship":
+			return 2
+		"性格关键词", "性格", "关键词", "personality":
+			return 3
+		"秘密/目标", "秘密", "目标", "goal":
+			return 4
+		"行动倾向", "行动", "倾向", "action":
+			return 5
+		"简述", "描述", "description":
+			return 6
+		_:
+			return -1
+
+func _whitespace_key_character_parts(line: String) -> Array[String]:
+	var normalized := line.replace("　", " ").replace("\t", " ")
+	while normalized.contains("  "):
+		normalized = normalized.replace("  ", " ")
+	return _trimmed_key_character_parts(normalized.split(" ", false))
+
+func _trimmed_key_character_parts(raw_parts: PackedStringArray) -> Array[String]:
+	var parts: Array[String] = []
+	for raw_part in raw_parts:
+		var part := str(raw_part).strip_edges()
+		if not part.is_empty():
+			parts.append(part)
+	if parts.size() <= 7:
+		return parts
+	var merged: Array[String] = []
+	for index in range(6):
+		merged.append(parts[index])
+	var tail: Array[String] = []
+	for index in range(6, parts.size()):
+		tail.append(parts[index])
+	merged.append(" ".join(tail))
+	return merged
+
+func _key_character_part(parts: Array[String], index: int) -> String:
+	if index < 0 or index >= parts.size():
+		return ""
+	return parts[index].strip_edges()
+
+func _fill_key_character_preview(preview: VBoxContainer, text: String, max_rows: int = 0) -> void:
+	for child in preview.get_children():
+		child.queue_free()
+	var characters := _parse_key_characters(text)
+	preview.add_child(_label("解析预览：%d 位关键角色" % characters.size(), 13, FG))
+	if characters.is_empty():
+		preview.add_child(_label("尚未解析到角色；至少输入姓名，更多字段会在这里展开。", 12, MUTED))
+		return
+	var limit := characters.size()
+	if max_rows > 0:
+		limit = mini(limit, max_rows)
+	for index in range(limit):
+		preview.add_child(_label(_key_character_preview_text(characters[index], index + 1), 12, FG))
+	if characters.size() > limit:
+		preview.add_child(_label("还有 %d 位会继续使用同样规则解析。" % (characters.size() - limit), 12, MUTED))
+
+func _key_character_preview_text(character: Dictionary, index: int) -> String:
+	var detail_parts: Array[String] = []
+	var personality := str(character.get("personality", "")).strip_edges()
+	var goal := str(character.get("goal", "")).strip_edges()
+	var action := str(character.get("action_tendency", "")).strip_edges()
+	var description := str(character.get("description", "")).strip_edges()
+	if not personality.is_empty():
+		detail_parts.append("性格：%s" % personality)
+	if not goal.is_empty():
+		detail_parts.append("目标/秘密：%s" % goal)
+	if not action.is_empty():
+		detail_parts.append("行动：%s" % action)
+	if not description.is_empty():
+		detail_parts.append("简述：%s" % description)
+	return "%d. %s · 身份：%s · 关系：%s\n%s" % [
+		index,
+		str(character.get("name", "未命名")).strip_edges(),
+		str(character.get("role", "关键角色")).strip_edges(),
+		str(character.get("relationship", "未知")).strip_edges(),
+		"；".join(detail_parts)
+	]
+
+func _enable_outer_scroll_for_text_edit(input: TextEdit) -> void:
+	input.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventKey:
+			var key_event := event as InputEventKey
+			if not key_event.pressed or key_event.echo:
+				return
+			if key_event.keycode == KEY_PAGEDOWN:
+				_scroll_enclosing_container(input, 1.0)
+				input.accept_event()
+			elif key_event.keycode == KEY_PAGEUP:
+				_scroll_enclosing_container(input, -1.0)
+				input.accept_event()
+		elif event is InputEventMouseButton:
+			var mouse_event := event as InputEventMouseButton
+			if not mouse_event.pressed:
+				return
+			if mouse_event.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				_scroll_enclosing_container(input, 0.35)
+				input.accept_event()
+			elif mouse_event.button_index == MOUSE_BUTTON_WHEEL_UP:
+				_scroll_enclosing_container(input, -0.35)
+				input.accept_event()
+	)
+
+func _scroll_enclosing_container(control: Control, page_delta: float) -> void:
+	var parent := control.get_parent()
+	while parent != null:
+		if parent is ScrollContainer:
+			var scroll := parent as ScrollContainer
+			var bar := scroll.get_v_scroll_bar()
+			if bar == null:
+				return
+			var amount := maxf(160.0, scroll.size.y * absf(page_delta))
+			bar.value = clampf(bar.value + amount * signf(page_delta), bar.min_value, bar.max_value)
+			return
+		parent = parent.get_parent()
 
 func _append_key_character_template() -> void:
 	if _key_characters_input == null:
@@ -2042,7 +2284,7 @@ func _top_bar(title: String, back_text: String, callback: Callable) -> Control:
 	bar.custom_minimum_size = Vector2(0, 58)
 	bar.add_theme_constant_override("separation", 12)
 	bar.add_theme_stylebox_override("panel", _style(BG, BORDER, 0))
-	var title_label := _label(title, 22, FG)
+	var title_label := _label(title, 22, FG, HORIZONTAL_ALIGNMENT_LEFT, true)
 	title_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	bar.add_child(title_label)
 	bar.add_child(_button(back_text, callback, false))
@@ -2053,7 +2295,7 @@ func _screen_header(title: String, subtitle: String) -> Control:
 	box.add_theme_constant_override("separation", 8)
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	left.add_child(_label(title, 22, FG))
+	left.add_child(_label(title, 22, FG, HORIZONTAL_ALIGNMENT_LEFT, true))
 	left.add_child(_label(subtitle, 13, MUTED))
 	box.add_child(left)
 	var shortcuts := HFlowContainer.new()
@@ -2074,7 +2316,7 @@ func _nav_panel() -> Control:
 	nav.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	nav.add_theme_constant_override("separation", 8)
 	nav.add_theme_stylebox_override("panel", _style(BG_ALT, BORDER, 0))
-	nav.add_child(_label("Evolvria", 24, FG, HORIZONTAL_ALIGNMENT_CENTER))
+	nav.add_child(_label("Evolvria", 24, FG, HORIZONTAL_ALIGNMENT_CENTER, true))
 	nav.add_child(_label(str(WorldStore.world.get("name", "")), 12, MUTED, HORIZONTAL_ALIGNMENT_CENTER))
 	nav.add_child(_separator(""))
 	var routes := [
@@ -2148,7 +2390,7 @@ func _nearby_location_line(location: Dictionary) -> Control:
 		WorldStore.faction_name(str(location.get("controlling_faction_id", ""))),
 		" · 标签 %s" % ", ".join(tags) if not tags.is_empty() else ""
 	], 11, MUTED))
-	return _panel(row, 8, Color(INFO, 0.05), BORDER)
+	return _panel(row, 8, Color(INFO, 0.08), BORDER)
 
 func _bottom_nav() -> Control:
 	var row := HBoxContainer.new()
@@ -2363,7 +2605,7 @@ func _map_marker(location: Dictionary) -> Control:
 	var marker_border := ACCENT if selected else (BORDER if known else WARN)
 	marker.add_theme_stylebox_override("panel", _style(marker_fill, marker_border, 8, 8))
 	var label_text := str(location.get("name", "")) if known else "未知地点"
-	var label := _label(label_text, 12, Color.WHITE if selected else (FG if known else WARN), HORIZONTAL_ALIGNMENT_CENTER)
+	var label := _label(label_text, 12, SURFACE if selected else (FG if known else WARN), HORIZONTAL_ALIGNMENT_CENTER)
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	label.custom_minimum_size = marker.custom_minimum_size - Vector2(16, 0)
 	marker.add_child(label)
@@ -2500,7 +2742,7 @@ func _add_map_image(parent: Control) -> void:
 	texture_rect.texture = texture
 	texture_rect.stretch_mode = TextureRect.STRETCH_SCALE
 	texture_rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	texture_rect.modulate = Color(1, 1, 1, 0.78)
+	texture_rect.modulate = Color(0.96, 0.92, 0.84, 0.88)
 	texture_rect.position = Vector2.ZERO
 	texture_rect.size = _map_canvas_size()
 	parent.add_child(texture_rect)
@@ -3501,7 +3743,7 @@ func _test_glosc_connection() -> void:
 	if bool(_glosc_status.get("ok", false)):
 		_glosc_model_ids = _string_array(_glosc_status.get("model_ids", []))
 		var preferred_model := _preferred_model(str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)))
-		_refresh_model_options(_settings_model, preferred_model)
+		_set_model_input_value(_settings_model, preferred_model)
 		SettingsStore.settings["model"] = preferred_model
 		_glosc_models_message = "模型列表：已获取 %d 个；当前 %s" % [_glosc_model_ids.size(), preferred_model]
 		_glosc_models_error = ""
@@ -3571,7 +3813,7 @@ func _location_name(location_id: String) -> String:
 func _section_title(title: String, subtitle: String = "") -> Control:
 	var stack := VBoxContainer.new()
 	stack.add_theme_constant_override("separation", 4)
-	stack.add_child(_label(title, 16, FG))
+	stack.add_child(_label(title, 16, FG, HORIZONTAL_ALIGNMENT_LEFT, true))
 	if not subtitle.is_empty():
 		stack.add_child(_label(subtitle, 13, MUTED))
 	return stack
@@ -3631,7 +3873,7 @@ func _event_outcome_color(outcome: String) -> Color:
 
 func _status_box(text: String, color: Color = ACCENT) -> Control:
 	var label := _label(text, 14, color)
-	return _panel(label, 12, Color(color, 0.12), color)
+	return _panel(label, 12, Color(color, 0.16), color)
 
 func _tag_row(tags: Array, active: String) -> Control:
 	var row := HFlowContainer.new()
@@ -3640,43 +3882,133 @@ func _tag_row(tags: Array, active: String) -> Control:
 	for tag in tags:
 		var selected := active == str(tag)
 		var label := _label(str(tag), 12, ACCENT if selected else MUTED, HORIZONTAL_ALIGNMENT_CENTER)
-		label.add_theme_stylebox_override("normal", _style(Color(ACCENT, 0.14) if selected else Color.TRANSPARENT, ACCENT if selected else BORDER, 999))
+		label.add_theme_stylebox_override("normal", _style(Color(ACCENT, 0.2) if selected else Color.TRANSPARENT, ACCENT if selected else BORDER, 999))
 		label.custom_minimum_size = Vector2(72, 24)
 		row.add_child(label)
 	return row
 
-func _model_picker(search_input: LineEdit, options: OptionButton) -> Control:
-	var box := VBoxContainer.new()
-	box.add_theme_constant_override("separation", 8)
-	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	box.add_child(search_input)
-	box.add_child(options)
-	return box
-
-func _model_search_input() -> LineEdit:
+func _model_input(current_model: String) -> LineEdit:
 	var input := _line_edit("输入模型名称")
-	input.placeholder_text = "搜索模型"
-	input.text = _model_search_text
-	input.clear_button_enabled = true
-	input.text_changed.connect(func(new_text: String) -> void:
-		_model_search_text = new_text
-		var current_model := _current_model_value()
-		_refresh_model_options(_settings_model, current_model)
-		_refresh_model_options(_onboarding_model, current_model)
+	var model_value := current_model.strip_edges()
+	if model_value.is_empty():
+		model_value = DEFAULT_GLOSC_MODEL
+	input.text = model_value
+	input.placeholder_text = "搜索或选择模型"
+	input.custom_minimum_size = Vector2(0, 44)
+	input.clear_button_enabled = false
+	var popup := PopupMenu.new()
+	popup.hide_on_item_selection = true
+	popup.index_pressed.connect(func(index: int) -> void:
+		if index < 0 or index >= popup.get_item_count():
+			return
+		_set_model_input_value(input, popup.get_item_text(index))
+		_model_search_text = ""
 		_set_model_status()
 	)
+	input.add_child(popup)
+	input.focus_entered.connect(func() -> void:
+		_model_search_text = ""
+		_refresh_model_dropdown(input, "")
+		_show_model_dropdown(input)
+		_set_model_status()
+	)
+	input.gui_input.connect(func(event: InputEvent) -> void:
+		if event is InputEventMouseButton:
+			var mouse_event := event as InputEventMouseButton
+			if mouse_event.pressed and mouse_event.button_index == MOUSE_BUTTON_LEFT:
+				_model_search_text = ""
+				_refresh_model_dropdown(input, "")
+				_show_model_dropdown(input)
+				_set_model_status()
+	)
+	input.text_changed.connect(func(new_text: String) -> void:
+		if _model_input_programmatic_update:
+			return
+		_model_search_text = new_text
+		_refresh_model_dropdown(input, new_text)
+		_show_model_dropdown(input)
+		_set_model_status()
+	)
+	input.text_submitted.connect(func(_new_text: String) -> void:
+		_commit_model_input(input)
+		_hide_model_dropdown(input)
+	)
+	_refresh_model_dropdown(input, "")
 	return input
 
-func _model_options(current_model: String) -> OptionButton:
-	var options := _options(_model_option_values(current_model))
-	_select_option_value(options, current_model)
-	if options.selected < 0 and options.item_count > 0:
-		options.select(0)
-	return options
+func _model_picker(input: LineEdit) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(input)
+	var dropdown := _button("⌄", func() -> void:
+		_model_search_text = ""
+		_refresh_model_dropdown(input, "")
+		_show_model_dropdown(input)
+		input.grab_focus()
+		_set_model_status()
+	, false, Color.TRANSPARENT, true)
+	dropdown.tooltip_text = "选择模型"
+	dropdown.custom_minimum_size = Vector2(44, 44)
+	dropdown.size_flags_horizontal = Control.SIZE_SHRINK_END
+	row.add_child(dropdown)
+	return row
 
-func _model_option_values(current_model: String) -> Array[String]:
+func _model_dropdown(input: LineEdit) -> PopupMenu:
+	if input == null or not is_instance_valid(input):
+		return null
+	for child in input.get_children():
+		if child is PopupMenu:
+			return child as PopupMenu
+	return null
+
+func _refresh_model_dropdown(input: LineEdit, filter_text: String) -> void:
+	var popup := _model_dropdown(input)
+	if popup == null:
+		return
+	popup.clear()
+	var added := 0
+	for value in _model_option_values(_selected_model_value(input), filter_text):
+		popup.add_item(value)
+		added += 1
+		if added >= MODEL_DROPDOWN_LIMIT:
+			return
+
+func _show_model_dropdown(input: LineEdit) -> void:
+	var popup := _model_dropdown(input)
+	if popup == null or not input.is_visible_in_tree() or popup.get_item_count() == 0:
+		return
+	var popup_width := maxi(int(input.size.x), 260)
+	popup.position = Vector2i(roundi(input.global_position.x), roundi(input.global_position.y + input.size.y))
+	popup.size = Vector2i(popup_width, 0)
+	popup.popup()
+
+func _hide_model_dropdown(input: LineEdit) -> void:
+	var popup := _model_dropdown(input)
+	if popup != null:
+		popup.hide()
+
+func _commit_model_input(input: LineEdit) -> void:
+	_set_model_input_value(input, _selected_model_value(input))
+	_model_search_text = ""
+	_set_model_status()
+
+func _set_model_input_value(input: LineEdit, model_value: String) -> void:
+	if input == null or not is_instance_valid(input):
+		return
+	var normalized := model_value.strip_edges()
+	if normalized.is_empty():
+		normalized = DEFAULT_GLOSC_MODEL
+	_model_input_programmatic_update = true
+	input.text = normalized
+	input.caret_column = normalized.length()
+	_model_input_programmatic_update = false
+	_refresh_model_dropdown(input, "")
+
+func _model_option_values(current_model: String, filter_text: String = "") -> Array[String]:
 	var values: Array[String] = []
-	var query := _model_search_query()
+	var query := filter_text.strip_edges().to_lower()
 	if query.is_empty():
 		_append_unique_model(values, DEFAULT_GLOSC_MODEL)
 		_append_unique_model(values, current_model)
@@ -3790,8 +4122,8 @@ func _fetch_glosc_models_from_current_form(force: bool = false) -> void:
 	if fetch_key != _glosc_models_last_fetch_key:
 		_glosc_model_ids.clear()
 		var current_model := _current_model_value()
-		_refresh_model_options(_settings_model, current_model)
-		_refresh_model_options(_onboarding_model, current_model)
+		_set_model_input_value(_settings_model, current_model)
+		_set_model_input_value(_onboarding_model, current_model)
 	_glosc_models_last_fetch_key = fetch_key
 	_glosc_models_fetch_sequence += 1
 	var fetch_id := _glosc_models_fetch_sequence
@@ -3807,8 +4139,8 @@ func _fetch_glosc_models_from_current_form(force: bool = false) -> void:
 	if bool(status.get("ok", false)):
 		_glosc_model_ids = _string_array(status.get("model_ids", []))
 		var preferred_model := _preferred_model(selected_model)
-		_refresh_model_options(_settings_model, preferred_model)
-		_refresh_model_options(_onboarding_model, preferred_model)
+		_set_model_input_value(_settings_model, preferred_model)
+		_set_model_input_value(_onboarding_model, preferred_model)
 		_glosc_models_message = "模型列表：已获取 %d 个；当前 %s" % [_glosc_model_ids.size(), preferred_model]
 		_glosc_models_error = ""
 	else:
@@ -3840,13 +4172,11 @@ func _current_model_value() -> String:
 		return _selected_model_value(_onboarding_model)
 	return str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)).strip_edges()
 
-func _selected_model_value(options: OptionButton) -> String:
-	if options == null or not is_instance_valid(options) or options.item_count == 0:
+func _selected_model_value(input: LineEdit) -> String:
+	if input == null or not is_instance_valid(input):
 		return DEFAULT_GLOSC_MODEL
-	var selected_index := options.selected
-	if selected_index < 0 or selected_index >= options.item_count:
-		selected_index = 0
-	return options.get_item_text(selected_index).strip_edges()
+	var model_value := input.text.strip_edges()
+	return DEFAULT_GLOSC_MODEL if model_value.is_empty() else model_value
 
 func _preferred_model(current_model: String) -> String:
 	var trimmed := current_model.strip_edges()
@@ -3857,16 +4187,6 @@ func _preferred_model(current_model: String) -> String:
 	if DEFAULT_GLOSC_MODEL in _glosc_model_ids:
 		return DEFAULT_GLOSC_MODEL
 	return trimmed
-
-func _refresh_model_options(options: OptionButton, preferred_model: String) -> void:
-	if options == null or not is_instance_valid(options):
-		return
-	options.clear()
-	for value in _model_option_values(preferred_model):
-		options.add_item(value)
-	_select_option_value(options, preferred_model)
-	if options.selected < 0 and options.item_count > 0:
-		options.select(0)
 
 func _string_array(value: Variant) -> Array[String]:
 	var result: Array[String] = []
@@ -3946,6 +4266,10 @@ func _check(text: String, pressed: bool) -> CheckBox:
 	check.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	check.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	check.add_theme_color_override("font_color", FG)
+	check.add_theme_color_override("font_focus_color", FG)
+	check.add_theme_color_override("font_hover_color", FG)
+	check.add_theme_color_override("font_hover_pressed_color", FG)
+	check.add_theme_color_override("font_pressed_color", FG)
 	return check
 
 func _button(text: String, callback: Callable, primary: bool = false, override_color: Color = Color.TRANSPARENT, compact: bool = false) -> Button:
@@ -3956,21 +4280,28 @@ func _button(text: String, callback: Callable, primary: bool = false, override_c
 	btn.pressed.connect(callback)
 	var fill := ACCENT if primary else SURFACE
 	var border := ACCENT if primary else BORDER
-	var font := Color.WHITE if primary else FG
+	var font := SURFACE if primary else FG
 	if override_color != Color.TRANSPARENT:
 		fill = Color.TRANSPARENT
 		border = override_color
 		font = override_color
+	var hover_font := SURFACE if primary else FG
+	if override_color != Color.TRANSPARENT:
+		hover_font = override_color
 	var padding := 7 if compact else 14
 	btn.add_theme_stylebox_override("normal", _style(fill, border, 8, padding))
 	btn.add_theme_stylebox_override("hover", _style(ACCENT_DIM if primary else SURFACE_ALT, ACCENT if primary else ACCENT, 8, padding))
 	btn.add_theme_stylebox_override("pressed", _style(ACCENT_DIM, ACCENT_DIM, 8, padding))
 	btn.add_theme_stylebox_override("disabled", _style(Color(BORDER, 0.5), BORDER, 8, padding))
 	btn.add_theme_color_override("font_color", font)
+	btn.add_theme_color_override("font_hover_color", hover_font)
+	btn.add_theme_color_override("font_pressed_color", SURFACE)
+	btn.add_theme_color_override("font_focus_color", font)
+	btn.add_theme_color_override("font_hover_pressed_color", SURFACE)
 	btn.add_theme_color_override("font_disabled_color", MUTED)
 	return btn
 
-func _label(text: String, font_size: int, color: Color, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT) -> Label:
+func _label(text: String, font_size: int, color: Color, align: HorizontalAlignment = HORIZONTAL_ALIGNMENT_LEFT, heading: bool = false) -> Label:
 	var label := Label.new()
 	label.text = text
 	label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -3978,6 +4309,8 @@ func _label(text: String, font_size: int, color: Color, align: HorizontalAlignme
 	label.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	label.add_theme_font_size_override("font_size", _scaled_font(font_size))
 	label.add_theme_color_override("font_color", color)
+	if heading and _heading_font != null:
+		label.add_theme_font_override("font", _heading_font)
 	return label
 
 func _scaled_font(size: int) -> int:
@@ -4005,7 +4338,11 @@ func _content_stack(width: int) -> VBoxContainer:
 func _panel(child: Control, padding: int = 18, fill: Color = SURFACE, border: Color = BORDER) -> PanelContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	panel.add_theme_stylebox_override("panel", _style(fill, border, 10, padding))
+	var style := _style(fill, border, 10, padding)
+	style.shadow_color = Color(0.17, 0.13, 0.08, 0.10)
+	style.shadow_size = 3
+	style.shadow_offset = Vector2(0, 2)
+	panel.add_theme_stylebox_override("panel", style)
 	panel.add_child(child)
 	return panel
 

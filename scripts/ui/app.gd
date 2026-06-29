@@ -16,7 +16,7 @@ const WARN := Color("#d9ba55")
 const UI_FONT_PATH := "res://assets/fonts/NotoSansCJKsc-Regular.otf"
 const DEFAULT_GLOSC_PROVIDER := "Glosc AI"
 const DEFAULT_GLOSC_BASE_URL := "https://one.gloscai.com"
-const DEFAULT_GLOSC_MODEL := "alibaba/qwen3.6-flash"
+const DEFAULT_GLOSC_MODEL := "deepseek/deepseek-v4-pro"
 const GLOSC_KEYS_URL := "https://one.gloscai.com/keys"
 const TIMELINE_PAGE_SIZE := 30
 const AI_LOG_PAGE_SIZE := 8
@@ -39,6 +39,13 @@ var _ai_confirm_summary: String = ""
 var _ai_confirm_estimate: Dictionary = {}
 var _glosc_status: Dictionary = {}
 var _glosc_testing: bool = false
+var _glosc_model_ids: Array[String] = []
+var _glosc_models_fetching: bool = false
+var _glosc_models_message: String = ""
+var _glosc_models_error: String = ""
+var _glosc_models_last_fetch_key: String = ""
+var _glosc_models_fetch_sequence: int = 0
+var _glosc_models_debounce_sequence: int = 0
 var _clear_ai_logs_confirming: bool = false
 var _delete_world_confirming: bool = false
 var _reset_settings_confirming: bool = false
@@ -72,7 +79,8 @@ var _npc_frequency_input: OptionButton
 var _action_input: LineEdit
 var _settings_base_url: LineEdit
 var _settings_token: LineEdit
-var _settings_model: LineEdit
+var _settings_model_search: LineEdit
+var _settings_model: OptionButton
 var _settings_timeout: SpinBox
 var _settings_quota_units: SpinBox
 var _settings_fullscreen: CheckBox
@@ -89,7 +97,10 @@ var _settings_content_preferences: TextEdit
 var _onboarding_base_url: LineEdit
 var _onboarding_token: LineEdit
 var _onboarding_token_ack: CheckBox
-var _onboarding_model: LineEdit
+var _onboarding_model_search: LineEdit
+var _onboarding_model: OptionButton
+var _model_status_label: Label
+var _model_search_text: String = ""
 var _map_location_name: LineEdit
 var _map_location_type: LineEdit
 var _map_location_desc: TextEdit
@@ -359,6 +370,7 @@ func _handle_cancel_or_back() -> void:
 
 func _render() -> void:
 	_apply_ui_theme()
+	_clear_glosc_form_refs()
 	for child in get_children():
 		child.queue_free()
 
@@ -396,6 +408,17 @@ func _render() -> void:
 			_render_settings()
 		_:
 			_render_main_menu()
+
+func _clear_glosc_form_refs() -> void:
+	_settings_base_url = null
+	_settings_token = null
+	_settings_model_search = null
+	_settings_model = null
+	_onboarding_base_url = null
+	_onboarding_token = null
+	_onboarding_model_search = null
+	_onboarding_model = null
+	_model_status_label = null
 
 func _render_main_menu() -> void:
 	var center := CenterContainer.new()
@@ -474,6 +497,7 @@ func _render_onboarding() -> void:
 	form.add_child(_field("服务地址", _onboarding_base_url))
 	_onboarding_token = _line_edit("输入 Glosc AI Key")
 	_onboarding_token.secret = true
+	_wire_model_fetch_inputs(_onboarding_base_url, _onboarding_token)
 	form.add_child(_field("访问 Key", _onboarding_token))
 	var key_row: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
 	key_row.add_theme_constant_override("separation", 8)
@@ -487,8 +511,11 @@ func _render_onboarding() -> void:
 	form.add_child(_label(SettingsStore.local_token_risk_text(), 12, WARN))
 	_onboarding_token_ack = _check("我理解 Key 会保存在本机设置文件中", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
 	form.add_child(_onboarding_token_ack)
-	_onboarding_model = _line_edit(str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)))
-	form.add_child(_field("默认模型", _onboarding_model))
+	var onboarding_model_value := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
+	_onboarding_model_search = _model_search_input()
+	_onboarding_model = _model_options(onboarding_model_value)
+	form.add_child(_field("默认模型", _model_picker(_onboarding_model_search, _onboarding_model)))
+	form.add_child(_model_status())
 
 	var actions: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
 	actions.add_theme_constant_override("separation", 8)
@@ -1072,6 +1099,7 @@ func _render_settings() -> void:
 	var stored_token := str(SettingsStore.get_value("glosc_token", ""))
 	_settings_token = _line_edit(stored_token if not stored_token.is_empty() else "输入 Glosc AI Key")
 	_settings_token.secret = true
+	_wire_model_fetch_inputs(_settings_base_url, _settings_token)
 	api.add_child(_field("访问令牌", _settings_token))
 	var key_row: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
 	key_row.add_theme_constant_override("separation", 8)
@@ -1085,8 +1113,11 @@ func _render_settings() -> void:
 	api.add_child(_label(SettingsStore.local_token_risk_text(), 12, WARN))
 	_settings_token_ack = _check("我理解访问令牌会保存在本机设置文件中", bool(SettingsStore.get_value("local_token_risk_acknowledged", false)))
 	api.add_child(_settings_token_ack)
-	_settings_model = _line_edit(str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)))
-	api.add_child(_field("默认模型", _settings_model))
+	var settings_model_value := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
+	_settings_model_search = _model_search_input()
+	_settings_model = _model_options(settings_model_value)
+	api.add_child(_field("默认模型", _model_picker(_settings_model_search, _settings_model)))
+	api.add_child(_model_status())
 	_settings_timeout = SpinBox.new()
 	_settings_timeout.min_value = 5
 	_settings_timeout.max_value = 180
@@ -1593,7 +1624,7 @@ func _save_settings() -> void:
 	SettingsStore.settings["glosc_provider"] = DEFAULT_GLOSC_PROVIDER
 	SettingsStore.settings["glosc_base_url"] = _settings_base_url.text.strip_edges()
 	SettingsStore.settings["glosc_token"] = token
-	SettingsStore.settings["model"] = _settings_model.text.strip_edges()
+	SettingsStore.settings["model"] = _selected_model_value(_settings_model)
 	SettingsStore.settings["timeout_seconds"] = int(_settings_timeout.value)
 	if _settings_quota_units != null:
 		SettingsStore.settings["glosc_quota_units"] = int(_settings_quota_units.value)
@@ -1640,8 +1671,9 @@ func _complete_onboarding(skip_remote: bool) -> void:
 	SettingsStore.settings["glosc_base_url"] = base_url
 	if not skip_remote:
 		SettingsStore.settings["glosc_token"] = token
-	if _onboarding_model != null and not _onboarding_model.text.strip_edges().is_empty():
-		SettingsStore.settings["model"] = _onboarding_model.text.strip_edges()
+	var selected_model := _selected_model_value(_onboarding_model)
+	if not selected_model.is_empty():
+		SettingsStore.settings["model"] = selected_model
 	SettingsStore.settings["local_token_risk_acknowledged"] = token_acknowledged
 	SettingsStore.settings["onboarding_completed"] = true
 	SettingsStore.save_settings()
@@ -3459,7 +3491,7 @@ func _test_glosc_connection() -> void:
 	if _settings_token != null:
 		SettingsStore.settings["glosc_token"] = _settings_token.text.strip_edges()
 	if _settings_model != null:
-		SettingsStore.settings["model"] = _settings_model.text.strip_edges()
+		SettingsStore.settings["model"] = _selected_model_value(_settings_model)
 	if _settings_timeout != null:
 		SettingsStore.settings["timeout_seconds"] = int(_settings_timeout.value)
 	_glosc_testing = true
@@ -3467,6 +3499,12 @@ func _test_glosc_connection() -> void:
 	_glosc_status = await AIService.check_glosc_connection()
 	_glosc_testing = false
 	if bool(_glosc_status.get("ok", false)):
+		_glosc_model_ids = _string_array(_glosc_status.get("model_ids", []))
+		var preferred_model := _preferred_model(str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)))
+		_refresh_model_options(_settings_model, preferred_model)
+		SettingsStore.settings["model"] = preferred_model
+		_glosc_models_message = "模型列表：已获取 %d 个；当前 %s" % [_glosc_model_ids.size(), preferred_model]
+		_glosc_models_error = ""
 		AppState.set_notice(str(_glosc_status.get("message", "Glosc One 连接测试通过。")))
 	else:
 		AppState.set_error(str(_glosc_status.get("error", "Glosc One 连接测试失败。")))
@@ -3606,6 +3644,237 @@ func _tag_row(tags: Array, active: String) -> Control:
 		label.custom_minimum_size = Vector2(72, 24)
 		row.add_child(label)
 	return row
+
+func _model_picker(search_input: LineEdit, options: OptionButton) -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.add_child(search_input)
+	box.add_child(options)
+	return box
+
+func _model_search_input() -> LineEdit:
+	var input := _line_edit("输入模型名称")
+	input.placeholder_text = "搜索模型"
+	input.text = _model_search_text
+	input.clear_button_enabled = true
+	input.text_changed.connect(func(new_text: String) -> void:
+		_model_search_text = new_text
+		var current_model := _current_model_value()
+		_refresh_model_options(_settings_model, current_model)
+		_refresh_model_options(_onboarding_model, current_model)
+		_set_model_status()
+	)
+	return input
+
+func _model_options(current_model: String) -> OptionButton:
+	var options := _options(_model_option_values(current_model))
+	_select_option_value(options, current_model)
+	if options.selected < 0 and options.item_count > 0:
+		options.select(0)
+	return options
+
+func _model_option_values(current_model: String) -> Array[String]:
+	var values: Array[String] = []
+	var query := _model_search_query()
+	if query.is_empty():
+		_append_unique_model(values, DEFAULT_GLOSC_MODEL)
+		_append_unique_model(values, current_model)
+		for model_id in _glosc_model_ids:
+			_append_unique_model(values, model_id)
+	else:
+		_append_unique_model(values, current_model)
+		if _model_matches_query(DEFAULT_GLOSC_MODEL, query):
+			_append_unique_model(values, DEFAULT_GLOSC_MODEL)
+		for model_id in _glosc_model_ids:
+			if _model_matches_query(model_id, query):
+				_append_unique_model(values, model_id)
+	if values.is_empty():
+		values.append(DEFAULT_GLOSC_MODEL)
+	return values
+
+func _append_unique_model(values: Array[String], model_id: String) -> void:
+	var normalized := model_id.strip_edges()
+	if normalized.is_empty() or normalized in values:
+		return
+	values.append(normalized)
+
+func _model_search_query() -> String:
+	return _model_search_text.strip_edges().to_lower()
+
+func _model_matches_query(model_id: String, query: String) -> bool:
+	return query.is_empty() or model_id.to_lower().contains(query)
+
+func _model_search_match_count() -> int:
+	var query := _model_search_query()
+	if query.is_empty():
+		return _glosc_model_ids.size()
+	var count := 0
+	for model_id in _glosc_model_ids:
+		if _model_matches_query(model_id, query):
+			count += 1
+	return count
+
+func _model_status() -> Label:
+	_model_status_label = _label(_model_status_text(), 12, _model_status_color())
+	_model_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if not _current_glosc_token().is_empty() and _glosc_model_ids.is_empty() and not _glosc_models_fetching:
+		call_deferred("_fetch_glosc_models_from_current_form", false)
+	return _model_status_label
+
+func _model_status_text() -> String:
+	if _glosc_models_fetching:
+		return "模型列表：正在获取..."
+	if not _glosc_models_error.is_empty():
+		return "模型列表：%s" % _glosc_models_error
+	if not _model_search_query().is_empty():
+		if _glosc_model_ids.is_empty():
+			return "模型搜索：等待模型列表获取完成"
+		return "模型搜索：匹配 %d / %d" % [_model_search_match_count(), _glosc_model_ids.size()]
+	if not _glosc_models_message.is_empty():
+		return _glosc_models_message
+	if not _glosc_model_ids.is_empty():
+		return "模型列表：已获取 %d 个；默认 %s" % [_glosc_model_ids.size(), DEFAULT_GLOSC_MODEL]
+	return "模型列表：待获取；默认 %s" % DEFAULT_GLOSC_MODEL
+
+func _model_status_color() -> Color:
+	if _glosc_models_fetching:
+		return ACCENT
+	if not _glosc_models_error.is_empty():
+		return WARN
+	if not _glosc_model_ids.is_empty():
+		return INFO
+	return MUTED
+
+func _set_model_status() -> void:
+	if _model_status_label != null and is_instance_valid(_model_status_label):
+		_model_status_label.text = _model_status_text()
+		_model_status_label.add_theme_color_override("font_color", _model_status_color())
+
+func _wire_model_fetch_inputs(base_url_input: LineEdit, token_input: LineEdit) -> void:
+	token_input.text_changed.connect(func(_new_text: String) -> void:
+		_schedule_glosc_models_fetch()
+	)
+	token_input.text_submitted.connect(func(_new_text: String) -> void:
+		_fetch_glosc_models_from_current_form(true)
+	)
+	token_input.focus_exited.connect(func() -> void:
+		_fetch_glosc_models_from_current_form(true)
+	)
+	base_url_input.text_changed.connect(func(_new_text: String) -> void:
+		_schedule_glosc_models_fetch()
+	)
+	base_url_input.text_submitted.connect(func(_new_text: String) -> void:
+		_fetch_glosc_models_from_current_form(true)
+	)
+	base_url_input.focus_exited.connect(func() -> void:
+		_fetch_glosc_models_from_current_form(true)
+	)
+
+func _schedule_glosc_models_fetch() -> void:
+	_glosc_models_debounce_sequence += 1
+	var debounce_id := _glosc_models_debounce_sequence
+	await get_tree().create_timer(0.75).timeout
+	if debounce_id != _glosc_models_debounce_sequence:
+		return
+	_fetch_glosc_models_from_current_form(false)
+
+func _fetch_glosc_models_from_current_form(force: bool = false) -> void:
+	var base_url := _current_glosc_base_url()
+	var token := _current_glosc_token()
+	if token.is_empty():
+		return
+	var fetch_key := "%s\n%s" % [base_url, token]
+	if not force and fetch_key == _glosc_models_last_fetch_key and (_glosc_models_fetching or not _glosc_model_ids.is_empty()):
+		return
+	if fetch_key != _glosc_models_last_fetch_key:
+		_glosc_model_ids.clear()
+		var current_model := _current_model_value()
+		_refresh_model_options(_settings_model, current_model)
+		_refresh_model_options(_onboarding_model, current_model)
+	_glosc_models_last_fetch_key = fetch_key
+	_glosc_models_fetch_sequence += 1
+	var fetch_id := _glosc_models_fetch_sequence
+	_glosc_models_fetching = true
+	_glosc_models_error = ""
+	_glosc_models_message = ""
+	_set_model_status()
+	var selected_model := _current_model_value()
+	var status := await AIService.fetch_glosc_models(base_url, token, selected_model)
+	if fetch_id != _glosc_models_fetch_sequence:
+		return
+	_glosc_models_fetching = false
+	if bool(status.get("ok", false)):
+		_glosc_model_ids = _string_array(status.get("model_ids", []))
+		var preferred_model := _preferred_model(selected_model)
+		_refresh_model_options(_settings_model, preferred_model)
+		_refresh_model_options(_onboarding_model, preferred_model)
+		_glosc_models_message = "模型列表：已获取 %d 个；当前 %s" % [_glosc_model_ids.size(), preferred_model]
+		_glosc_models_error = ""
+	else:
+		_glosc_models_error = str(status.get("error", "模型列表获取失败。"))
+	_set_model_status()
+
+func _current_glosc_base_url() -> String:
+	if _settings_base_url != null and is_instance_valid(_settings_base_url):
+		var settings_base_url := _settings_base_url.text.strip_edges()
+		if not settings_base_url.is_empty():
+			return settings_base_url
+	if _onboarding_base_url != null and is_instance_valid(_onboarding_base_url):
+		var onboarding_base_url := _onboarding_base_url.text.strip_edges()
+		if not onboarding_base_url.is_empty():
+			return onboarding_base_url
+	return str(SettingsStore.get_value("glosc_base_url", DEFAULT_GLOSC_BASE_URL))
+
+func _current_glosc_token() -> String:
+	if _settings_token != null and is_instance_valid(_settings_token):
+		return _settings_token.text.strip_edges()
+	if _onboarding_token != null and is_instance_valid(_onboarding_token):
+		return _onboarding_token.text.strip_edges()
+	return str(SettingsStore.get_value("glosc_token", "")).strip_edges()
+
+func _current_model_value() -> String:
+	if _settings_model != null and is_instance_valid(_settings_model):
+		return _selected_model_value(_settings_model)
+	if _onboarding_model != null and is_instance_valid(_onboarding_model):
+		return _selected_model_value(_onboarding_model)
+	return str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)).strip_edges()
+
+func _selected_model_value(options: OptionButton) -> String:
+	if options == null or not is_instance_valid(options) or options.item_count == 0:
+		return DEFAULT_GLOSC_MODEL
+	var selected_index := options.selected
+	if selected_index < 0 or selected_index >= options.item_count:
+		selected_index = 0
+	return options.get_item_text(selected_index).strip_edges()
+
+func _preferred_model(current_model: String) -> String:
+	var trimmed := current_model.strip_edges()
+	if trimmed.is_empty():
+		return DEFAULT_GLOSC_MODEL
+	if trimmed in _glosc_model_ids:
+		return trimmed
+	if DEFAULT_GLOSC_MODEL in _glosc_model_ids:
+		return DEFAULT_GLOSC_MODEL
+	return trimmed
+
+func _refresh_model_options(options: OptionButton, preferred_model: String) -> void:
+	if options == null or not is_instance_valid(options):
+		return
+	options.clear()
+	for value in _model_option_values(preferred_model):
+		options.add_item(value)
+	_select_option_value(options, preferred_model)
+	if options.selected < 0 and options.item_count > 0:
+		options.select(0)
+
+func _string_array(value: Variant) -> Array[String]:
+	var result: Array[String] = []
+	if not value is Array:
+		return result
+	for item in value:
+		_append_unique_model(result, str(item))
+	return result
 
 func _field(title: String, control: Control) -> Control:
 	var stack := VBoxContainer.new()

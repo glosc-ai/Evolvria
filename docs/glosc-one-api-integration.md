@@ -32,7 +32,7 @@ Evolvria 客户端免费，AI 能力通过 Glosc One 付费使用。客户端需
 {
   "request_id": "ai_req_001",
   "purpose": "player_action",
-  "model": "default",
+  "model": "deepseek/deepseek-v4-pro",
   "messages": [],
   "response_format": "json",
   "metadata": {
@@ -104,4 +104,3 @@ AI 不可用时允许：
 - 生成新剧情。
 - 推进需要 AI 判断的关键事件。
 - 覆盖世界观。
-

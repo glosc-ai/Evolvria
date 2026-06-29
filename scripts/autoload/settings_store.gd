@@ -3,6 +3,8 @@ extends Node
 signal settings_changed(settings: Dictionary)
 
 const SETTINGS_PATH := "user://settings.json"
+const DEFAULT_GLOSC_MODEL := "deepseek/deepseek-v4-pro"
+const LEGACY_DEFAULT_GLOSC_MODELS := ["glosc-one-default", "alibaba/qwen3.6-flash"]
 
 const DEFAULT_SETTINGS := {
 	"theme": "dark",
@@ -12,7 +14,7 @@ const DEFAULT_SETTINGS := {
 	"glosc_provider": "Glosc AI",
 	"glosc_base_url": "https://one.gloscai.com",
 	"glosc_token": "",
-	"model": "alibaba/qwen3.6-flash",
+	"model": DEFAULT_GLOSC_MODEL,
 	"timeout_seconds": 45,
 	"auto_retry": true,
 	"confirm_ai_calls": true,
@@ -42,8 +44,8 @@ func load_settings() -> void:
 	if parsed is Dictionary:
 		for key in parsed.keys():
 			settings[key] = parsed[key]
-		if str(settings.get("model", "")) == "glosc-one-default":
-			settings["model"] = str(DEFAULT_SETTINGS.get("model", "alibaba/qwen3.6-flash"))
+		if str(settings.get("model", "")) in LEGACY_DEFAULT_GLOSC_MODELS:
+			settings["model"] = DEFAULT_GLOSC_MODEL
 		if not parsed.has("onboarding_completed") and is_glosc_configured():
 			settings["onboarding_completed"] = true
 		settings_changed.emit(settings.duplicate(true))

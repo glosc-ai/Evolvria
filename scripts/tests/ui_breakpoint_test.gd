@@ -77,6 +77,7 @@ func _run() -> void:
 			elif route == &"onboarding":
 				_assert(_count_labels_containing(_app, "初始化配置") >= 1, "%s onboarding should render first-run setup" % size_name)
 				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") >= 1, "%s onboarding should default to Glosc AI" % size_name)
+				_assert(_has_line_edit_placeholder(_app, "搜索模型"), "%s onboarding should expose model search" % size_name)
 				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s onboarding should expose Glosc AI key acquisition link" % size_name)
 				_assert(_has_button_text(_app, "保存并开始"), "%s onboarding should expose setup completion" % size_name)
 			elif route == &"new_world":
@@ -132,6 +133,7 @@ func _run() -> void:
 				_assert(_count_labels_containing(_app, "连接状态") >= 1, "%s settings should show Glosc connection status" % size_name)
 				_assert(_count_labels_containing(_app, "AI 请求前状态") >= 1, "%s settings should describe AI pre-request recovery" % size_name)
 				_assert(_count_labels_containing(_app, "settings.json") >= 1, "%s settings should explain local token storage risk" % size_name)
+				_assert(_has_line_edit_placeholder(_app, "搜索模型"), "%s settings should expose model search" % size_name)
 				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s settings should expose Glosc AI key acquisition link" % size_name)
 				_assert(_has_button_text(_app, "测试连接"), "%s settings should expose Glosc connection test" % size_name)
 				_assert(_has_button_text(_app, "清除 AI 日志"), "%s settings should expose AI log clearing" % size_name)
@@ -351,6 +353,14 @@ func _has_check_text(root: Node, text: String) -> bool:
 		return true
 	for child in root.get_children():
 		if _has_check_text(child, text):
+			return true
+	return false
+
+func _has_line_edit_placeholder(root: Node, text: String) -> bool:
+	if root is LineEdit and str((root as LineEdit).placeholder_text) == text:
+		return true
+	for child in root.get_children():
+		if _has_line_edit_placeholder(child, text):
 			return true
 	return false
 

@@ -3,7 +3,7 @@ extends Node
 var _previous_confirm_ai_calls: bool = true
 var _previous_content_preferences: String = ""
 var _previous_log_level: String = "debug"
-var _previous_model: String = "alibaba/qwen3.6-flash"
+var _previous_model: String = "deepseek/deepseek-v4-pro"
 
 func _ready() -> void:
 	call_deferred("_run")
@@ -12,11 +12,11 @@ func _run() -> void:
 	_previous_confirm_ai_calls = bool(SettingsStore.get_value("confirm_ai_calls", true))
 	_previous_content_preferences = str(SettingsStore.get_value("content_preferences", ""))
 	_previous_log_level = str(SettingsStore.get_value("log_level", "debug"))
-	_previous_model = str(SettingsStore.get_value("model", "alibaba/qwen3.6-flash"))
+	_previous_model = str(SettingsStore.get_value("model", "deepseek/deepseek-v4-pro"))
 	SettingsStore.settings["confirm_ai_calls"] = false
 	SettingsStore.settings["content_preferences"] = "测试 fixture：避免依赖真实 AI 服务。"
 	SettingsStore.settings["log_level"] = "debug"
-	SettingsStore.settings["model"] = "alibaba/qwen3.6-flash"
+	SettingsStore.settings["model"] = "deepseek/deepseek-v4-pro"
 
 	var seed := {
 		"world_name": "Fixture世界",
@@ -189,13 +189,14 @@ func _verify_glosc_status_fixture() -> void:
 func _verify_openai_compatible_fixture() -> void:
 	var models_body := JSON.stringify({
 		"data": [
-			{"id": "alibaba/qwen3.6-flash", "object": "model"},
+			{"id": "deepseek/deepseek-v4-pro", "object": "model"},
 			{"id": "other-model", "object": "model"}
 		]
 	}).to_utf8_buffer()
 	var models := AIService.parse_models_body(models_body)
 	_assert(int(models.get("model_count", 0)) == 2, "models parser should count OpenAI-compatible model lists")
 	_assert(bool(models.get("configured_model_available", false)), "models parser should detect configured model availability")
+	_assert((models.get("model_ids", []) as Array).has("deepseek/deepseek-v4-pro"), "models parser should expose all model ids")
 	var openai_response := {
 		"id": "chatcmpl_fixture",
 		"object": "chat.completion",

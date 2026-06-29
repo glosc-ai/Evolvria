@@ -15,7 +15,7 @@ func _run() -> void:
 	WorldStore.reset_world()
 	SettingsStore.settings["glosc_base_url"] = "https://one.gloscai.com"
 	SettingsStore.settings["glosc_token"] = token
-	SettingsStore.settings["model"] = "alibaba/qwen3.6-flash"
+	SettingsStore.settings["model"] = "deepseek/deepseek-v4-pro"
 	SettingsStore.settings["confirm_ai_calls"] = false
 	SettingsStore.settings["auto_retry"] = false
 	SettingsStore.settings["timeout_seconds"] = 20

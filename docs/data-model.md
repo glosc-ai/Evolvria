@@ -146,7 +146,7 @@ ID 应由系统生成，不依赖名称。
   "world_id": "world_001",
   "purpose": "player_action",
   "prompt_hash": "sha256",
-  "model": "glosc-one-default",
+  "model": "deepseek/deepseek-v4-pro",
   "started_at": "2026-06-29T00:00:00Z",
   "finished_at": null,
   "status": "pending",

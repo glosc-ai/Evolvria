@@ -6,7 +6,7 @@ signal ai_request_failed(request_id: String, error: String)
 signal ai_confirmation_requested(request_id: String, purpose: String, summary: String)
 
 const MAX_RESPONSE_BYTES := 524288
-const DEFAULT_GLOSC_MODEL := "alibaba/qwen3.6-flash"
+const DEFAULT_GLOSC_MODEL := "deepseek/deepseek-v4-pro"
 
 var _request_counter: int = 0
 var pending_confirmation: Dictionary = {}
@@ -97,15 +97,23 @@ func glosc_status_summary(status: Dictionary = {}) -> Dictionary:
 	}
 
 func check_glosc_connection() -> Dictionary:
+	return await fetch_glosc_models(
+		str(SettingsStore.get_value("glosc_base_url", "")),
+		str(SettingsStore.get_value("glosc_token", "")),
+		str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
+	)
+
+func fetch_glosc_models(base_url: String, token: String, configured_model: String = "") -> Dictionary:
 	var request_id := _next_request_id()
-	var endpoint := _resolve_glosc_models_endpoint()
+	var endpoint := _resolve_glosc_models_endpoint(base_url)
 	if endpoint.is_empty():
 		return _glosc_status_result(request_id, false, "Glosc One 服务地址无效。", {}, false)
-	if str(SettingsStore.get_value("glosc_token", "")).strip_edges().is_empty():
+	var access_token := token.strip_edges()
+	if access_token.is_empty():
 		return _glosc_status_result(request_id, false, "Glosc One 访问令牌为空。", {}, false)
 	var headers := [
 		"Accept: application/json",
-		"Authorization: Bearer %s" % str(SettingsStore.get_value("glosc_token", ""))
+		"Authorization: Bearer %s" % access_token
 	]
 	var response := await _http_client_request(HTTPClient.METHOD_GET, endpoint, headers)
 	if str(response.get("status", "")) != "ok":
@@ -114,7 +122,7 @@ func check_glosc_connection() -> Dictionary:
 	var body := response.get("body", PackedByteArray()) as PackedByteArray
 	if status_code >= 200 and status_code < 300:
 		var parsed: Dictionary = parse_status_body(body)
-		var models := parse_models_body(body)
+		var models := parse_models_body(body, configured_model)
 		if models.is_empty():
 			return _glosc_status_result(request_id, false, "Glosc One 连接测试未返回合法模型列表，请确认服务地址是否为 API 地址。", {}, false)
 		for key in models.keys():
@@ -149,7 +157,7 @@ func parse_status_body(body: PackedByteArray) -> Dictionary:
 		result["currency"] = str(source.get("currency", ""))
 	return result
 
-func parse_models_body(body: PackedByteArray) -> Dictionary:
+func parse_models_body(body: PackedByteArray, configured_model: String = "") -> Dictionary:
 	if body.is_empty():
 		return {}
 	var data := _parse_json_dictionary_from_body(body)
@@ -167,10 +175,15 @@ func parse_models_body(body: PackedByteArray) -> Dictionary:
 		if model_id.is_empty():
 			continue
 		model_ids.append(model_id)
-	var configured_model := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
+	if model_ids.is_empty():
+		return {}
+	var active_model := configured_model.strip_edges()
+	if active_model.is_empty():
+		active_model = str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
 	return {
 		"model_count": model_ids.size(),
-		"configured_model_available": configured_model in model_ids,
+		"configured_model_available": active_model in model_ids,
+		"model_ids": model_ids,
 		"sample_models": model_ids.slice(0, mini(8, model_ids.size()))
 	}
 
@@ -760,16 +773,18 @@ func parse_response_body(body: PackedByteArray, request_id: String, purpose: Str
 func _resolve_glosc_endpoint() -> String:
 	return _resolve_glosc_api_root()
 
-func _resolve_glosc_models_endpoint() -> String:
-	var root := _resolve_glosc_api_root()
+func _resolve_glosc_models_endpoint(base_url: String = "") -> String:
+	var root := _resolve_glosc_api_root(base_url)
 	return "" if root.is_empty() else "%s/models" % root
 
 func _resolve_glosc_chat_endpoint() -> String:
 	var root := _resolve_glosc_api_root()
 	return "" if root.is_empty() else "%s/chat/completions" % root
 
-func _resolve_glosc_api_root() -> String:
-	var endpoint := str(SettingsStore.get_value("glosc_base_url", "")).strip_edges()
+func _resolve_glosc_api_root(base_url: String = "") -> String:
+	var endpoint := base_url.strip_edges()
+	if endpoint.is_empty():
+		endpoint = str(SettingsStore.get_value("glosc_base_url", "")).strip_edges()
 	if endpoint.is_empty():
 		return ""
 	if not endpoint.begins_with("http://") and not endpoint.begins_with("https://"):

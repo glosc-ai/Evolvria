@@ -9,6 +9,8 @@ const SCHEMA_VERSION := 1
 const SUMMARY_EVENT_THRESHOLD := 20
 const SUMMARY_WINDOW_LIMIT := 30
 const MAX_MAP_IMAGE_DIMENSION := 2048
+const GENERATED_MAP_SOURCE := "azgaar_fmg"
+const FANTASY_MAP_GENERATOR_SCRIPT := preload("res://scripts/generation/fantasy_map_generator.gd")
 
 var world: Dictionary = {}
 var characters: Array[Dictionary] = []
@@ -105,6 +107,7 @@ func create_world(seed: Dictionary) -> void:
 	_memory_counter = 0
 	_location_counter = 100
 	_thread_counter = 0
+	_generate_fantasy_map_for_seed(seed, "Azgaar 风格大陆地图", false)
 	record_ai_log("world_expand", ai_result, "初始世界扩写：%s" % seed.get("world_name", "未命名世界"))
 
 	var opening := ai_result.get("opening_event", {}) as Dictionary
@@ -205,6 +208,7 @@ func import_map_image(source_path: String, display_name: String = "大陆地图"
 	var location_ids: Array[String] = []
 	for location in locations:
 		location_ids.append(str(location.get("id", "")))
+	world.erase("map_generator")
 	world["map_image"] = {
 		"id": "map_001",
 		"name": display_name,
@@ -217,13 +221,159 @@ func import_map_image(source_path: String, display_name: String = "大陆地图"
 		"resized_for_device": resized,
 		"scale_label": "未设置比例尺",
 		"locations": location_ids,
-		"routes": get_map_routes()
+		"routes": get_map_routes(),
+		"generator": {}
 	}
 	var event_id := add_event("world_event", "导入地图：%s" % display_name, "你导入了一张自定义地图图片，后续地点标注会叠加在这张地图上。", ["char_hero"], str(get_current_location().get("id", "loc_start")), 0.45)
 	add_memory("world", str(world.get("id", "")), "玩家导入地图图片：%s" % display_name, event_id, 0.45, ["map", "import"])
 	_auto_save()
 	world_updated.emit({"type": "map_image_imported", "image_path": target_path})
 	return true
+
+func generate_fantasy_map(display_name: String = "Azgaar 风格大陆地图") -> bool:
+	if world.is_empty():
+		return false
+	var seed := _current_map_seed()
+	return _generate_fantasy_map_for_seed(seed, display_name, true)
+
+func generate_fantasy_map_from_reference(source_path: String, display_name: String = "参考图生成地图") -> bool:
+	if world.is_empty() or source_path.strip_edges().is_empty():
+		return false
+	var seed := _current_map_seed()
+	return _generate_fantasy_map_from_reference_for_seed(source_path.strip_edges(), seed, display_name, true)
+
+func _generate_fantasy_map_for_seed(seed: Dictionary, display_name: String, record_event: bool) -> bool:
+	if world.is_empty():
+		return false
+	var maps_dir := "user://saves/maps"
+	var target_path := "%s/map_001.png" % maps_dir
+	var generator = FANTASY_MAP_GENERATOR_SCRIPT.new()
+	var result: Dictionary = generator.generate(seed, locations.duplicate(true), factions.duplicate(true), target_path)
+	if str(result.get("status", "error")) != "ok":
+		AppState.set_error(str(result.get("error", "地图生成失败。")))
+		return false
+	_apply_generated_map_result(result, display_name)
+	if record_event:
+		var event_id := add_event(
+			"world_event",
+			"生成地图：%s" % display_name,
+			"系统根据当前世界地点、势力和种子生成了一张 Azgaar 风格的幻想地图。",
+			["char_hero"],
+			str(get_current_location().get("id", "loc_start")),
+			0.42
+		)
+		add_memory("world", str(world.get("id", "")), "生成幻想地图：%s" % display_name, event_id, 0.4, ["map", "generation", GENERATED_MAP_SOURCE])
+		_auto_save()
+		world_updated.emit({"type": "fantasy_map_generated", "image_path": result.get("image_path", "")})
+	return true
+
+func _generate_fantasy_map_from_reference_for_seed(source_path: String, seed: Dictionary, display_name: String, record_event: bool) -> bool:
+	if world.is_empty():
+		return false
+	var maps_dir := "user://saves/maps"
+	var target_path := "%s/map_001.png" % maps_dir
+	var generator = FANTASY_MAP_GENERATOR_SCRIPT.new()
+	var result: Dictionary = generator.generate_from_reference_image(source_path, seed, locations.duplicate(true), factions.duplicate(true), target_path)
+	if str(result.get("status", "error")) != "ok":
+		AppState.set_error(str(result.get("error", "参考图生成地图失败。")))
+		return false
+	_apply_generated_map_result(result, display_name)
+	if record_event:
+		var event_id := add_event(
+			"world_event",
+			"参考图生成地图：%s" % display_name,
+			"系统读取参考图的海岸、地形颜色和红色边界，生成了一张可标注、可进入 AI 上下文的地图。",
+			["char_hero"],
+			str(get_current_location().get("id", "loc_start")),
+			0.43
+		)
+		add_memory("world", str(world.get("id", "")), "根据参考图生成地图：%s" % display_name, event_id, 0.42, ["map", "generation", "reference_image"])
+		_auto_save()
+		world_updated.emit({"type": "fantasy_map_generated_from_reference", "image_path": result.get("image_path", ""), "source_path": source_path})
+	return true
+
+func _apply_generated_map_result(result: Dictionary, display_name: String) -> void:
+	var updates: Array[Dictionary] = _to_dict_array(result.get("location_updates", []))
+	for update in updates:
+		var location_id := str(update.get("id", ""))
+		for index in range(locations.size()):
+			if str(locations[index].get("id", "")) != location_id:
+				continue
+			locations[index]["map_id"] = str(update.get("map_id", "map_001"))
+			locations[index]["position"] = (update.get("position", {}) as Dictionary).duplicate(true)
+			locations[index]["azgaar_burg"] = (update.get("azgaar_burg", {}) as Dictionary).duplicate(true)
+			locations[index]["biome"] = str(update.get("biome", ""))
+			locations[index]["height"] = int(update.get("height", 0))
+			break
+	var generated_routes := _to_dict_array(result.get("routes", []))
+	world["map_routes"] = _merge_generated_map_routes(generated_routes)
+	var location_ids: Array[String] = []
+	for location in locations:
+		location_ids.append(str(location.get("id", "")))
+	var generator_meta := result.get("generator", {}) as Dictionary
+	world["map_generator"] = generator_meta.duplicate(true)
+	world["map_image"] = {
+		"id": "map_001",
+		"name": display_name,
+		"image_path": str(result.get("image_path", "")),
+		"width": int(result.get("width", 0)),
+		"height": int(result.get("height", 0)),
+		"original_width": int(result.get("width", 0)),
+		"original_height": int(result.get("height", 0)),
+		"max_dimension": MAX_MAP_IMAGE_DIMENSION,
+		"resized_for_device": false,
+		"scale_label": "生成地图：归一化坐标",
+		"locations": location_ids,
+		"routes": get_map_routes(),
+		"generator": generator_meta
+	}
+
+func _merge_generated_map_routes(generated_routes: Array[Dictionary]) -> Array[Dictionary]:
+	var merged: Array[Dictionary] = []
+	var seen_pairs: Dictionary = {}
+	for route in get_map_routes():
+		var data := route as Dictionary
+		if str(data.get("source", "")) == GENERATED_MAP_SOURCE:
+			continue
+		var from_id := str(data.get("from_location_id", ""))
+		var to_id := str(data.get("to_location_id", ""))
+		if from_id.is_empty() or to_id.is_empty():
+			continue
+		seen_pairs[_map_route_pair_key(from_id, to_id)] = true
+		merged.append(data.duplicate(true))
+	var generated_index := 1
+	for route in generated_routes:
+		var data := route.duplicate(true)
+		var from_id := str(data.get("from_location_id", ""))
+		var to_id := str(data.get("to_location_id", ""))
+		if from_id.is_empty() or to_id.is_empty():
+			continue
+		var key := _map_route_pair_key(from_id, to_id)
+		if seen_pairs.has(key):
+			continue
+		seen_pairs[key] = true
+		data["id"] = "route_fmg_%04d" % generated_index
+		data["source"] = GENERATED_MAP_SOURCE
+		generated_index += 1
+		merged.append(data)
+	return merged
+
+func _map_route_pair_key(from_location_id: String, to_location_id: String) -> String:
+	return "%s::%s" % [from_location_id, to_location_id] if from_location_id < to_location_id else "%s::%s" % [to_location_id, from_location_id]
+
+func _current_map_seed() -> Dictionary:
+	var hero := get_character("char_hero")
+	return {
+		"world_name": str(world.get("name", "未命名世界")),
+		"genre": str(world.get("genre", "奇幻")),
+		"tone": ",".join(_to_string_array(world.get("tone", []))),
+		"limits": ",".join(_to_string_array(world.get("content_limits", []))),
+		"hero": {
+			"name": str(hero.get("name", "主角")),
+			"description": str(hero.get("description", "")),
+			"goal": str(hero.get("goals", []))
+		}
+	}
 
 func _resize_map_image_if_needed(image: Image) -> bool:
 	var width := image.get_width()
@@ -292,12 +442,14 @@ func submit_player_action(action: String) -> void:
 	var result := await AIService.resolve_player_action(action.strip_edges(), before_snapshot)
 	record_ai_log("player_action", result, "玩家行动：%s" % action.strip_edges())
 	if not validate_player_action_result(result):
+		AppState.set_error("AI 返回的行动结果不完整，已忽略本次结果，世界状态未改变。")
 		world_updated.emit({"type": "ai_response_rejected", "reason": "invalid_player_action_result"})
 		_auto_save()
 		return
 	advance_time(int(result.get("time_delta_hours", 1)))
 	var patches := _to_dict_array(result.get("patches", []))
 	if not patches.is_empty() and not apply_state_patches(patches):
+		AppState.set_error("AI 返回的状态变更未通过校验，已拒绝应用以保护世界一致性。")
 		record_ai_log("player_action_rejected", {"status": "error", "error": "invalid_state_patch", "request_id": result.get("request_id", "")}, "状态变更校验失败")
 		_auto_save()
 		return
@@ -353,6 +505,10 @@ func _apply_content_boundary_block(action: String, boundary: Dictionary) -> void
 	)
 	add_memory("character", "char_hero", "内容边界拦截了玩家行动：%s" % action.left(80), event_id, 0.35, ["content_safety", "player_action"])
 	suggested_actions = ["改用淡出处理", "询问安全替代线索", "调整内容偏好", "选择其他行动"]
+	# Use a notice (not an error) so the UI doesn't offer a "retry" affordance —
+	# resubmitting the same blocked text would just be blocked again. The reason
+	# is also captured in the timeline event above.
+	AppState.set_notice(reason)
 	_auto_save()
 	world_updated.emit({"type": "content_boundary_blocked", "event_id": event_id})
 
@@ -901,6 +1057,7 @@ func build_ai_context(user_action: String) -> Dictionary:
 		"factions": factions.duplicate(true),
 		"relationships": get_relationship_context(participant_ids),
 		"current_time": world.get("current_time", {}),
+		"map_state": build_map_ai_context(),
 		"scene_state": {
 			"location": current_location,
 			"present_character_ids": participant_ids,
@@ -917,6 +1074,111 @@ func build_ai_context(user_action: String) -> Dictionary:
 		},
 		"content_limits": _active_content_limits()
 	}
+
+func build_map_ai_context() -> Dictionary:
+	var map_image: Dictionary = world.get("map_image", {}) if world.get("map_image", {}) is Dictionary else {}
+	var generator := _map_generator_metadata(map_image)
+	var terrain := _map_terrain_context(generator)
+	var coastlines := _map_coastline_context(generator)
+	var rivers := _map_river_context(generator)
+	return {
+		"image": {
+			"id": str(map_image.get("id", "map_001")),
+			"name": str(map_image.get("name", "大陆地图")),
+			"image_path": str(map_image.get("image_path", "")),
+			"width": int(map_image.get("width", 0)),
+			"height": int(map_image.get("height", 0)),
+			"scale_label": str(map_image.get("scale_label", "归一化坐标"))
+		},
+		"source": {
+			"project": str(generator.get("source_project", "")),
+			"url": str(generator.get("source_url", "")),
+			"license": str(generator.get("source_license", "")),
+			"seed": int(generator.get("seed", 0)),
+			"mode": str(generator.get("mode", ""))
+		},
+		"terrain": terrain,
+		"coastlines": coastlines,
+		"rivers": rivers,
+		"region_borders": _map_region_border_context(generator),
+		"locations": _map_locations_for_ai(),
+		"routes": get_map_routes()
+	}
+
+func _map_generator_metadata(map_image: Dictionary) -> Dictionary:
+	var world_generator: Variant = world.get("map_generator", {})
+	if world_generator is Dictionary and not (world_generator as Dictionary).is_empty():
+		return (world_generator as Dictionary).duplicate(true)
+	var image_generator: Variant = map_image.get("generator", {})
+	if image_generator is Dictionary:
+		return (image_generator as Dictionary).duplicate(true)
+	return {}
+
+func _map_terrain_context(generator: Dictionary) -> Dictionary:
+	var terrain_value: Variant = generator.get("terrain", {})
+	if terrain_value is Dictionary and not (terrain_value as Dictionary).is_empty():
+		return (terrain_value as Dictionary).duplicate(true)
+	var model: Dictionary = generator.get("model", {}) if generator.get("model", {}) is Dictionary else {}
+	return {
+		"height_scale": str(model.get("height_scale", "0..100, land >= 20")),
+		"water_level": 20,
+		"land_threshold": 20,
+		"biomes": str(model.get("biomes", "temperature + moisture + height"))
+	}
+
+func _map_coastline_context(generator: Dictionary) -> Dictionary:
+	var coastlines_value: Variant = generator.get("coastlines", {})
+	if coastlines_value is Dictionary and not (coastlines_value as Dictionary).is_empty():
+		return (coastlines_value as Dictionary).duplicate(true)
+	return {
+		"generated": not generator.is_empty(),
+		"source": "heightmap land-water adjacency",
+		"style": "shoreline pixels"
+	}
+
+func _map_river_context(generator: Dictionary) -> Dictionary:
+	var rivers_value: Variant = generator.get("rivers", {})
+	if rivers_value is Dictionary and not (rivers_value as Dictionary).is_empty():
+		return (rivers_value as Dictionary).duplicate(true)
+	var river_count := 0
+	if rivers_value is int or rivers_value is float:
+		river_count = int(rivers_value)
+	return {
+		"generated": river_count > 0,
+		"count": river_count,
+		"source": "downhill highland tracing"
+	}
+
+func _map_region_border_context(generator: Dictionary) -> Dictionary:
+	var borders_value: Variant = generator.get("region_borders", {})
+	if borders_value is Dictionary and not (borders_value as Dictionary).is_empty():
+		return (borders_value as Dictionary).duplicate(true)
+	return {
+		"generated": false,
+		"source": "",
+		"pixels": 0
+	}
+
+func _map_locations_for_ai() -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for location in locations:
+		var data := location as Dictionary
+		var position: Dictionary = data.get("position", {}) if data.get("position", {}) is Dictionary else {}
+		var burg: Dictionary = data.get("azgaar_burg", {}) if data.get("azgaar_burg", {}) is Dictionary else {}
+		result.append({
+			"id": str(data.get("id", "")),
+			"name": str(data.get("name", "")),
+			"type": str(data.get("type", "")),
+			"description": str(data.get("description", "")).left(160),
+			"position": position.duplicate(true),
+			"biome": str(data.get("biome", "")),
+			"height": int(data.get("height", 0)),
+			"azgaar_burg": burg.duplicate(true),
+			"controlling_faction_id": str(data.get("controlling_faction_id", "")),
+			"known_to_player": is_location_known(data),
+			"visibility": str(data.get("visibility", "known_to_player"))
+		})
+	return result
 
 func get_recent_events(limit: int = 8) -> Array[Dictionary]:
 	var start := maxi(0, timeline.size() - limit)
@@ -1161,6 +1423,8 @@ func get_nearby_locations(location_id: String, limit: int = 5) -> Array[Dictiona
 			"name": str(data.get("name", "")),
 			"type": str(data.get("type", "")),
 			"description": str(data.get("description", "")).left(120),
+			"biome": str(data.get("biome", "")),
+			"height": int(data.get("height", 0)),
 			"controlling_faction_id": str(data.get("controlling_faction_id", "")),
 			"travel_hours": estimate_travel_hours(location_id, target_id),
 			"has_route": not route.is_empty(),

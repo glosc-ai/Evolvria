@@ -32,6 +32,7 @@ func _run() -> void:
 	await _settle()
 
 	var sizes: Array[Dictionary] = [
+		{"name": "desktop_large", "size": Vector2i(2920, 1528)},
 		{"name": "desktop_wide", "size": Vector2i(1440, 900)},
 		{"name": "desktop_narrow", "size": Vector2i(820, 900)},
 		{"name": "phone_portrait", "size": Vector2i(390, 844)},

@@ -12,6 +12,28 @@ MVP：
 - JPG。
 - WebP。
 
+## 内置生成
+
+MVP 也支持基于当前世界数据本地生成一张幻想地图。生成器采用
+[Azgaar/Fantasy-Map-Generator](https://github.com/Azgaar/Fantasy-Map-Generator)
+的数据概念做 Godot 适配：heightmap/cells、biome、burgs、states/factions 和 routes。
+它不会嵌入完整 FMG Web 应用，而是在客户端离线生成 PNG 底图、地点坐标、地点 biome/height
+元数据和初始路线，并在存档中记录源项目、MIT license、seed 和模型摘要。
+
+生成入口：
+
+- 新建世界后自动生成 `user://saves/maps/map_001.png`。
+- 地图页可点击“生成幻想地图”按当前世界状态重新生成。
+- 玩家手动导入图片时会覆盖底图，但保留已有地点和路线数据。
+- 玩家可把类似政区/大陆参考图填入图片路径，再点击“从参考图生成地图”。程序会按颜色识别海陆、
+  地形、海岸线和红色边界，生成新的可标注地图与 AI 可解析的 `map_state` 元数据。
+
+参考图生成的 MVP 约束：
+
+- 不做 OCR 地名识别；图中文字不会自动变成地点名称。
+- 当前世界已有地点会被投放到参考图推断出的陆地上，并保留玩家后续手动标注能力。
+- 红色线条会作为 `region_borders` 元数据进入 AI 上下文，不默认等同于可通行路线。
+
 平台入口：
 
 - 桌面端：文件选择器、拖拽导入。

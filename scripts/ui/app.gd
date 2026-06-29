@@ -175,7 +175,18 @@ func _unhandled_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 
 func _on_route_changed(_route: StringName) -> void:
+	_reset_transient_route_state()
 	_render()
+
+func _reset_transient_route_state() -> void:
+	# Per-screen inline confirmations and pagination should not leak across routes.
+	# Error/notice banners are cleared by AppState.navigate(); use
+	# AppState.navigate_with_notice() when a message should follow to the destination.
+	_clear_ai_logs_confirming = false
+	_delete_world_confirming = false
+	_reset_settings_confirming = false
+	_timeline_visible_count = TIMELINE_PAGE_SIZE
+	_ai_log_visible_count = AI_LOG_PAGE_SIZE
 
 func _on_world_updated(_change_set: Dictionary) -> void:
 	_render()
@@ -220,8 +231,7 @@ func _on_files_dropped(files: PackedStringArray) -> void:
 	var extension := path.get_extension().to_lower()
 	if extension == "zip":
 		if WorldStore.load_imported_world(path):
-			AppState.set_notice("已导入：%s" % WorldStore.world.get("name", "未命名世界"))
-			AppState.navigate(&"exploration")
+			AppState.navigate_with_notice(&"exploration", "已导入：%s" % WorldStore.world.get("name", "未命名世界"))
 		else:
 			_render()
 		return
@@ -467,7 +477,7 @@ func _render_onboarding() -> void:
 	form.add_child(_field("访问 Key", _onboarding_token))
 	var key_row: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
 	key_row.add_theme_constant_override("separation", 8)
-	key_row.add_child(_button("没有key?现在获取", func() -> void:
+	key_row.add_child(_button("获取 Glosc AI Key", func() -> void:
 		_open_glosc_keys_page()
 	, false, INFO))
 	var onboarding_key_help := _label("会打开 Glosc AI 控制台的 Keys 页面。", 12, MUTED)
@@ -516,7 +526,8 @@ func _render_new_world() -> void:
 		stack.add_child(_ai_busy_panel("AI 正在补全世界观、地点、角色行动倾向和开局事件。"))
 	if not AppState.last_error.is_empty():
 		stack.add_child(_status_box(AppState.last_error, DANGER))
-		stack.add_child(_retry_ai_panel())
+		if _last_failed_operation != &"":
+			stack.add_child(_retry_ai_panel())
 
 func _new_world_step_content() -> Control:
 	match _new_world_step:
@@ -658,7 +669,8 @@ func _render_exploration() -> void:
 		stack.add_child(_ai_confirmation_panel())
 	if not AppState.last_error.is_empty():
 		stack.add_child(_status_box(AppState.last_error, DANGER))
-		stack.add_child(_retry_ai_panel())
+		if _last_failed_operation != &"":
+			stack.add_child(_retry_ai_panel())
 	if not _wide():
 		stack.add_child(_context_panel())
 
@@ -1023,8 +1035,7 @@ func _render_saves() -> void:
 	import_row.add_child(_button("选择 ZIP 文件", func() -> void: _open_zip_file_dialog(), false))
 	import_row.add_child(_button("导入世界 ZIP", func() -> void:
 		if WorldStore.load_imported_world(_settings_import_zip.text.strip_edges()):
-			AppState.set_notice("已导入：%s" % WorldStore.world.get("name", "未命名世界"))
-			AppState.navigate(&"exploration")
+			AppState.navigate_with_notice(&"exploration", "已导入：%s" % WorldStore.world.get("name", "未命名世界"))
 		else:
 			_render()
 	, false))
@@ -1064,7 +1075,7 @@ func _render_settings() -> void:
 	api.add_child(_field("访问令牌", _settings_token))
 	var key_row: BoxContainer = HBoxContainer.new() if _wide() else VBoxContainer.new()
 	key_row.add_theme_constant_override("separation", 8)
-	key_row.add_child(_button("没有key?现在获取", func() -> void:
+	key_row.add_child(_button("获取 Glosc AI Key", func() -> void:
 		_open_glosc_keys_page()
 	, false, INFO))
 	var settings_key_help := _label("默认渠道商：Glosc AI", 12, MUTED)
@@ -1183,8 +1194,7 @@ func _render_settings() -> void:
 		var payload := SaveManager.restore_latest_backup()
 		if not payload.is_empty():
 			WorldStore.load_active_world()
-			AppState.set_notice("已恢复最近备份。")
-			AppState.navigate(&"exploration")
+			AppState.navigate_with_notice(&"exploration", "已恢复最近备份。")
 		else:
 			_render()
 	, false))
@@ -1201,8 +1211,7 @@ func _render_settings() -> void:
 			var payload := SaveManager.restore_ai_checkpoint()
 			if not payload.is_empty():
 				WorldStore.load_active_world()
-				AppState.set_notice("已恢复到最近 AI 请求前状态。")
-				AppState.navigate(&"exploration")
+				AppState.navigate_with_notice(&"exploration", "已恢复到最近 AI 请求前状态。")
 			else:
 				_render()
 		, false))
@@ -1237,8 +1246,7 @@ func _render_settings() -> void:
 	, false))
 	data_tools.add_child(_button("导入世界 ZIP", func() -> void:
 		if WorldStore.load_imported_world(_settings_import_zip.text.strip_edges()):
-			AppState.set_notice("已导入：%s" % WorldStore.world.get("name", "未命名世界"))
-			AppState.navigate(&"exploration")
+			AppState.navigate_with_notice(&"exploration", "已导入：%s" % WorldStore.world.get("name", "未命名世界"))
 		else:
 			_render()
 	, false))
@@ -1284,8 +1292,7 @@ func _render_settings() -> void:
 		delete_row.add_child(_button("确认永久删除", func() -> void:
 			WorldStore.reset_world()
 			_delete_world_confirming = false
-			AppState.set_notice("当前世界已删除。")
-			AppState.navigate(&"main_menu")
+			AppState.navigate_with_notice(&"main_menu", "当前世界已删除。")
 		, false, DANGER))
 		delete_row.add_child(_button("取消删除", func() -> void:
 			_delete_world_confirming = false
@@ -1356,6 +1363,7 @@ func _create_world_from_form() -> void:
 		AppState.set_error("世界名称不能为空。")
 		_render()
 		return
+	AppState.clear_error()
 	_last_world_seed = seed.duplicate(true)
 	_active_operation = &"world_expand"
 	_busy = true
@@ -1363,8 +1371,10 @@ func _create_world_from_form() -> void:
 	await WorldStore.create_world(seed)
 	_busy = false
 	if WorldStore.has_world():
+		_last_failed_operation = &""
 		AppState.navigate(&"exploration")
 	else:
+		_last_failed_operation = &"world_expand"
 		AppState.set_error("世界生成失败，请检查 Glosc One 配置或稍后重试。")
 		_render()
 
@@ -1497,11 +1507,12 @@ func _select_suggested_action(index: int) -> bool:
 	return true
 
 func _submit_action() -> void:
-	if _action_input == null:
+	if _action_input == null or _busy:
 		return
 	var action := _action_input.text.strip_edges()
 	if action.is_empty():
 		return
+	AppState.clear_error()
 	_last_player_action = action
 	_action_draft = ""
 	_active_operation = &"player_action"
@@ -1509,11 +1520,19 @@ func _submit_action() -> void:
 	_render()
 	await WorldStore.submit_player_action(action)
 	_busy = false
+	# If the action was blocked or rejected, restore the draft so the player can
+	# revise it instead of having to retype, and offer a retry affordance.
+	if not AppState.last_error.is_empty():
+		_action_draft = action
+		_last_failed_operation = &"player_action"
+	else:
+		_last_failed_operation = &""
 	_render()
 
 func _advance_day() -> void:
 	if _busy or not WorldStore.has_world():
 		return
+	AppState.clear_error()
 	_busy = true
 	_render()
 	var result := await WorldStore.advance_day()
@@ -1607,7 +1626,7 @@ func _complete_onboarding(skip_remote: bool) -> void:
 	if _onboarding_token != null:
 		token = _onboarding_token.text.strip_edges()
 	if not skip_remote and token.is_empty():
-		AppState.set_error("请输入 Glosc AI Key；如果暂时没有，可以点击“没有key?现在获取”。")
+		AppState.set_error("请输入 Glosc AI Key；如果暂时没有，可以点击“获取 Glosc AI Key”。")
 		AppState.clear_notice()
 		_render()
 		return
@@ -1627,8 +1646,7 @@ func _complete_onboarding(skip_remote: bool) -> void:
 	SettingsStore.settings["onboarding_completed"] = true
 	SettingsStore.save_settings()
 	AppState.clear_error()
-	AppState.set_notice("初始化配置已完成。")
-	AppState.navigate(&"main_menu")
+	AppState.navigate_with_notice(&"main_menu", "初始化配置已完成。")
 
 func _open_glosc_keys_page() -> void:
 	var err := OS.shell_open(GLOSC_KEYS_URL)
@@ -1664,17 +1682,48 @@ func _import_map_image_from_form() -> void:
 		AppState.set_error("地图图片导入失败。")
 	_render()
 
+func _generate_fantasy_map_from_sidebar() -> void:
+	if WorldStore.generate_fantasy_map("Azgaar 风格大陆地图"):
+		AppState.set_notice("幻想地图已生成。")
+		_map_pan = Vector2.ZERO
+		_map_zoom = 1.0
+	else:
+		AppState.set_error("幻想地图生成失败。")
+	_render()
+
+func _generate_fantasy_map_from_reference_form() -> void:
+	if _map_image_path == null:
+		return
+	var path := _map_image_path.text.strip_edges()
+	if path.is_empty():
+		AppState.set_error("请先选择或输入参考图路径。")
+		_render()
+		return
+	if WorldStore.generate_fantasy_map_from_reference(path, "参考图生成地图"):
+		AppState.set_notice("已根据参考图生成地图。")
+		_map_pan = Vector2.ZERO
+		_map_zoom = 1.0
+	else:
+		AppState.set_error("参考图生成地图失败。")
+	_render()
+
 func _map_image_status_text(map_image: Dictionary) -> String:
 	var width := int(map_image.get("width", 0))
 	var height := int(map_image.get("height", 0))
+	var generator := map_image.get("generator", {}) as Dictionary
+	var generator_text := ""
+	if not generator.is_empty():
+		var mode_text := "参考图" if str(generator.get("mode", "")) == "reference_image" else str(generator.get("source_project", "FMG"))
+		generator_text = " · %s · seed %d" % [mode_text, int(generator.get("seed", 0))]
 	if bool(map_image.get("resized_for_device", false)):
-		return "已优化为 %d x %d；原图 %d x %d。" % [
+		return "已优化为 %d x %d；原图 %d x %d%s。" % [
 			width,
 			height,
 			int(map_image.get("original_width", width)),
-			int(map_image.get("original_height", height))
+			int(map_image.get("original_height", height)),
+			generator_text
 		]
-	return "当前图片 %d x %d。" % [width, height]
+	return "当前图片 %d x %d%s。" % [width, height, generator_text]
 
 func _open_map_file_dialog() -> void:
 	var dialog := FileDialog.new()
@@ -1706,8 +1755,7 @@ func _open_zip_file_dialog() -> void:
 		if _settings_import_zip:
 			_settings_import_zip.text = path
 		if WorldStore.load_imported_world(path):
-			AppState.set_notice("已导入：%s" % WorldStore.world.get("name", "未命名世界"))
-			AppState.navigate(&"exploration")
+			AppState.navigate_with_notice(&"exploration", "已导入：%s" % WorldStore.world.get("name", "未命名世界"))
 		else:
 			_render()
 	)
@@ -1720,8 +1768,7 @@ func _restore_backup_from_settings(backup_path: String) -> void:
 		_render()
 		return
 	WorldStore.load_active_world()
-	AppState.set_notice("已恢复备份：%s" % backup_path.get_file())
-	AppState.navigate(&"exploration")
+	AppState.navigate_with_notice(&"exploration", "已恢复备份：%s" % backup_path.get_file())
 
 func _backup_option_label(entry: Dictionary) -> String:
 	var name := str(entry.get("world_name", "未知世界"))
@@ -1970,21 +2017,24 @@ func _top_bar(title: String, back_text: String, callback: Callable) -> Control:
 	return _padded(bar, 14)
 
 func _screen_header(title: String, subtitle: String) -> Control:
-	var row := HBoxContainer.new()
-	row.custom_minimum_size = Vector2(0, 62)
-	row.add_theme_constant_override("separation", 12)
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 8)
 	var left := VBoxContainer.new()
 	left.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	left.add_child(_label(title, 22, FG))
 	left.add_child(_label(subtitle, 13, MUTED))
-	row.add_child(left)
-	row.add_child(_button("地图", func() -> void: AppState.navigate(&"map"), false))
-	row.add_child(_button("地点", func() -> void: AppState.navigate(&"locations"), false))
-	row.add_child(_button("人物", func() -> void: AppState.navigate(&"characters"), false))
-	row.add_child(_button("时间线", func() -> void: AppState.navigate(&"timeline"), false))
-	row.add_child(_button("线索", func() -> void: AppState.navigate(&"threads"), false))
-	row.add_child(_button("世界观", func() -> void: AppState.navigate(&"world_lore"), false))
-	return _padded(row, 14)
+	box.add_child(left)
+	var shortcuts := HFlowContainer.new()
+	shortcuts.add_theme_constant_override("h_separation", 8)
+	shortcuts.add_theme_constant_override("v_separation", 8)
+	shortcuts.add_child(_button("地图", func() -> void: AppState.navigate(&"map"), false, Color.TRANSPARENT, true))
+	shortcuts.add_child(_button("地点", func() -> void: AppState.navigate(&"locations"), false, Color.TRANSPARENT, true))
+	shortcuts.add_child(_button("人物", func() -> void: AppState.navigate(&"characters"), false, Color.TRANSPARENT, true))
+	shortcuts.add_child(_button("时间线", func() -> void: AppState.navigate(&"timeline"), false, Color.TRANSPARENT, true))
+	shortcuts.add_child(_button("线索", func() -> void: AppState.navigate(&"threads"), false, Color.TRANSPARENT, true))
+	shortcuts.add_child(_button("世界观", func() -> void: AppState.navigate(&"world_lore"), false, Color.TRANSPARENT, true))
+	box.add_child(shortcuts)
+	return _padded(box, 14)
 
 func _nav_panel() -> Control:
 	var nav := VBoxContainer.new()
@@ -2078,7 +2128,7 @@ func _bottom_nav() -> Control:
 			if r == &"settings":
 				_route_before_settings = AppState.current_route
 			AppState.navigate(r)
-		, AppState.current_route == route)
+		, AppState.current_route == route, Color.TRANSPARENT, true)
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(btn)
 	return _padded(row, 8)
@@ -2123,6 +2173,12 @@ func _map_sidebar() -> Control:
 	sidebar.add_child(_button("导入地图图片", func() -> void:
 		_import_map_image_from_form()
 	, false))
+	sidebar.add_child(_button("生成幻想地图", func() -> void:
+		_generate_fantasy_map_from_sidebar()
+	, false, SUCCESS))
+	sidebar.add_child(_button("从参考图生成地图", func() -> void:
+		_generate_fantasy_map_from_reference_form()
+	, false, INFO))
 	var zoom_row := HBoxContainer.new()
 	zoom_row.add_theme_constant_override("separation", 6)
 	zoom_row.add_child(_button("缩小", func() -> void: _set_map_zoom(_map_zoom - 0.15), false))
@@ -3432,8 +3488,12 @@ func _retry_last_ai_request() -> void:
 			await WorldStore.create_world(_last_world_seed.duplicate(true))
 			_busy = false
 			if WorldStore.has_world():
+				_last_failed_operation = &""
 				AppState.navigate(&"exploration")
 			else:
+				_last_failed_operation = &"world_expand"
+				if AppState.last_error.is_empty():
+					AppState.set_error("世界生成重试失败，请检查 Glosc One 配置或稍后再试。")
 				_render()
 		&"player_action":
 			if _last_player_action.strip_edges().is_empty():
@@ -3445,6 +3505,10 @@ func _retry_last_ai_request() -> void:
 			_render()
 			await WorldStore.submit_player_action(_last_player_action)
 			_busy = false
+			if AppState.last_error.is_empty():
+				_last_failed_operation = &""
+			else:
+				_last_failed_operation = &"player_action"
 			_render()
 		_:
 			AppState.set_error("没有可重试的 AI 调用。")
@@ -3615,10 +3679,10 @@ func _check(text: String, pressed: bool) -> CheckBox:
 	check.add_theme_color_override("font_color", FG)
 	return check
 
-func _button(text: String, callback: Callable, primary: bool = false, override_color: Color = Color.TRANSPARENT) -> Button:
+func _button(text: String, callback: Callable, primary: bool = false, override_color: Color = Color.TRANSPARENT, compact: bool = false) -> Button:
 	var btn := Button.new()
 	btn.text = text
-	btn.custom_minimum_size = Vector2(0, 42)
+	btn.custom_minimum_size = Vector2(0, 40 if compact else 44)
 	btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	btn.pressed.connect(callback)
 	var fill := ACCENT if primary else SURFACE
@@ -3628,10 +3692,11 @@ func _button(text: String, callback: Callable, primary: bool = false, override_c
 		fill = Color.TRANSPARENT
 		border = override_color
 		font = override_color
-	btn.add_theme_stylebox_override("normal", _style(fill, border, 8))
-	btn.add_theme_stylebox_override("hover", _style(ACCENT_DIM if primary else SURFACE_ALT, ACCENT if primary else ACCENT, 8))
-	btn.add_theme_stylebox_override("pressed", _style(ACCENT_DIM, ACCENT_DIM, 8))
-	btn.add_theme_stylebox_override("disabled", _style(Color(BORDER, 0.5), BORDER, 8))
+	var padding := 7 if compact else 14
+	btn.add_theme_stylebox_override("normal", _style(fill, border, 8, padding))
+	btn.add_theme_stylebox_override("hover", _style(ACCENT_DIM if primary else SURFACE_ALT, ACCENT if primary else ACCENT, 8, padding))
+	btn.add_theme_stylebox_override("pressed", _style(ACCENT_DIM, ACCENT_DIM, 8, padding))
+	btn.add_theme_stylebox_override("disabled", _style(Color(BORDER, 0.5), BORDER, 8, padding))
 	btn.add_theme_color_override("font_color", font)
 	btn.add_theme_color_override("font_disabled_color", MUTED)
 	return btn

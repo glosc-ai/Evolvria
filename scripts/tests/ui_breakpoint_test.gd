@@ -46,6 +46,7 @@ func _run() -> void:
 	for action_name in ["submit_action", "select_suggested_action", "open_map", "open_journal", "zoom_map_in", "zoom_map_out", "pan_map", "place_marker", "toggle_map_focus", "cancel_ai_request"]:
 		_assert(_has_joypad_button_event(action_name), "core input action should have a joypad mapping: %s" % action_name)
 	var sizes: Array[Dictionary] = [
+		{"name": "desktop_large", "size": Vector2i(2920, 1528)},
 		{"name": "desktop_wide", "size": Vector2i(1440, 900)},
 		{"name": "desktop_narrow", "size": Vector2i(820, 900)},
 		{"name": "phone_portrait", "size": Vector2i(390, 844)},
@@ -53,81 +54,103 @@ func _run() -> void:
 		{"name": "tablet_landscape", "size": Vector2i(1180, 820)},
 		{"name": "tablet_split", "size": Vector2i(700, 900)}
 	]
-	var routes: Array[StringName] = [&"onboarding", &"new_world", &"exploration", &"map", &"locations", &"characters", &"timeline", &"threads", &"world_lore", &"saves", &"settings"]
+	var routes: Array[StringName] = [&"main_menu", &"onboarding", &"new_world", &"exploration", &"map", &"locations", &"characters", &"timeline", &"threads", &"world_lore", &"saves", &"settings"]
 	for size_data in sizes:
+		var size_name := str(size_data.get("name", ""))
 		var size := size_data.get("size", Vector2i(1024, 768)) as Vector2i
 		get_window().size = size
 		await _settle()
 		for route in routes:
+			if route == &"new_world":
+				_app.set("_new_world_step", 1)
+			if route == &"map":
+				_app.set("_map_focus_mode", false)
 			AppState.navigate(route)
 			await _settle()
-			_assert(_app.get_child_count() > 0, "%s %s should render root children" % [size_data.get("name", ""), route])
-			_assert(_count_visible_controls(_app) >= 12, "%s %s should render a usable control tree" % [size_data.get("name", ""), route])
-			_assert(_has_positive_rect(_app), "%s %s should have positive root rect" % [size_data.get("name", ""), route])
-			_assert(_count_visible_horizontal_scrollbars(_app) == 0, "%s %s should not expose horizontal scrollbars" % [size_data.get("name", ""), route])
+			_assert_layout_health("%s %s" % [size_name, route], 8 if route == &"main_menu" else 12)
 			if size.x < 900 and route in [&"exploration", &"map", &"locations", &"characters", &"timeline", &"threads", &"world_lore", &"settings"]:
 				for nav_label in ["探索", "地图", "地点", "人物", "时间线", "设置"]:
-					_assert(_has_button_text(_app, nav_label), "%s %s should expose mobile bottom nav: %s" % [size_data.get("name", ""), route, nav_label])
-			if route == &"onboarding":
-				_assert(_count_labels_containing(_app, "初始化配置") >= 1, "%s onboarding should render first-run setup" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") >= 1, "%s onboarding should default to Glosc AI" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "没有key?现在获取"), "%s onboarding should expose Glosc AI key acquisition link" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "保存并开始"), "%s onboarding should expose setup completion" % size_data.get("name", ""))
+					_assert(_has_button_text(_app, nav_label), "%s %s should expose mobile bottom nav: %s" % [size_name, route, nav_label])
+			if route == &"main_menu":
+				_assert(_count_labels_containing(_app, "Evolvria") >= 1, "%s main menu should render the game title" % size_name)
+				_assert(_has_button_text(_app, "新建世界"), "%s main menu should expose new world action" % size_name)
+			elif route == &"onboarding":
+				_assert(_count_labels_containing(_app, "初始化配置") >= 1, "%s onboarding should render first-run setup" % size_name)
+				_assert(_count_labels_containing(_app, "默认渠道商：Glosc AI") >= 1, "%s onboarding should default to Glosc AI" % size_name)
+				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s onboarding should expose Glosc AI key acquisition link" % size_name)
+				_assert(_has_button_text(_app, "保存并开始"), "%s onboarding should expose setup completion" % size_name)
 			elif route == &"new_world":
-				_assert(_count_labels_containing(_app, "步骤 1 / 5") >= 1, "%s new world should render a five-step wizard" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "下一步"), "%s new world should expose next-step navigation" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "世界基调") >= 1, "%s new world should start at world setup" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "步骤 1 / 5") >= 1, "%s new world should render a five-step wizard" % size_name)
+				_assert(_has_button_text(_app, "下一步"), "%s new world should expose next-step navigation" % size_name)
+				_assert(_count_labels_containing(_app, "世界基调") >= 1, "%s new world should start at world setup" % size_name)
 			elif route == &"timeline":
-				_assert(_count_labels_containing(_app, "长列表事件") <= 30, "%s timeline should paginate long event lists" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "加载更多事件"), "%s timeline should expose load-more control" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "原因：测试原因") >= 1, "%s timeline should show action outcome reasons" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "长列表事件") <= 30, "%s timeline should paginate long event lists" % size_name)
+				_assert(_has_button_text(_app, "加载更多事件"), "%s timeline should expose load-more control" % size_name)
+				_assert(_count_labels_containing(_app, "原因：测试原因") >= 1, "%s timeline should show action outcome reasons" % size_name)
 			elif route == &"world_lore":
-				_assert(_count_labels_containing(_app, "ai_perf_") <= 8, "%s world lore should paginate AI logs" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "加载更多日志"), "%s world lore should expose AI log load-more control" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "运行一致性检查"), "%s world lore should expose an explicit consistency_check action" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "抽取最近事件记忆"), "%s world lore should expose an explicit memory_extract action" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "AI 整理阶段摘要"), "%s world lore should expose an explicit summary_update action" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "开发者状态查看器") >= 1, "%s world lore should expose developer state viewer when enabled" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "复制状态 JSON"), "%s world lore should allow copying state JSON" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "添加调试事件"), "%s world lore should expose debug event editor" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "ai_perf_") <= 8, "%s world lore should paginate AI logs" % size_name)
+				_assert(_has_button_text(_app, "加载更多日志"), "%s world lore should expose AI log load-more control" % size_name)
+				_assert(_has_button_text(_app, "运行一致性检查"), "%s world lore should expose an explicit consistency_check action" % size_name)
+				_assert(_has_button_text(_app, "抽取最近事件记忆"), "%s world lore should expose an explicit memory_extract action" % size_name)
+				_assert(_has_button_text(_app, "AI 整理阶段摘要"), "%s world lore should expose an explicit summary_update action" % size_name)
+				_assert(_count_labels_containing(_app, "开发者状态查看器") >= 1, "%s world lore should expose developer state viewer when enabled" % size_name)
+				_assert(_has_button_text(_app, "复制状态 JSON"), "%s world lore should allow copying state JSON" % size_name)
+				_assert(_has_button_text(_app, "添加调试事件"), "%s world lore should expose debug event editor" % size_name)
 			elif route == &"exploration":
-				_assert(_count_labels_containing(_app, "同行角色") >= 1, "%s exploration should show companions panel" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "附近地点") >= 1, "%s exploration should show nearby locations panel" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "后果：测试后果") >= 1, "%s exploration should show action outcome consequences" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "发送前预估") >= 1, "%s exploration should show AI usage estimate" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "复制当前叙事"), "%s exploration should allow copying narrative text" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "同行角色") >= 1, "%s exploration should show companions panel" % size_name)
+				_assert(_count_labels_containing(_app, "附近地点") >= 1, "%s exploration should show nearby locations panel" % size_name)
+				_assert(_count_labels_containing(_app, "后果：测试后果") >= 1, "%s exploration should show action outcome consequences" % size_name)
+				_assert(_count_labels_containing(_app, "发送前预估") >= 1, "%s exploration should show AI usage estimate" % size_name)
+				_assert(_has_button_text(_app, "复制当前叙事"), "%s exploration should allow copying narrative text" % size_name)
 			elif route == &"map":
-				_assert(_count_labels_containing(_app, "地点详情") >= 1, "%s map should show selected location details beside the map" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "显示未知地点（0）"), "%s map should expose unknown location visibility toggle" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "进入地图主视图"), "%s map should expose a map-as-main-view toggle" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "平移（方向键/WASD）") >= 1, "%s map should expose keyboard-accessible pan controls" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "手柄十字键") >= 1, "%s map should expose controller-accessible pan guidance" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "长按地图") >= 1, "%s map should expose mobile long-press marker placement guidance" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "点击地点查看详情") >= 1, "%s map should make location selection before movement explicit" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "地点详情") >= 1, "%s map should show selected location details beside the map" % size_name)
+				_assert(_has_button_text(_app, "显示未知地点（0）"), "%s map should expose unknown location visibility toggle" % size_name)
+				_assert(_has_button_text(_app, "进入地图主视图"), "%s map should expose a map-as-main-view toggle" % size_name)
+				_assert(_has_button_text(_app, "生成幻想地图"), "%s map should expose local fantasy map generation" % size_name)
+				_assert(_has_button_text(_app, "从参考图生成地图"), "%s map should expose reference-image map generation" % size_name)
+				_assert(_count_labels_containing(_app, "平移（方向键/WASD）") >= 1, "%s map should expose keyboard-accessible pan controls" % size_name)
+				_assert(_count_labels_containing(_app, "手柄十字键") >= 1, "%s map should expose controller-accessible pan guidance" % size_name)
+				_assert(_count_labels_containing(_app, "长按地图") >= 1, "%s map should expose mobile long-press marker placement guidance" % size_name)
+				_assert(_count_labels_containing(_app, "点击地点查看详情") >= 1, "%s map should make location selection before movement explicit" % size_name)
 			elif route == &"characters":
-				_assert(_has_button_text(_app, "离开同行"), "%s characters should allow companions to leave" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "邀请同行"), "%s characters should allow inviting companions" % size_data.get("name", ""))
+				_assert(_has_button_text(_app, "离开同行"), "%s characters should allow companions to leave" % size_name)
+				_assert(_has_button_text(_app, "邀请同行"), "%s characters should allow inviting companions" % size_name)
 				for filter_label in ["全部", "同行", "敌对", "已遇见", "仅听闻"]:
-					_assert(_has_button_text(_app, filter_label), "%s characters should expose filter: %s" % [size_data.get("name", ""), filter_label])
-				_assert(_count_labels_containing(_app, "最近相关事件") >= 1, "%s characters should show recent related events" % size_data.get("name", ""))
+					_assert(_has_button_text(_app, filter_label), "%s characters should expose filter: %s" % [size_name, filter_label])
+				_assert(_count_labels_containing(_app, "最近相关事件") >= 1, "%s characters should show recent related events" % size_name)
 			elif route == &"saves":
-				_assert(_count_labels_containing(_app, "系统文件选择器、分享面板") >= 1, "%s saves should explain cross-platform ZIP handoff" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "导出后可在这里复制 ZIP 路径") >= 1, "%s saves should expose last-export affordance placeholder" % size_data.get("name", ""))
+				_assert(_count_labels_containing(_app, "系统文件选择器、分享面板") >= 1, "%s saves should explain cross-platform ZIP handoff" % size_name)
+				_assert(_count_labels_containing(_app, "导出后可在这里复制 ZIP 路径") >= 1, "%s saves should expose last-export affordance placeholder" % size_name)
 			elif route == &"settings":
-				_assert(_has_check_text(_app, "显示消耗预估"), "%s settings should expose usage estimate toggle" % size_data.get("name", ""))
-				_assert(_has_check_text(_app, "AI 响应后自动保存"), "%s settings should expose auto-save toggle" % size_data.get("name", ""))
-				_assert(_has_check_text(_app, "开发者模式"), "%s settings should expose developer mode toggle" % size_data.get("name", ""))
-				_assert(_has_check_text(_app, "全屏模式"), "%s settings should expose fullscreen window mode toggle" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "上下文面板宽度") >= 1, "%s settings should expose adjustable context panel width" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "应用布局设置"), "%s settings should allow applying layout width settings" % size_data.get("name", ""))
-				_assert(_has_check_text(_app, "我理解访问令牌会保存在本机设置文件中"), "%s settings should expose local token risk acknowledgement" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "连接状态") >= 1, "%s settings should show Glosc connection status" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "AI 请求前状态") >= 1, "%s settings should describe AI pre-request recovery" % size_data.get("name", ""))
-				_assert(_count_labels_containing(_app, "settings.json") >= 1, "%s settings should explain local token storage risk" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "没有key?现在获取"), "%s settings should expose Glosc AI key acquisition link" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "测试连接"), "%s settings should expose Glosc connection test" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "清除 AI 日志"), "%s settings should expose AI log clearing" % size_data.get("name", ""))
-				_assert(_has_button_text(_app, "重置所有设置"), "%s settings should expose settings reset" % size_data.get("name", ""))
+				_assert(_has_check_text(_app, "显示消耗预估"), "%s settings should expose usage estimate toggle" % size_name)
+				_assert(_has_check_text(_app, "AI 响应后自动保存"), "%s settings should expose auto-save toggle" % size_name)
+				_assert(_has_check_text(_app, "开发者模式"), "%s settings should expose developer mode toggle" % size_name)
+				_assert(_has_check_text(_app, "全屏模式"), "%s settings should expose fullscreen window mode toggle" % size_name)
+				_assert(_count_labels_containing(_app, "上下文面板宽度") >= 1, "%s settings should expose adjustable context panel width" % size_name)
+				_assert(_has_button_text(_app, "应用布局设置"), "%s settings should allow applying layout width settings" % size_name)
+				_assert(_has_check_text(_app, "我理解访问令牌会保存在本机设置文件中"), "%s settings should expose local token risk acknowledgement" % size_name)
+				_assert(_count_labels_containing(_app, "连接状态") >= 1, "%s settings should show Glosc connection status" % size_name)
+				_assert(_count_labels_containing(_app, "AI 请求前状态") >= 1, "%s settings should describe AI pre-request recovery" % size_name)
+				_assert(_count_labels_containing(_app, "settings.json") >= 1, "%s settings should explain local token storage risk" % size_name)
+				_assert(_has_button_text(_app, "获取 Glosc AI Key"), "%s settings should expose Glosc AI key acquisition link" % size_name)
+				_assert(_has_button_text(_app, "测试连接"), "%s settings should expose Glosc connection test" % size_name)
+				_assert(_has_button_text(_app, "清除 AI 日志"), "%s settings should expose AI log clearing" % size_name)
+				_assert(_has_button_text(_app, "重置所有设置"), "%s settings should expose settings reset" % size_name)
+		for step in range(1, 6):
+			_app.set("_new_world_step", step)
+			AppState.navigate(&"new_world")
+			_app.call("_render")
+			await _settle()
+			_assert_layout_health("%s new_world_step_%d" % [size_name, step])
+			_assert(_count_labels_containing(_app, "步骤 %d / 5" % step) >= 1, "%s new world step %d should render its progress label" % [size_name, step])
+		AppState.navigate(&"map")
+		_app.set("_map_focus_mode", true)
+		_app.call("_render")
+		await _settle()
+		_assert_layout_health("%s map_focus" % size_name)
+		_assert(_count_labels_containing(_app, "地图主视图") >= 1, "%s map focus should render main view title" % size_name)
+		_app.set("_map_focus_mode", false)
+	_app.set("_new_world_step", 1)
 	AppState.navigate(&"new_world")
 	await _settle()
 	_assert(_press_button_text(_app, "下一步"), "new world wizard should advance to protagonist step")
@@ -238,6 +261,14 @@ func _seed_long_lists() -> void:
 			"usage": {"input_tokens": 1, "output_tokens": 1, "cost": null}
 		}, "长日志分页 fixture")
 
+func _assert_layout_health(context: String, min_visible_controls: int = 12) -> void:
+	_assert(_app.get_child_count() > 0, "%s should render root children" % context)
+	_assert(_count_visible_controls(_app) >= min_visible_controls, "%s should render a usable control tree" % context)
+	_assert(_has_positive_rect(_app), "%s should have positive root rect" % context)
+	_assert(_count_visible_horizontal_scrollbars(_app) == 0, "%s should not expose horizontal scrollbars" % context)
+	var button_issue := _find_unreadable_button(_app)
+	_assert(button_issue.is_empty(), "%s should keep button text readable: %s" % [context, button_issue])
+
 func _count_visible_controls(root: Node) -> int:
 	var count := 0
 	if root is Control and (root as Control).visible:
@@ -258,6 +289,29 @@ func _count_visible_horizontal_scrollbars(root: Node) -> int:
 	for child in root.get_children():
 		count += _count_visible_horizontal_scrollbars(child)
 	return count
+
+func _find_unreadable_button(root: Node) -> String:
+	if root is Button:
+		var button := root as Button
+		var text := str(button.text).strip_edges()
+		if button.is_visible_in_tree() and not text.is_empty():
+			var font := button.get_theme_font("font")
+			var font_size := button.get_theme_font_size("font_size")
+			var stylebox := button.get_theme_stylebox("normal")
+			var horizontal_padding := 0.0
+			if stylebox != null:
+				horizontal_padding = stylebox.get_margin(SIDE_LEFT) + stylebox.get_margin(SIDE_RIGHT)
+			var text_width := 0.0
+			if font != null:
+				text_width = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1.0, font_size).x
+			var available_width := button.size.x - horizontal_padding
+			if available_width + 1.0 < text_width:
+				return "\"%s\" needs %.1f px text space, has %.1f px" % [text, text_width, available_width]
+	for child in root.get_children():
+		var issue := _find_unreadable_button(child)
+		if not issue.is_empty():
+			return issue
+	return ""
 
 func _count_labels_containing(root: Node, text: String) -> int:
 	var count := 0

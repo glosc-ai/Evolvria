@@ -12,8 +12,19 @@ var last_notice: String = ""
 func navigate(route: StringName) -> void:
 	if current_route == route:
 		return
+	# Banners are per-screen. Clear them on every route change so a message set on
+	# one screen never leaks onto the next. Callers that want a message to appear
+	# on the destination should call navigate() first, then set_notice/set_error,
+	# or use navigate_with_notice().
+	last_error = ""
+	last_notice = ""
 	current_route = route
 	route_changed.emit(route)
+
+func navigate_with_notice(route: StringName, notice: String) -> void:
+	navigate(route)
+	if not notice.is_empty():
+		set_notice(notice)
 
 func set_current_world(world_id: String) -> void:
 	current_world_id = world_id

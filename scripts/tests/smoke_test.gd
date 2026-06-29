@@ -64,6 +64,29 @@ func _run() -> void:
 	_assert(WorldStore.threads.size() >= 2, "initial threads should be created")
 	_assert(str(WorldStore.world.get("narrative_detail", "")) == "详细", "world should preserve narrative detail preference")
 	_assert(str(WorldStore.world.get("npc_autonomy_frequency", "")) == "高频", "world should preserve NPC autonomy preference")
+	var generated_map := WorldStore.world.get("map_image", {}) as Dictionary
+	_assert(not generated_map.is_empty(), "world creation should generate a fantasy map image")
+	_assert(FileAccess.file_exists(str(generated_map.get("image_path", ""))), "generated fantasy map image should exist")
+	var generated_meta := generated_map.get("generator", {}) as Dictionary
+	_assert(str(generated_meta.get("source_project", "")) == "Azgaar/Fantasy-Map-Generator", "generated map should preserve Azgaar source attribution")
+	_assert(str(generated_meta.get("source_license", "")) == "MIT", "generated map should preserve source license metadata")
+	_assert(not WorldStore.get_map_routes().is_empty(), "generated map should create initial map routes")
+	_assert(not str(WorldStore.get_location("loc_start").get("biome", "")).is_empty(), "generated map should annotate locations with biomes")
+	_verify_ai_can_parse_map_context()
+	var reference_map_path := "user://reference_map_fixture.png"
+	_assert(_create_reference_map_fixture(reference_map_path), "reference map fixture should be created")
+	_assert(WorldStore.generate_fantasy_map_from_reference(reference_map_path, "参考图烟测地图"), "reference image should generate a structured map")
+	var reference_map := WorldStore.world.get("map_image", {}) as Dictionary
+	var reference_meta := reference_map.get("generator", {}) as Dictionary
+	_assert(str(reference_meta.get("mode", "")) == "reference_image", "reference-generated map should store generator mode")
+	var reference_features := reference_meta.get("reference_features", {}) as Dictionary
+	_assert(float(reference_features.get("land_ratio", 0.0)) > 0.2, "reference generation should detect land")
+	_assert(float(reference_features.get("water_ratio", 0.0)) > 0.1, "reference generation should detect water")
+	_assert(int(reference_features.get("region_border_pixels", 0)) > 0, "reference generation should detect red region borders")
+	var reference_context := WorldStore.build_map_ai_context()
+	var reference_borders := reference_context.get("region_borders", {}) as Dictionary
+	_assert(bool(reference_borders.get("generated", false)), "AI map context should expose reference region borders")
+	_verify_ai_can_parse_map_context()
 	_assert("char_001" in WorldStore.get_companion_ids(), "initial companion relationship should create a companion")
 	_assert(str(WorldStore.get_character("char_001").get("current_location_id", "")) == str(WorldStore.get_current_location().get("id", "")), "companions should start with the player")
 	_assert(str(WorldStore.get_character("char_001").get("action_tendency", "")).contains("保护主角"), "key character action tendency should be stored")
@@ -339,7 +362,8 @@ func _run() -> void:
 	_assert(nearby_route_match, "nearby location context should include route metadata")
 	_assert(WorldStore.delete_location(location_id), "custom location should be deletable")
 	_assert(WorldStore.get_location(location_id).is_empty(), "deleted location should be gone")
-	_assert(WorldStore.get_map_routes().is_empty(), "deleting a location should remove related routes")
+	_assert(WorldStore.get_route_between(current_location_for_route, location_id).is_empty(), "deleting a location should remove related routes")
+	_assert(not WorldStore.get_map_routes().is_empty(), "deleting a custom location should preserve generated base routes")
 	var smoke_map_path := "user://smoke_map.png"
 	var image := Image.create_empty(32, 24, false, Image.FORMAT_RGBA8)
 	image.fill(Color(0.22, 0.18, 0.12, 1.0))
@@ -459,6 +483,77 @@ func _run() -> void:
 	print("Evolvria smoke test passed: %d events, %d memories" % [WorldStore.timeline.size(), WorldStore.memories.size()])
 	WorldStore.reset_world()
 	get_tree().quit()
+
+func _create_reference_map_fixture(path: String) -> bool:
+	var image := Image.create_empty(192, 128, false, Image.FORMAT_RGBA8)
+	image.fill(Color("#1c376a"))
+	var center := Vector2(92, 64)
+	for y in range(image.get_height()):
+		for x in range(image.get_width()):
+			var p := Vector2(x, y)
+			var normalized := Vector2((p.x - center.x) / 74.0, (p.y - center.y) / 48.0)
+			var wobble := sin(float(y) * 0.18) * 0.1 + cos(float(x) * 0.12) * 0.08
+			if normalized.length() < 1.0 + wobble:
+				var color := Color("#537e4f")
+				if x > 72 and x < 132 and y > 30 and y < 82:
+					color = Color("#b49a6f")
+				if abs(x - 70) < 5 and y > 20 and y < 106:
+					color = Color("#d6d8d3")
+				image.set_pixel(x, y, color)
+	_draw_fixture_line(image, Vector2(30, 48), Vector2(146, 36), Color("#ff1414"), 2)
+	_draw_fixture_line(image, Vector2(52, 28), Vector2(70, 106), Color("#ff1414"), 2)
+	_draw_fixture_line(image, Vector2(82, 84), Vector2(152, 94), Color("#ff1414"), 2)
+	_paint_fixture_disc(image, Vector2(120, 48), 4, Color("#101010"))
+	return image.save_png(path) == OK
+
+func _draw_fixture_line(image: Image, start: Vector2, end: Vector2, color: Color, width: int) -> void:
+	var delta := end - start
+	var steps := int(maxf(absf(delta.x), absf(delta.y)))
+	for step in range(steps + 1):
+		var t := float(step) / maxf(float(steps), 1.0)
+		_paint_fixture_disc(image, start.lerp(end, t), width, color)
+
+func _paint_fixture_disc(image: Image, center: Vector2, radius: int, color: Color) -> void:
+	var min_x := clampi(int(floor(center.x)) - radius, 0, image.get_width() - 1)
+	var max_x := clampi(int(ceil(center.x)) + radius, 0, image.get_width() - 1)
+	var min_y := clampi(int(floor(center.y)) - radius, 0, image.get_height() - 1)
+	var max_y := clampi(int(ceil(center.y)) + radius, 0, image.get_height() - 1)
+	for y in range(min_y, max_y + 1):
+		for x in range(min_x, max_x + 1):
+			if Vector2(x, y).distance_to(center) <= float(radius):
+				image.set_pixel(x, y, color)
+
+func _verify_ai_can_parse_map_context() -> void:
+	var context := WorldStore.build_ai_context("解析地形、海岸、河流、地点和路线")
+	var map_state := context.get("map_state", {}) as Dictionary
+	_assert(not map_state.is_empty(), "AI context should include map_state")
+	var serialized := JSON.stringify({"context": context})
+	for key in ["terrain", "coastlines", "rivers", "locations", "routes"]:
+		_assert(serialized.contains("\"%s\"" % key), "serialized AI payload should include map key: %s" % key)
+	var parser := JSON.new()
+	_assert(parser.parse(serialized) == OK, "serialized AI map payload should parse as JSON")
+	var parsed_payload := parser.data as Dictionary
+	var parsed_context := parsed_payload.get("context", {}) as Dictionary
+	var parsed_map := parsed_context.get("map_state", {}) as Dictionary
+	var terrain := parsed_map.get("terrain", {}) as Dictionary
+	var coastlines := parsed_map.get("coastlines", {}) as Dictionary
+	var rivers := parsed_map.get("rivers", {}) as Dictionary
+	var parsed_locations: Array = parsed_map.get("locations", [])
+	var parsed_routes: Array = parsed_map.get("routes", [])
+	_assert(not terrain.is_empty() and terrain.has("height_scale") and terrain.has("biomes"), "AI should parse terrain metadata")
+	_assert(bool(coastlines.get("generated", false)) and not str(coastlines.get("source", "")).is_empty(), "AI should parse coastline metadata")
+	_assert(bool(rivers.get("generated", false)) and int(rivers.get("count", 0)) > 0, "AI should parse river metadata")
+	_assert(not parsed_locations.is_empty(), "AI should parse map locations")
+	var first_location := parsed_locations[0] as Dictionary
+	_assert((first_location.get("position", {}) as Dictionary).has("x"), "AI parsed locations should include normalized x coordinate")
+	_assert((first_location.get("position", {}) as Dictionary).has("y"), "AI parsed locations should include normalized y coordinate")
+	_assert(not str(first_location.get("biome", "")).is_empty(), "AI parsed locations should include biome")
+	_assert(first_location.has("height"), "AI parsed locations should include height")
+	_assert(not parsed_routes.is_empty(), "AI should parse map routes")
+	var first_route := parsed_routes[0] as Dictionary
+	_assert(not str(first_route.get("from_location_id", "")).is_empty() and not str(first_route.get("to_location_id", "")).is_empty(), "AI parsed routes should include endpoints")
+	var estimate := AIService.estimate_usage("player_action", {"action": "解析地图", "context": context})
+	_assert(int(estimate.get("total_tokens", 0)) > 0, "AI usage estimator should accept map-aware context")
 
 func _assert(condition: bool, message: String) -> void:
 	if condition:

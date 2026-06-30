@@ -152,6 +152,15 @@ func _run() -> void:
 			await _settle()
 			_assert_layout_health("%s new_world_step_%d" % [size_name, step])
 			_assert(_count_labels_containing(_app, "步骤 %d / 5" % step) >= 1, "%s new world step %d should render its progress label" % [size_name, step])
+			if step == 3:
+				_assert(_count_labels_containing(_app, "解析预览") >= 1, "%s new world step 3 should preview parsed key characters" % size_name)
+			elif step == 5:
+				_assert(_count_labels_containing(_app, "关键角色解析") >= 1, "%s new world step 5 should show parsed key character fields" % size_name)
+				_assert(_count_labels_containing(_app, "内容偏好/禁用") >= 1, "%s new world step 5 should show content preferences" % size_name)
+				_assert(_count_labels_containing(_app, "主角能力/弱点") >= 1, "%s new world step 5 should show hero ability and weakness" % size_name)
+				_assert(_count_labels_containing(_app, "行动倾向") >= 1, "%s new world step 5 should show key character action tendency" % size_name)
+				_assert(_is_button_inside_viewport(_app, "确认并开始扩写"), "%s new world final action should stay visible without scrolling" % size_name)
+				_assert(not _button_has_scroll_ancestor(_app, "确认并开始扩写"), "%s new world final action should be fixed outside the scrollable content" % size_name)
 		AppState.navigate(&"map")
 		_app.set("_map_focus_mode", true)
 		_app.call("_render")
@@ -170,6 +179,19 @@ func _run() -> void:
 	_assert(_has_button_text(_app, "+ 添加角色模板"), "new world wizard step 3 should allow adding key character rows")
 	_assert(_has_button_text(_app, "+ 添加主线角色模板（女主/女二/女三/男二）"), "new world wizard step 3 should expose required main-cast templates")
 	_assert(_count_labels_containing(_app, "女主、女二、女三、男二") >= 1, "new world wizard step 3 should explain main-cast coverage")
+	var parsed_space := _app.call("_parse_key_characters", "Mira heroine ally calm archive_search protects_hero secret_keeper") as Array
+	_assert(parsed_space.size() == 1, "key character parser should accept space-delimited text")
+	var space_character := parsed_space[0] as Dictionary
+	_assert(str(space_character.get("name", "")) == "Mira", "space-delimited key character should keep the first token as name")
+	_assert(str(space_character.get("role", "")) == "heroine", "space-delimited key character should parse role")
+	_assert(str(space_character.get("relationship", "")) == "ally", "space-delimited key character should parse relationship")
+	_assert(str(space_character.get("action_tendency", "")) == "protects_hero", "space-delimited key character should parse action tendency")
+	var parsed_labeled := _app.call("_parse_key_characters", "姓名:璃安 身份:女主 关系:同行 性格:温和,谨慎 目标:追查旧徽记 行动:保护主角 简述:隐藏秘密") as Array
+	_assert(parsed_labeled.size() == 1, "key character parser should accept labeled text")
+	var labeled_character := parsed_labeled[0] as Dictionary
+	_assert(str(labeled_character.get("name", "")) == "璃安", "labeled key character should parse name")
+	_assert(str(labeled_character.get("role", "")) == "女主", "labeled key character should parse role")
+	_assert(str(labeled_character.get("description", "")) == "隐藏秘密", "labeled key character should parse description")
 	_assert(_press_button_text(_app, "下一步"), "new world wizard should advance to preferences step")
 	await _settle()
 	_assert(_count_labels_containing(_app, "NPC 自主行动频率") >= 1, "new world wizard step 4 should expose NPC autonomy preference")
@@ -178,6 +200,8 @@ func _run() -> void:
 	await _settle()
 	_assert(_count_labels_containing(_app, "确认世界设定") >= 1, "new world wizard step 5 should show a pre-generation preview panel")
 	_assert(_count_labels_containing(_app, "预计 AI 调用") >= 1, "new world wizard preview should include AI usage estimate")
+	_assert(_count_labels_containing(_app, "内容偏好/禁用") >= 1, "new world wizard preview should include content preferences")
+	_assert(_count_labels_containing(_app, "主角能力/弱点") >= 1, "new world wizard preview should include protagonist ability and weakness")
 	_assert(_has_button_text(_app, "确认并开始扩写"), "new world wizard should expose final generation action")
 	_assert(_press_button_text(_app, "上一步"), "new world wizard should allow returning from confirmation")
 	await _settle()
@@ -190,6 +214,28 @@ func _run() -> void:
 	_assert(_has_button_text(_app, "退出主视图"), "map focus mode should expose an exit control")
 	_assert(_press_button_text(_app, "退出主视图"), "map focus mode should be exitable")
 	await _settle()
+	AppState.navigate(&"map")
+	await _settle()
+	_assert(_has_button_text(_app, "从参考图生成地图"), "reference map generation should expose a file chooser action")
+	_app.call("_open_reference_map_file_dialog")
+	await _settle()
+	_close_file_dialogs(get_tree().root)
+	await _settle()
+	var zoom_before := float(_app.get("_map_zoom"))
+	var wheel_event := InputEventMouseButton.new()
+	wheel_event.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel_event.pressed = true
+	wheel_event.position = Vector2(120, 120)
+	_assert(bool(_app.call("_handle_map_mouse_button", wheel_event)), "map wheel zoom should be handled")
+	await _settle()
+	_assert(float(_app.get("_map_zoom")) > zoom_before, "map wheel zoom should increase zoom")
+	var pinch_before := float(_app.get("_map_zoom"))
+	var magnify_event := InputEventMagnifyGesture.new()
+	magnify_event.factor = 1.12
+	magnify_event.position = Vector2(140, 140)
+	_assert(bool(_app.call("_handle_map_magnify_gesture", magnify_event)), "map magnify gesture should be handled")
+	await _settle()
+	_assert(float(_app.get("_map_zoom")) > pinch_before, "map magnify gesture should increase zoom")
 	AppState.navigate(&"characters")
 	await _settle()
 	_assert(_press_button_text(_app, "敌对"), "hostile character filter should be pressable")
@@ -231,6 +277,10 @@ func _run() -> void:
 	_assert(_press_button_text(_app, "取消删除"), "delete cancel button should be pressable")
 	await _settle()
 	_assert(WorldStore.has_world(), "cancelled delete should keep world")
+	WorldStore.reset_world()
+	AppState.navigate(&"main_menu")
+	await _settle()
+	_assert(_count_labels_containing(_app, "暂无可继续的本地世界") >= 1, "main menu should explain disabled continue when no local world exists")
 	print("Evolvria UI breakpoint test passed: %d sizes x %d routes" % [sizes.size(), routes.size()])
 	SettingsStore.settings["confirm_ai_calls"] = _previous_confirm_ai_calls
 	SettingsStore.settings["show_usage_estimate"] = _previous_show_usage_estimate
@@ -356,6 +406,38 @@ func _press_button_text(root: Node, text: String) -> bool:
 		if _press_button_text(child, text):
 			return true
 	return false
+
+func _is_button_inside_viewport(root: Node, text: String) -> bool:
+	if root is Button and str((root as Button).text) == text:
+		var button := root as Button
+		if not button.is_visible_in_tree():
+			return false
+		var viewport_rect := get_viewport().get_visible_rect()
+		return viewport_rect.encloses(button.get_global_rect())
+	for child in root.get_children():
+		if _is_button_inside_viewport(child, text):
+			return true
+	return false
+
+func _button_has_scroll_ancestor(root: Node, text: String) -> bool:
+	if root is Button and str((root as Button).text) == text:
+		var parent := root.get_parent()
+		while parent != null:
+			if parent is ScrollContainer:
+				return true
+			parent = parent.get_parent()
+		return false
+	for child in root.get_children():
+		if _button_has_scroll_ancestor(child, text):
+			return true
+	return false
+
+func _close_file_dialogs(root: Node) -> void:
+	if root is Window and str((root as Window).title).contains("选择"):
+		root.queue_free()
+		return
+	for child in root.get_children(true):
+		_close_file_dialogs(child)
 
 func _has_check_text(root: Node, text: String) -> bool:
 	if root is CheckBox and str((root as CheckBox).text) == text:

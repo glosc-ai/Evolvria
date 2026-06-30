@@ -457,11 +457,13 @@ func _run() -> void:
 	var status_summary := AIService.glosc_status_summary(invalid_status)
 	_assert(str(status_summary.get("label", "")) == "连接异常", "failed Glosc status should be visible in summary")
 	var timeline_before_failed_remote := WorldStore.timeline.size()
-	await WorldStore.submit_player_action("验证无效远端配置不会推进世界")
-	_assert(WorldStore.timeline.size() == timeline_before_failed_remote, "failed remote AI call should not mutate timeline")
-	_assert(not WorldStore.ai_logs.is_empty(), "failed remote AI call should create an AI log")
-	_assert(str(WorldStore.ai_logs.back().get("status", "")) != "ok", "failed remote AI log should not be ok")
-	_assert(int(WorldStore.get_ai_usage_summary().get("failed_count", 0)) >= 1, "usage summary should count failed calls")
+	await WorldStore.submit_player_action("验证无效远端配置会使用本地回退")
+	_assert(WorldStore.timeline.size() == timeline_before_failed_remote + 1, "failed remote AI call should continue through local fallback")
+	_assert(not WorldStore.ai_logs.is_empty(), "remote fallback should create an AI log")
+	var fallback_log := WorldStore.ai_logs.back() as Dictionary
+	_assert(str(fallback_log.get("status", "")) == "ok", "remote fallback AI log should be ok")
+	_assert(bool(fallback_log.get("remote_fallback", false)), "remote fallback AI log should mark fallback usage")
+	_assert(not str(fallback_log.get("remote_error", "")).is_empty(), "remote fallback AI log should keep the remote error")
 	SettingsStore.settings["glosc_base_url"] = previous_base_url
 	SettingsStore.settings["glosc_token"] = previous_token
 	SettingsStore.settings["auto_retry"] = previous_auto_retry

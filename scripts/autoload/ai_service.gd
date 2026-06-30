@@ -7,6 +7,7 @@ signal ai_confirmation_requested(request_id: String, purpose: String, summary: S
 
 const MAX_RESPONSE_BYTES := 524288
 const DEFAULT_GLOSC_MODEL := "deepseek/deepseek-v4-pro"
+const GLOSC_USER_AGENT := "Evolvria/0.1 Godot/4.7"
 
 var _request_counter: int = 0
 var pending_confirmation: Dictionary = {}
@@ -81,6 +82,9 @@ func glosc_status_summary(status: Dictionary = {}) -> Dictionary:
 		if bool(status.get("ok", false)):
 			label = "已连接"
 			detail = str(status.get("message", "Glosc One 连接测试通过。"))
+		elif bool(status.get("models_ok", false)) and not bool(status.get("chat_ok", false)):
+			label = "Chat 异常"
+			detail = str(status.get("error", "模型列表可用，但 chat/completions 不可用。"))
 		else:
 			label = "连接异常"
 			detail = str(status.get("error", "Glosc One 连接测试失败。"))
@@ -97,11 +101,31 @@ func glosc_status_summary(status: Dictionary = {}) -> Dictionary:
 	}
 
 func check_glosc_connection() -> Dictionary:
-	return await fetch_glosc_models(
-		str(SettingsStore.get_value("glosc_base_url", "")),
-		str(SettingsStore.get_value("glosc_token", "")),
-		str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
-	)
+	var base_url := str(SettingsStore.get_value("glosc_base_url", ""))
+	var token := str(SettingsStore.get_value("glosc_token", ""))
+	var configured_model := str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL))
+	var models_status := await fetch_glosc_models(base_url, token, configured_model)
+	if not bool(models_status.get("ok", false)):
+		models_status["models_ok"] = false
+		models_status["chat_ok"] = false
+		return models_status
+	var chat_status := await fetch_glosc_chat_status(base_url, token, configured_model)
+	var combined := models_status.duplicate(true)
+	combined["models_ok"] = true
+	combined["chat_ok"] = bool(chat_status.get("ok", false))
+	combined["chat_checked_at"] = str(chat_status.get("checked_at", ""))
+	if bool(chat_status.get("ok", false)):
+		combined["ok"] = true
+		combined["status"] = "ok"
+		combined["message"] = "Glosc One 连接测试通过：models 与 chat/completions 均可用。"
+		combined["retryable"] = false
+	else:
+		var chat_error := str(chat_status.get("error", "chat/completions 测试失败。"))
+		combined["ok"] = false
+		combined["status"] = "error"
+		combined["error"] = "模型列表可用，但 chat/completions 不可用：%s" % chat_error
+		combined["retryable"] = bool(chat_status.get("retryable", false))
+	return combined
 
 func fetch_glosc_models(base_url: String, token: String, configured_model: String = "") -> Dictionary:
 	var request_id := _next_request_id()
@@ -113,6 +137,7 @@ func fetch_glosc_models(base_url: String, token: String, configured_model: Strin
 		return _glosc_status_result(request_id, false, "Glosc One 访问令牌为空。", {}, false)
 	var headers := [
 		"Accept: application/json",
+		"User-Agent: %s" % GLOSC_USER_AGENT,
 		"Authorization: Bearer %s" % access_token
 	]
 	var response := await _http_client_request(HTTPClient.METHOD_GET, endpoint, headers)
@@ -128,7 +153,54 @@ func fetch_glosc_models(base_url: String, token: String, configured_model: Strin
 		for key in models.keys():
 			parsed[key] = models[key]
 		return _glosc_status_result(request_id, true, "Glosc One 连接测试通过。", parsed, false)
-	return _glosc_status_result(request_id, false, _http_error_message(status_code), {"http_status": status_code}, _is_retryable_status(status_code))
+	return _glosc_status_result(request_id, false, _http_error_message(status_code, body), {"http_status": status_code}, _is_retryable_status(status_code))
+
+func fetch_glosc_chat_status(base_url: String, token: String, configured_model: String = "") -> Dictionary:
+	var request_id := _next_request_id()
+	var endpoint := _resolve_glosc_chat_endpoint(base_url)
+	if endpoint.is_empty():
+		return _glosc_status_result(request_id, false, "Glosc One 服务地址无效。", {"chat_ok": false}, false)
+	var access_token := token.strip_edges()
+	if access_token.is_empty():
+		return _glosc_status_result(request_id, false, "Glosc One 访问令牌为空。", {"chat_ok": false}, false)
+	var model := configured_model.strip_edges()
+	if model.is_empty():
+		model = DEFAULT_GLOSC_MODEL
+	var payload := {
+		"model": model,
+		"messages": [
+			{
+				"role": "system",
+				"content": "你是 Evolvria 的连接测试。只返回合法 JSON，不要输出 JSON 以外的内容。"
+			},
+			{
+				"role": "user",
+				"content": JSON.stringify({
+					"purpose": "connection_check",
+					"output_schema": {"status": "ok", "chat": "ok"}
+				})
+			}
+		],
+		"max_tokens": 80,
+		"temperature": 0.0
+	}
+	var headers := [
+		"Accept: application/json",
+		"Content-Type: application/json",
+		"User-Agent: %s" % GLOSC_USER_AGENT,
+		"Authorization: Bearer %s" % access_token
+	]
+	var response := await _http_client_request(HTTPClient.METHOD_POST, endpoint, headers, JSON.stringify(payload), request_id, "connection_check")
+	if str(response.get("status", "")) != "ok":
+		return _glosc_status_result(request_id, false, str(response.get("error", "Glosc One chat/completions 请求失败。")), {"chat_ok": false}, bool(response.get("retryable", true)))
+	var status_code := int(response.get("http_status", 0))
+	var body := response.get("body", PackedByteArray()) as PackedByteArray
+	if status_code < 200 or status_code >= 300:
+		return _glosc_status_result(request_id, false, _http_error_message(status_code, body), {"chat_ok": false, "http_status": status_code}, _is_retryable_status(status_code))
+	var parsed := parse_response_body(body, request_id, "connection_check")
+	if str(parsed.get("status", "error")) != "ok":
+		return _glosc_status_result(request_id, false, str(parsed.get("error", "Glosc One chat/completions 响应校验失败。")), {"chat_ok": false}, false)
+	return _glosc_status_result(request_id, true, "chat/completions 测试通过。", {"chat_ok": true}, false)
 
 func parse_status_body(body: PackedByteArray) -> Dictionary:
 	if body.is_empty():
@@ -188,10 +260,7 @@ func parse_models_body(body: PackedByteArray, configured_model: String = "") -> 
 	}
 
 func _parse_json_dictionary_from_body(body: PackedByteArray) -> Dictionary:
-	var parser := JSON.new()
-	if parser.parse(body.get_string_from_utf8()) != OK:
-		return {}
-	return parser.data as Dictionary if parser.data is Dictionary else {}
+	return _parse_json_dictionary_from_text(body.get_string_from_utf8())
 
 func _next_request_id() -> String:
 	_request_counter += 1
@@ -203,13 +272,16 @@ func generate_world(seed: Dictionary) -> Dictionary:
 	if not await _confirm_if_needed(request_id, "world_expand", "生成完整世界观、地点、关键角色补全和开局事件。", estimate):
 		return _cancelled_result(request_id, "world_expand")
 	ai_request_started.emit(request_id, "world_expand")
+	var remote_error := ""
 	if SettingsStore.is_glosc_configured():
 		var remote_result := await _call_glosc(request_id, "world_expand", {"seed": seed})
 		if str(remote_result.get("status", "error")) == "ok":
 			ai_request_finished.emit(request_id, remote_result)
-		else:
-			ai_request_failed.emit(request_id, str(remote_result.get("error", "Glosc One 调用失败。")))
-		return remote_result
+			return remote_result
+		if str(remote_result.get("status", "")) == "cancelled":
+			ai_request_failed.emit(request_id, str(remote_result.get("error", "AI 调用已取消。")))
+			return remote_result
+		remote_error = str(remote_result.get("error", "Glosc One 调用失败。"))
 	await get_tree().create_timer(0.35).timeout
 
 	var genre := str(seed.get("genre", "奇幻"))
@@ -241,6 +313,9 @@ func generate_world(seed: Dictionary) -> Dictionary:
 		},
 		"usage": {"input_tokens": 320, "output_tokens": 680, "cost": null}
 	}
+	if not remote_error.is_empty():
+		result["remote_fallback"] = true
+		result["remote_error"] = remote_error
 
 	ai_request_finished.emit(request_id, result)
 	return result
@@ -251,6 +326,7 @@ func resolve_player_action(action: String, snapshot: Dictionary) -> Dictionary:
 	if not await _confirm_if_needed(request_id, "player_action", "处理玩家行动：%s" % action.left(40), estimate):
 		return _cancelled_result(request_id, "player_action")
 	ai_request_started.emit(request_id, "player_action")
+	var remote_error := ""
 	if SettingsStore.is_glosc_configured():
 		var remote_result := await _call_glosc(request_id, "player_action", {
 			"action": action,
@@ -258,9 +334,11 @@ func resolve_player_action(action: String, snapshot: Dictionary) -> Dictionary:
 		})
 		if str(remote_result.get("status", "error")) == "ok":
 			ai_request_finished.emit(request_id, remote_result)
-		else:
-			ai_request_failed.emit(request_id, str(remote_result.get("error", "Glosc One 调用失败。")))
-		return remote_result
+			return remote_result
+		if str(remote_result.get("status", "")) == "cancelled":
+			ai_request_failed.emit(request_id, str(remote_result.get("error", "AI 调用已取消。")))
+			return remote_result
+		remote_error = str(remote_result.get("error", "Glosc One 调用失败。"))
 	await get_tree().create_timer(0.45).timeout
 
 	var location := snapshot.get("current_location", {}) as Dictionary
@@ -323,6 +401,9 @@ func resolve_player_action(action: String, snapshot: Dictionary) -> Dictionary:
 		],
 		"usage": {"input_tokens": 220 + relevant_memories.size() * 32, "output_tokens": 260, "cost": null}
 	}
+	if not remote_error.is_empty():
+		result["remote_fallback"] = true
+		result["remote_error"] = remote_error
 	ai_request_finished.emit(request_id, result)
 	return result
 
@@ -578,15 +659,10 @@ func _cancelled_result(request_id: String, purpose: String) -> Dictionary:
 
 func _call_glosc(request_id: String, purpose: String, input: Dictionary) -> Dictionary:
 	var payload := {
-		"request_id": request_id,
-		"purpose": purpose,
 		"model": str(SettingsStore.get_value("model", DEFAULT_GLOSC_MODEL)),
 		"messages": _build_messages(purpose, input),
-		"response_format": {"type": "json_object"},
-		"metadata": {
-			"world_id": AppState.current_world_id,
-			"schema_version": 1
-		}
+		"max_tokens": _max_output_tokens_for(purpose),
+		"temperature": _temperature_for(purpose)
 	}
 	var max_attempts := 2 if bool(SettingsStore.get_value("auto_retry", true)) else 1
 	var last_result: Dictionary = {}
@@ -605,8 +681,10 @@ func _call_glosc(request_id: String, purpose: String, input: Dictionary) -> Dict
 
 func _call_glosc_once(request_id: String, purpose: String, payload: Dictionary, attempt: int) -> Dictionary:
 	var headers := [
+		"Accept: application/json",
 		"Content-Type: application/json",
-		"Authorization: Bearer %s" % str(SettingsStore.get_value("glosc_token", ""))
+		"User-Agent: %s" % GLOSC_USER_AGENT,
+		"Authorization: Bearer %s" % str(SettingsStore.get_value("glosc_token", "")).strip_edges()
 	]
 	var endpoint := _resolve_glosc_chat_endpoint()
 	if endpoint.is_empty():
@@ -619,7 +697,7 @@ func _call_glosc_once(request_id: String, purpose: String, payload: Dictionary, 
 	var status_code := int(response.get("http_status", 0))
 	var body := response.get("body", PackedByteArray()) as PackedByteArray
 	if status_code < 200 or status_code >= 300:
-		return {"request_id": request_id, "status": "error", "error": _http_error_message(status_code), "http_status": status_code, "retryable": _is_retryable_status(status_code)}
+		return {"request_id": request_id, "status": "error", "error": _http_error_message(status_code, body), "http_status": status_code, "retryable": _is_retryable_status(status_code)}
 	return parse_response_body(body, request_id, purpose, attempt)
 
 func _http_client_request(method: int, endpoint: String, headers: Array, request_body: String = "", request_id: String = "", purpose: String = "", attempt: int = 1) -> Dictionary:
@@ -777,8 +855,8 @@ func _resolve_glosc_models_endpoint(base_url: String = "") -> String:
 	var root := _resolve_glosc_api_root(base_url)
 	return "" if root.is_empty() else "%s/models" % root
 
-func _resolve_glosc_chat_endpoint() -> String:
-	var root := _resolve_glosc_api_root()
+func _resolve_glosc_chat_endpoint(base_url: String = "") -> String:
+	var root := _resolve_glosc_api_root(base_url)
 	return "" if root.is_empty() else "%s/chat/completions" % root
 
 func _resolve_glosc_api_root(base_url: String = "") -> String:
@@ -828,7 +906,7 @@ func _parse_openai_chat_response(data: Dictionary, request_id: String, purpose: 
 			"attempt": attempt
 		}
 	var content_text := str((message as Dictionary).get("content", "")).strip_edges()
-	var parsed_content: Variant = JSON.parse_string(content_text)
+	var parsed_content: Variant = _parse_json_value_from_text(content_text)
 	if not parsed_content is Dictionary:
 		return {
 			"request_id": request_id,
@@ -853,6 +931,51 @@ func _parse_openai_chat_response(data: Dictionary, request_id: String, purpose: 
 	content["purpose"] = str(content.get("purpose", purpose))
 	content["attempt"] = attempt
 	return content
+
+func _parse_json_dictionary_from_text(text: String) -> Dictionary:
+	var parsed: Variant = _parse_json_value_from_text(text)
+	return parsed as Dictionary if parsed is Dictionary else {}
+
+func _parse_json_value_from_text(text: String) -> Variant:
+	var trimmed := text.strip_edges()
+	if trimmed.is_empty():
+		return null
+	var parsed: Variant = _parse_json_value(trimmed)
+	if parsed != null:
+		return parsed
+	var fenced := _extract_fenced_json_text(trimmed)
+	if not fenced.is_empty():
+		parsed = _parse_json_value(fenced)
+		if parsed != null:
+			return parsed
+	var object_text := _extract_json_object_text(trimmed)
+	if not object_text.is_empty() and object_text != trimmed:
+		parsed = _parse_json_value(object_text)
+		if parsed != null:
+			return parsed
+	return null
+
+func _parse_json_value(text: String) -> Variant:
+	var parser := JSON.new()
+	if parser.parse(text) != OK:
+		return null
+	return parser.data
+
+func _extract_fenced_json_text(text: String) -> String:
+	if not text.begins_with("```"):
+		return ""
+	var first_newline := text.find("\n")
+	var last_fence := text.rfind("```")
+	if first_newline == -1 or last_fence <= first_newline:
+		return ""
+	return text.substr(first_newline + 1, last_fence - first_newline - 1).strip_edges()
+
+func _extract_json_object_text(text: String) -> String:
+	var start := text.find("{")
+	var end := text.rfind("}")
+	if start == -1 or end <= start:
+		return ""
+	return text.substr(start, end - start + 1).strip_edges()
 
 func _normalize_usage(raw_usage: Variant) -> Dictionary:
 	if not raw_usage is Dictionary:
@@ -880,22 +1003,69 @@ func _should_retry(result: Dictionary) -> bool:
 func _is_retryable_status(status_code: int) -> bool:
 	return status_code == 408 or status_code == 409 or status_code == 425 or status_code == 429 or status_code >= 500
 
-func _http_error_message(status_code: int) -> String:
+func _http_error_message(status_code: int, body: PackedByteArray = PackedByteArray()) -> String:
+	var detail := _extract_error_detail(body)
+	var base := ""
 	match status_code:
-		401, 403:
-			return "Glosc One 认证失败，请检查访问令牌。"
+		401:
+			base = "Glosc One 认证失败，请检查访问令牌。"
+		403:
+			base = "Glosc One 拒绝请求，请检查服务权限或请求兼容性。"
 		402:
-			return "Glosc One 余额不足或账户无法计费。"
+			base = "Glosc One 余额不足或账户无法计费。"
 		408:
-			return "Glosc One 请求超时。"
+			base = "Glosc One 请求超时。"
 		429:
-			return "Glosc One 请求被限流，请稍后重试。"
+			base = "Glosc One 请求被限流，请稍后重试。"
 		451:
-			return "Glosc One 内容安全拦截。"
+			base = "Glosc One 内容安全拦截。"
 		_:
 			if status_code >= 500:
-				return "Glosc One 服务端错误：HTTP %d" % status_code
-			return "Glosc One 返回 HTTP %d" % status_code
+				base = "Glosc One 服务端错误：HTTP %d" % status_code
+			else:
+				base = "Glosc One 返回 HTTP %d" % status_code
+	if detail.is_empty():
+		return base
+	return "%s：%s" % [base, detail]
+
+func _extract_error_detail(body: PackedByteArray) -> String:
+	if body.is_empty():
+		return ""
+	var text := body.get_string_from_utf8().strip_edges()
+	if text.is_empty():
+		return ""
+	var parsed := _parse_json_dictionary_from_text(text)
+	if not parsed.is_empty():
+		var parsed_detail := _extract_error_detail_from_dictionary(parsed)
+		if not parsed_detail.is_empty():
+			return _sanitize_error_detail(parsed_detail)
+	return _sanitize_error_detail(text)
+
+func _extract_error_detail_from_dictionary(data: Dictionary) -> String:
+	var error_value: Variant = data.get("error", null)
+	if error_value is Dictionary:
+		var error_data := error_value as Dictionary
+		for key in ["message", "detail", "code", "type"]:
+			if error_data.has(key):
+				return str(error_data.get(key, ""))
+	elif error_value is String:
+		return str(error_value)
+	for key in ["message", "detail", "error_description", "code"]:
+		if data.has(key):
+			return str(data.get(key, ""))
+	var errors: Variant = data.get("errors", [])
+	if errors is Array and not (errors as Array).is_empty() and (errors as Array)[0] is Dictionary:
+		return _extract_error_detail_from_dictionary((errors as Array)[0] as Dictionary)
+	return ""
+
+func _sanitize_error_detail(text: String) -> String:
+	var detail := text.strip_edges().replace("\n", " ").replace("\r", " ")
+	if detail.contains("<") and detail.contains(">"):
+		detail = "服务返回非 JSON 错误页面。"
+	for marker in ["Authorization", "Bearer", "token", "cookie", "secret", "令牌", "密钥"]:
+		if detail.to_lower().contains(marker.to_lower()):
+			return "[已脱敏]"
+	return detail.left(220)
 
 func _request_result_message(result_code: int) -> String:
 	match result_code:
@@ -1026,6 +1196,30 @@ func _purpose_label(purpose: String) -> String:
 		_:
 			return purpose
 
+func _max_output_tokens_for(purpose: String) -> int:
+	match purpose:
+		"world_expand":
+			return 1800
+		"player_action":
+			return 700
+		"npc_simulation":
+			return 360
+		"memory_extract":
+			return 360
+		"summary_update":
+			return 520
+		"consistency_check":
+			return 320
+		_:
+			return 600
+
+func _temperature_for(purpose: String) -> float:
+	match purpose:
+		"consistency_check", "memory_extract", "summary_update":
+			return 0.2
+		_:
+			return 0.7
+
 func _content_policy_text(input: Dictionary) -> String:
 	var limits: Array[String] = []
 	var context: Dictionary = input.get("context", {}) if input.get("context", {}) is Dictionary else {}
@@ -1052,7 +1246,27 @@ func _append_unique_policy(items: Array[String], value: String) -> void:
 func _schema_for(purpose: String) -> Dictionary:
 	match purpose:
 		"world_expand":
-			return {"summary": "string", "rules": "array", "themes": "array", "locations": "array", "opening_event": "object"}
+			return {
+				"status": "ok",
+				"summary": "string",
+				"rules": ["string"],
+				"themes": ["string"],
+				"locations": [
+					{
+						"id": "loc_start, loc_archive, loc_forest, loc_citadel or loc_custom",
+						"name": "string",
+						"type": "town/city/ruin/forest/road/other",
+						"description": "string",
+						"position": {"x": "number between 0 and 1", "y": "number between 0 and 1"},
+						"state_tags": ["string"]
+					}
+				],
+				"opening_event": {
+					"title": "string",
+					"description": "string",
+					"suggested_actions": ["string"]
+				}
+			}
 		"npc_simulation":
 			return {"type": "npc_action", "title": "string", "description": "string", "character_id": "string", "new_location_id": "string", "importance": "number"}
 		"memory_extract":

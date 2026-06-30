@@ -55,12 +55,16 @@ func create_world(seed: Dictionary) -> void:
 	seed = normalized_seed
 	var ai_result := await AIService.generate_world(seed)
 	if str(ai_result.get("status", "ok")) != "ok":
+		var error_message := str(ai_result.get("error", "Glosc One 调用失败。"))
 		record_ai_log("world_expand", ai_result, "初始世界扩写失败：%s" % seed.get("world_name", "未命名世界"))
-		world_updated.emit({"type": "ai_response_rejected", "reason": "world_expand_failed"})
+		AppState.set_error("世界扩写失败：%s" % error_message)
+		world_updated.emit({"type": "ai_response_rejected", "reason": "world_expand_failed", "error": error_message})
 		return
 	if not validate_world_expand_result(ai_result):
-		record_ai_log("world_expand_rejected", {"status": "error", "error": "invalid_world_expand", "request_id": ai_result.get("request_id", "")}, "世界扩写响应缺少必要字段")
-		world_updated.emit({"type": "ai_response_rejected", "reason": "invalid_world_expand"})
+		var validation_error := describe_world_expand_validation_error(ai_result)
+		record_ai_log("world_expand_rejected", {"status": "error", "error": validation_error, "request_id": ai_result.get("request_id", "")}, "世界扩写响应校验失败")
+		AppState.set_error("世界扩写响应校验失败：%s" % validation_error)
+		world_updated.emit({"type": "ai_response_rejected", "reason": "invalid_world_expand", "error": validation_error})
 		return
 	var now := Time.get_datetime_string_from_system(true)
 	var world_id := "world_%d" % Time.get_unix_time_from_system()
@@ -721,6 +725,9 @@ func record_ai_log(purpose: String, result: Dictionary, prompt_summary: String =
 			"cost_estimate": usage.get("cost", null)
 		}
 	}
+	if bool(result.get("remote_fallback", false)):
+		log_entry["remote_fallback"] = true
+		log_entry["remote_error"] = _redact_sensitive(str(result.get("remote_error", "")))
 	if log_level in ["debug", "deep"]:
 		log_entry["prompt_summary"] = _redact_sensitive(prompt_summary)
 		log_entry["response_summary"] = _redact_sensitive(_summarize_ai_result(result))
@@ -1461,38 +1468,41 @@ func apply_state_patches(patches: Array[Dictionary]) -> bool:
 	return true
 
 func validate_world_expand_result(result: Dictionary) -> bool:
+	return describe_world_expand_validation_error(result).is_empty()
+
+func describe_world_expand_validation_error(result: Dictionary) -> String:
 	if str(result.get("status", "ok")) != "ok":
-		return false
+		return str(result.get("error", "响应状态不是 ok。"))
 	if str(result.get("summary", "")).strip_edges().is_empty():
-		return false
+		return "缺少世界摘要 summary。"
 	if not result.get("rules", []) is Array:
-		return false
+		return "rules 必须是数组。"
 	if not result.get("locations", []) is Array:
-		return false
+		return "locations 必须是数组。"
 	var seen_ids: Dictionary = {}
 	for location in result.get("locations", []):
 		if not location is Dictionary:
-			return false
+			return "locations 中包含非对象条目。"
 		var loc := location as Dictionary
 		var location_id := str(loc.get("id", ""))
 		if location_id.is_empty() or seen_ids.has(location_id):
-			return false
+			return "地点 id 为空或重复。"
 		seen_ids[location_id] = true
 		if str(loc.get("name", "")).strip_edges().is_empty():
-			return false
+			return "地点 %s 缺少名称。" % location_id
 		var position: Variant = loc.get("position", {})
 		if not position is Dictionary:
-			return false
+			return "地点 %s 缺少 position 对象。" % location_id
 		if not (position as Dictionary).has("x") or not (position as Dictionary).has("y"):
-			return false
+			return "地点 %s 的 position 缺少 x/y。" % location_id
 	var opening: Variant = result.get("opening_event", {})
 	if not opening is Dictionary:
-		return false
+		return "opening_event 必须是对象。"
 	if str((opening as Dictionary).get("description", "")).strip_edges().is_empty():
-		return false
+		return "opening_event 缺少 description。"
 	if not (opening as Dictionary).get("suggested_actions", []) is Array:
-		return false
-	return true
+		return "opening_event.suggested_actions 必须是数组。"
+	return ""
 
 func validate_npc_event_result(result: Dictionary) -> bool:
 	if str(result.get("status", "ok")) != "ok":

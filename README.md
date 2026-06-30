@@ -1,9 +1,39 @@
 # Evolvria
-目前我的想法是：
-- 玩家创建角色和基础的世界观，如创建主角（我）、女主、女二、女三、男二、世界观；
-- AI根据基础设定补全完整世界观，并随着故事的发展每遇到不同的角色、世界、都会记录并更新到新到世界观，
-- 玩家可自由的在世界中探索，具体的就由AI来帮你记录，为了防止AI忘记，采用与open claw一样的记忆方式，
-- 除了玩家主动参与的事件外，其他的角色也会自由的移动、发生一些事件，
-- 玩家可以自己导入地图，标记一些重要的城镇、地点，不同的NPC会自由的走动，并根据不同的性格触发一些不同的事件
-- 整个世界拥有时间线，和事件历史，所以内容都由AI进行驱动，
-项目完全免费使用，但需要使用我的Glosc One进行付费使用，用多少充多少
+
+Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前实现已重构为 **Tauri 2 + Vue 3 + Vue Router + Tailwind CSS**。
+
+核心能力：
+
+- 创建主角、关键角色和基础世界观。
+- AI 或本地 mock 扩写世界并生成开局事件。
+- 玩家行动会写入时间线、记忆、关系和线索。
+- NPC 可按目标进行自主事件推进。
+- 地图支持地点、路线、NPC 位置和玩家标注。
+- 存档采用 schema v1，本地保存、备份、AI 请求前 checkpoint、导出 zip。
+- 未配置 Glosc One 时完整使用本地模拟，不消耗远端额度。
+
+## 开发
+
+```bash
+pnpm install
+pnpm dev
+pnpm typecheck
+pnpm test
+pnpm test:ui
+pnpm tauri:dev
+pnpm tauri:build
+cd src-tauri && cargo test
+```
+
+## 目录
+
+```text
+src/                 Vue 3 客户端
+src/domain/          世界状态纯逻辑
+src/services/        AI、存档、设置、Tauri 调用包装
+src/stores/          Pinia 状态层
+src/views/           Vue Router 页面
+src-tauri/           Tauri 2 原生能力与打包配置
+docs/                产品、数据、AI、平台和测试文档
+tests/               Vitest 与 Playwright 测试
+```

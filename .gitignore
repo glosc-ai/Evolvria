@@ -1,6 +1,11 @@
-# Godot 4+ specific ignores
-.godot/
-/android/
-Web-Prototype
-output
-.claude
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.tauri/
+.DS_Store
+.claude/
+output/

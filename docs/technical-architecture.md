@@ -4,7 +4,7 @@
 
 MVP 采用本地优先架构：
 
-- Godot 跨平台客户端负责 UI、输入、地图、存档、状态展示和本地模拟。
+- Tauri 2 + Vue 3 跨平台客户端负责 UI、输入、地图、存档、状态展示和本地模拟。
 - AI 编排层负责构造 Prompt、调用 Glosc One、解析响应和错误处理。
 - 世界状态层负责结构化保存角色、地点、事件、记忆和时间线。
 - 可选后端在后续阶段提供账号、云同步、计费查询和内容审核。
@@ -12,8 +12,10 @@ MVP 采用本地优先架构：
 ## 模块划分
 
 ```text
-Godot Client
-  UI Layer
+Tauri 2 Client
+  Vue UI Layer
+  Vue Router
+  Pinia Stores
   Platform Adapter
   Input Action Layer
   Game Flow Controller
@@ -23,6 +25,7 @@ Godot Client
   AI Orchestrator
   Save Manager
   Glosc One Client
+  Rust Native Commands
 ```
 
 ## 数据流
@@ -97,7 +100,7 @@ AI 结果必须要求返回可解析 JSON。自然语言正文也放入 JSON 字
 
 ## 本地持久化
 
-推荐使用 Godot 的 `user://` 目录保存 JSON 或 SQLite。MVP 可先使用 JSON 文件，数据量增长后迁移 SQLite。
+推荐使用 Tauri 应用数据目录保存 JSON 或 SQLite。MVP 先使用 JSON 文件，数据量增长后迁移 SQLite。
 
 文件建议：
 

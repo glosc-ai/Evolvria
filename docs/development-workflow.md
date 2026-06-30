@@ -19,13 +19,14 @@
 
 ## 目录约定
 
-Godot 资源：
+Tauri/Vue 资源：
 
 ```text
-res://scenes
-res://scripts
-res://resources
-res://assets
+src/views
+src/stores
+src/domain
+src-tauri/src
+public/assets
 ```
 
 文档：

@@ -50,4 +50,4 @@
 - 单一断点 `_wide()` = 视口宽 ≥ 900px。
 - ≥900px：左侧固定导航（196px）+ 主内容 + 上下文面板（260–520px 可调）。
 - <900px：单栏 + 底部固定导航（56px）。
-- 详见 `docs/ui-ux-flows.md`、`docs/godot-client-architecture.md`。
+- 详见 `docs/ui-ux-flows.md`、`docs/technical-architecture.md`。

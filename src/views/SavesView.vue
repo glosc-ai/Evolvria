@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { Download, RefreshCcw } from "lucide-vue-next";
+import { Download, RefreshCcw, Trash2 } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
+import Button from "@/components/ui/Button.vue";
+import Card from "@/components/ui/Card.vue";
+import Textarea from "@/components/ui/Textarea.vue";
 import { importWorldFromText, saveWorld } from "@/services/save";
 import { useAppStore } from "@/stores/app";
 import { useWorldStore } from "@/stores/world";
+import type { SaveEntry } from "@/services/save";
 
 const app = useAppStore();
 const world = useWorldStore();
@@ -39,6 +43,17 @@ async function exportCurrent() {
   }
 }
 
+async function deleteEntry(entry: SaveEntry) {
+  const confirmed = window.confirm(`确定删除「${entry.world_name}」的${kindLabel(entry.kind)}存档吗？此操作无法撤销。`);
+  if (!confirmed) return;
+  try {
+    await world.deleteEntry(entry);
+    app.setNotice("存档已删除。");
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "删除失败。");
+  }
+}
+
 async function importFromText() {
   try {
     const payload = await importWorldFromText(importText.value);
@@ -57,39 +72,45 @@ async function importFromText() {
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-semibold">存档列表</h1>
       <div class="flex gap-2">
-        <button class="e-btn" type="button" @click="world.refreshSaveEntries"><RefreshCcw :size="16" />刷新</button>
-        <button class="e-btn e-btn-primary" :disabled="!world.hasWorld" type="button" @click="exportCurrent"><Download :size="16" />导出</button>
+        <Button variant="outline" size="sm" type="button" @click="world.refreshSaveEntries"><RefreshCcw :size="16" />刷新</Button>
+        <Button :disabled="!world.hasWorld" type="button" @click="exportCurrent"><Download :size="16" />导出</Button>
       </div>
     </div>
-    <div class="e-panel mt-5 overflow-hidden">
-      <div class="hidden grid-cols-[minmax(10rem,1fr)_6.5rem_12rem_minmax(12rem,1.2fr)_5rem_6rem] gap-3 border-b border-white/10 px-4 py-3 text-xs text-white/45 lg:grid">
+    <Card class="mt-5 overflow-hidden">
+      <div class="hidden grid-cols-[minmax(10rem,1fr)_6.5rem_12rem_minmax(12rem,1.2fr)_5rem_6rem_4rem] gap-3 border-b border-white/10 px-4 py-3 text-xs text-white/45 lg:grid">
         <div>世界</div>
         <div>类型</div>
         <div>时间</div>
         <div>文件</div>
         <div class="text-right">事件</div>
         <div class="text-right">状态</div>
+        <div class="text-right">操作</div>
       </div>
       <div class="divide-y divide-white/10">
-        <div v-for="entry in world.saveEntries" :key="entry.path" class="grid gap-2 px-4 py-3 text-sm lg:grid-cols-[minmax(10rem,1fr)_6.5rem_12rem_minmax(12rem,1.2fr)_5rem_6rem] lg:items-center lg:gap-3">
+        <div v-for="entry in world.saveEntries" :key="entry.path" class="grid gap-2 px-4 py-3 text-sm lg:grid-cols-[minmax(10rem,1fr)_6.5rem_12rem_minmax(12rem,1.2fr)_5rem_6rem_4rem] lg:items-center lg:gap-3">
           <div class="min-w-0">
             <div class="truncate font-medium">{{ entry.world_name }}</div>
-            <div class="e-muted mt-1 lg:hidden">{{ kindLabel(entry.kind) }} · {{ entry.created_at }}</div>
+            <div class="text-muted-foreground mt-1 lg:hidden">{{ kindLabel(entry.kind) }} · {{ entry.created_at }}</div>
           </div>
-          <div class="e-muted hidden lg:block">{{ kindLabel(entry.kind) }}</div>
-          <div class="e-muted hidden truncate lg:block" :title="entry.created_at">{{ entry.created_at }}</div>
-          <div class="e-muted min-w-0 truncate font-mono text-xs" :title="entry.path">{{ compactPath(entry.path) }}</div>
-          <div class="e-muted lg:text-right">事件 {{ entry.event_count }}</div>
+          <div class="text-muted-foreground hidden lg:block">{{ kindLabel(entry.kind) }}</div>
+          <div class="text-muted-foreground hidden truncate lg:block" :title="entry.created_at">{{ entry.created_at }}</div>
+          <div class="text-muted-foreground min-w-0 truncate font-mono text-xs" :title="entry.path">{{ compactPath(entry.path) }}</div>
+          <div class="text-muted-foreground lg:text-right">事件 {{ entry.event_count }}</div>
           <div class="lg:text-right">
             <span class="inline-flex rounded px-2 py-1 text-xs" :class="entry.schema_valid ? 'bg-emerald-400/15 text-emerald-200' : 'bg-red-400/15 text-red-200'">{{ entry.schema_valid ? "schema OK" : "schema 异常" }}</span>
           </div>
+          <div class="flex justify-start lg:justify-end">
+            <Button variant="destructive" size="sm" type="button" title="删除存档" @click="deleteEntry(entry)">
+              <Trash2 :size="15" />
+            </Button>
+          </div>
         </div>
       </div>
-    </div>
-    <div class="e-panel mt-5 p-5">
+    </Card>
+    <Card class="mt-5 p-5">
       <h2 class="font-medium">从 JSON 文本导入</h2>
-      <textarea v-model="importText" class="e-field mt-3 min-h-40" placeholder="粘贴导出的 SavePayload JSON" />
-      <button class="e-btn mt-3" type="button" @click="importFromText">导入</button>
-    </div>
+      <Textarea v-model="importText" class="mt-3 min-h-40" placeholder="粘贴导出的 SavePayload JSON" />
+      <Button class="mt-3" type="button" @click="importFromText">导入</Button>
+    </Card>
   </section>
 </template>

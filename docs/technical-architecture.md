@@ -79,6 +79,7 @@ tests/                    Vitest 和 Playwright 测试
 - `save_world`
 - `save_ai_checkpoint`
 - `list_save_entries`
+- `delete_save_entry`
 - `export_world`
 - `import_world`
 - `import_map_image`

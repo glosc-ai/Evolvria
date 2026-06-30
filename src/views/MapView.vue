@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { Plus, Route, ZoomIn, ZoomOut } from "lucide-vue-next";
+import Button from "@/components/ui/Button.vue";
+import Card from "@/components/ui/Card.vue";
+import Input from "@/components/ui/Input.vue";
+import Textarea from "@/components/ui/Textarea.vue";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();
@@ -19,13 +23,13 @@ async function addLocation() {
 
 <template>
   <section v-if="world.hasWorld" class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-    <div class="e-panel overflow-hidden p-4">
+    <Card class="overflow-hidden p-4">
       <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
         <h1 class="text-2xl font-semibold">地图</h1>
         <div class="flex gap-2">
-          <button class="e-btn" type="button" @click="zoom = Math.max(0.7, zoom - 0.15)"><ZoomOut :size="16" /></button>
-          <button class="e-btn" type="button" @click="zoom = Math.min(1.8, zoom + 0.15)"><ZoomIn :size="16" /></button>
-          <button class="e-btn" type="button" @click="revealUnknown = !revealUnknown">{{ revealUnknown ? "隐藏未知" : "显示未知" }}</button>
+          <Button variant="outline" size="sm" type="button" @click="zoom = Math.max(0.7, zoom - 0.15)"><ZoomOut :size="16" /></Button>
+          <Button variant="outline" size="sm" type="button" @click="zoom = Math.min(1.8, zoom + 0.15)"><ZoomIn :size="16" /></Button>
+          <Button variant="outline" size="sm" type="button" @click="revealUnknown = !revealUnknown">{{ revealUnknown ? "隐藏未知" : "显示未知" }}</Button>
         </div>
       </div>
       <div class="overflow-auto rounded-md border border-white/10 bg-[#18201e]">
@@ -56,29 +60,29 @@ async function addLocation() {
           </g>
         </svg>
       </div>
-    </div>
+    </Card>
     <aside class="space-y-5">
-      <div class="e-panel p-5">
+      <Card class="p-5">
         <div class="font-medium">{{ selectedLocation?.name }}</div>
-        <p class="e-muted mt-2 text-sm leading-6">{{ selectedLocation?.description }}</p>
+        <p class="text-muted-foreground mt-2 text-sm leading-6">{{ selectedLocation?.description }}</p>
         <div class="mt-4 flex gap-2">
-          <button v-if="selectedLocation" class="e-btn e-btn-primary" type="button" @click="world.goToLocation(selectedLocation.id)">移动到此处</button>
-          <button v-if="selectedLocation && world.current" class="e-btn" type="button" @click="world.createRoute(world.current.id, selectedLocation.id)"><Route :size="16" />添加路线</button>
+          <Button v-if="selectedLocation" type="button" @click="world.goToLocation(selectedLocation.id)">移动到此处</Button>
+          <Button v-if="selectedLocation && world.current" variant="outline" type="button" @click="world.createRoute(world.current.id, selectedLocation.id)"><Route :size="16" />添加路线</Button>
         </div>
-      </div>
-      <div class="e-panel p-5">
+      </Card>
+      <Card class="p-5">
         <div class="mb-3 flex items-center gap-2 font-medium"><Plus :size="16" />添加标记</div>
         <div class="space-y-3">
-          <input v-model="draft.name" class="e-field" placeholder="地点名称" />
-          <input v-model="draft.type" class="e-field" placeholder="类型" />
-          <textarea v-model="draft.description" class="e-field min-h-20" placeholder="描述" />
+          <Input v-model="draft.name" placeholder="地点名称" />
+          <Input v-model="draft.type" placeholder="类型" />
+          <Textarea v-model="draft.description" class="min-h-20" placeholder="描述" />
           <div class="grid grid-cols-2 gap-2">
-            <input v-model.number="draft.x" class="e-field" type="number" min="0.05" max="0.95" step="0.01" />
-            <input v-model.number="draft.y" class="e-field" type="number" min="0.05" max="0.95" step="0.01" />
+            <Input v-model.number="draft.x" type="number" min="0.05" max="0.95" step="0.01" />
+            <Input v-model.number="draft.y" type="number" min="0.05" max="0.95" step="0.01" />
           </div>
-          <button class="e-btn e-btn-primary w-full" type="button" @click="addLocation">保存标记</button>
+          <Button class="w-full" type="button" @click="addLocation">保存标记</Button>
         </div>
-      </div>
+      </Card>
     </aside>
   </section>
 </template>

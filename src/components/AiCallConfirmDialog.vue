@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { AlertTriangle } from "lucide-vue-next";
+import Button from "./ui/Button.vue";
 
 withDefaults(
   defineProps<{
@@ -27,7 +28,7 @@ const emit = defineEmits<{
 <template>
   <Teleport to="body">
     <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/68 px-4 py-6" role="dialog" aria-modal="true" :aria-label="title">
-      <div class="w-full max-w-lg rounded-md border border-amber-300/30 bg-[#121816] p-5 shadow-2xl">
+      <div class="w-full max-w-lg rounded-md border border-amber-300/30 bg-card p-5 shadow-2xl">
         <div class="flex items-start gap-3">
           <span class="mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-amber-300/30 bg-amber-300/12 text-amber-100">
             <AlertTriangle :size="19" />
@@ -44,8 +45,8 @@ const emit = defineEmits<{
         </div>
 
         <div class="mt-5 flex flex-wrap justify-end gap-3">
-          <button class="e-btn" :disabled="busy" type="button" @click="emit('cancel')">{{ cancelLabel }}</button>
-          <button class="e-btn e-btn-primary" :disabled="busy" type="button" @click="emit('confirm')">{{ busy ? "正在调用..." : confirmLabel }}</button>
+          <Button variant="outline" :disabled="busy" type="button" @click="emit('cancel')">{{ cancelLabel }}</Button>
+          <Button :disabled="busy" type="button" @click="emit('confirm')">{{ busy ? "正在调用..." : confirmLabel }}</Button>
         </div>
       </div>
     </div>

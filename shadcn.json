@@ -1,0 +1,13 @@
+{
+  "$schema": "https://shadcn-vue.com/schema.json",
+  "style": "new-york",
+  "runtimeConfig": {
+    "importAlias": "@/components/ui"
+  },
+  "tailwind": {
+    "config": "tailwind.config.js",
+    "css": "src/styles.css",
+    "baseColor": "neutral"
+  },
+  "typescript": true
+}

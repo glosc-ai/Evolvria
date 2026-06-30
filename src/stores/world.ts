@@ -22,10 +22,10 @@ import {
   visibleLocations,
 } from "@/domain/world";
 import { estimateUsage, generateWorld, resolvePlayerAction } from "@/services/ai";
-import { exportWorld, listSaveEntries, loadActiveWorld, saveAiCheckpoint, saveWorld } from "@/services/save";
+import { deleteSaveEntry, exportWorld, listSaveEntries, loadActiveWorld, saveAiCheckpoint, saveWorld } from "@/services/save";
 import { nowIso } from "@/services/text";
 import { useSettingsStore } from "@/stores/settings";
-import type { ExportWorldResult } from "@/services/save";
+import type { ExportWorldResult, SaveEntry } from "@/services/save";
 import type { Character, Location, SavePayload, TimelineEvent, World, WorldSeed } from "@/types/domain";
 
 export const useWorldStore = defineStore("world", () => {
@@ -65,6 +65,15 @@ export const useWorldStore = defineStore("world", () => {
 
   async function refreshSaveEntries(): Promise<void> {
     saveEntries.value = await listSaveEntries();
+  }
+
+  async function deleteEntry(entry: SaveEntry): Promise<void> {
+    await deleteSaveEntry(entry);
+    if (entry.kind === "active") {
+      payload.value = emptyPayload();
+      lastNarrative.value = "";
+    }
+    await refreshSaveEntries();
   }
 
   async function createWorld(seed: WorldSeed): Promise<void> {
@@ -226,6 +235,7 @@ export const useWorldStore = defineStore("world", () => {
     load,
     persist,
     refreshSaveEntries,
+    deleteEntry,
     createWorld,
     submitPlayerAction,
     buildAiContext,

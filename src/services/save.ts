@@ -89,6 +89,27 @@ export async function listSaveEntries(): Promise<SaveEntry[]> {
   return entries;
 }
 
+export async function deleteSaveEntry(entry: SaveEntry): Promise<void> {
+  const native = await safeInvoke<boolean>("delete_save_entry", { path: entry.absolute_path ?? entry.path });
+  if (native !== null) return;
+  if (entry.kind === "active") {
+    localStorage.removeItem(ACTIVE_KEY);
+    return;
+  }
+  if (entry.kind === "ai_checkpoint") {
+    localStorage.removeItem(AI_CHECKPOINT_KEY);
+    return;
+  }
+  const match = entry.path.match(/^localStorage:\/\/backup\/(\d+)$/);
+  if (!match) throw new Error("无法删除该存档。");
+  const backups = JSON.parse(localStorage.getItem(BACKUP_KEY) ?? "[]") as string[];
+  const reversedIndex = Number(match[1]);
+  const storedIndex = backups.length - 1 - reversedIndex;
+  if (storedIndex < 0 || storedIndex >= backups.length) throw new Error("存档不存在。");
+  backups.splice(storedIndex, 1);
+  localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
+}
+
 export async function exportWorld(payload: SavePayload): Promise<ExportWorldResult> {
   if (!validatePayloadSchema(payload)) throw new Error("存档 schema 无效。");
   const native = await safeInvoke<ExportWorldResult>("export_world", { payload });

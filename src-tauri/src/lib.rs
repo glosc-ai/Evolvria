@@ -140,6 +140,16 @@ fn list_save_entries(app: AppHandle) -> Result<Vec<SaveEntry>, String> {
 }
 
 #[tauri::command]
+fn delete_save_entry(app: AppHandle, path: String) -> Result<bool, String> {
+    let target = deletable_save_path(&app, &path)?;
+    if !target.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(target).map_err(to_string)?;
+    Ok(true)
+}
+
+#[tauri::command]
 fn export_world(app: AppHandle, payload: Value) -> Result<ExportWorldResult, String> {
     validate_payload(&payload)?;
     let export_dir = export_dir(&app)?;
@@ -460,6 +470,20 @@ fn ai_checkpoint_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(backup_dir(app)?.join("ai_before_request.json"))
 }
 
+fn deletable_save_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let target = PathBuf::from(path);
+    if target == active_save_path(app)? || target == ai_checkpoint_path(app)? {
+        return Ok(target);
+    }
+    let backup_dir = backup_dir(app)?;
+    let is_backup_json = target.parent() == Some(backup_dir.as_path())
+        && target.extension().and_then(|extension| extension.to_str()) == Some("json");
+    if is_backup_json {
+        return Ok(target);
+    }
+    Err("只能删除 Evolvria 存档目录中的存档。".to_string())
+}
+
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let path = app.path().app_data_dir().map_err(to_string)?;
     fs::create_dir_all(&path).map_err(to_string)?;
@@ -628,6 +652,7 @@ pub fn run() {
             save_world,
             save_ai_checkpoint,
             list_save_entries,
+            delete_save_entry,
             export_world,
             import_world,
             import_map_image,

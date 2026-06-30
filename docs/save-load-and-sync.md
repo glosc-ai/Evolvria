@@ -58,6 +58,10 @@ evolvria.ai_checkpoint
 
 `kind` 支持 `active`、`backup`、`ai_checkpoint`。
 
+## 删除
+
+Tauri `delete_save_entry` 只允许删除应用存档目录内的 active 存档、AI checkpoint 或备份 JSON。浏览器 fallback 删除对应 `localStorage` 条目。删除 active 存档后，当前内存世界会清空并刷新列表。
+
 ## 导出
 
 Tauri `export_world` 会先打开系统保存面板，由用户选择保存位置，然后生成 zip：

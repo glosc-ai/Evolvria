@@ -18,6 +18,7 @@ import { useAppStore } from "@/stores/app";
 import { usePlatformStore } from "@/stores/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorldStore } from "@/stores/world";
+import Button from "@/components/ui/Button.vue";
 
 const app = useAppStore();
 const settings = useSettingsStore();
@@ -63,7 +64,7 @@ watch(
     <aside class="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-white/10 bg-[#111817]/95 p-4 lg:block">
       <div class="mb-6">
         <div class="text-lg font-semibold tracking-wide">Evolvria</div>
-        <div class="e-muted mt-1 text-xs">AI 驱动的本地优先叙事世界</div>
+        <div class="text-muted-foreground mt-1 text-xs">AI 驱动的本地优先叙事世界</div>
       </div>
       <nav class="space-y-1">
         <RouterLink
@@ -85,12 +86,14 @@ watch(
 
     <header class="safe-top sticky top-0 z-20 border-b border-white/10 bg-[#101615]/95 px-4 py-3 backdrop-blur lg:hidden">
       <div class="flex items-center justify-between">
-        <button class="e-btn h-10 w-10 p-0" type="button" aria-label="打开导航" @click="mobileMenuOpen = true">
+        <Button variant="ghost" size="icon" aria-label="打开导航" @click="mobileMenuOpen = true">
           <Menu :size="20" />
-        </button>
+        </Button>
         <div class="text-sm font-semibold">Evolvria</div>
-        <RouterLink class="e-btn h-10 w-10 p-0" to="/settings" aria-label="设置">
-          <Settings :size="18" />
+        <RouterLink class="inline-flex h-10 w-10 items-center justify-center rounded-md" to="/settings" aria-label="设置">
+          <Button variant="ghost" size="icon">
+            <Settings :size="18" />
+          </Button>
         </RouterLink>
       </div>
     </header>
@@ -100,11 +103,11 @@ watch(
         <div class="mb-4 flex items-center justify-between">
           <div>
             <div class="font-semibold">Evolvria</div>
-            <div class="e-muted text-xs">导航</div>
+            <div class="text-muted-foreground text-xs">导航</div>
           </div>
-          <button class="e-btn h-10 w-10 p-0" type="button" aria-label="关闭导航" @click="mobileMenuOpen = false">
+          <Button variant="ghost" size="icon" aria-label="关闭导航" @click="mobileMenuOpen = false">
             <X :size="18" />
-          </button>
+          </Button>
         </div>
         <nav class="space-y-1">
           <RouterLink

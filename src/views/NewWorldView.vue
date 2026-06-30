@@ -2,6 +2,11 @@
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import AiCallConfirmDialog from "@/components/AiCallConfirmDialog.vue";
+import Button from "@/components/ui/Button.vue";
+import Card from "@/components/ui/Card.vue";
+import Input from "@/components/ui/Input.vue";
+import Textarea from "@/components/ui/Textarea.vue";
+import Select from "@/components/ui/Select.vue";
 import { estimateUsageText } from "@/services/ai";
 import { useAppStore } from "@/stores/app";
 import { useSettingsStore } from "@/stores/settings";
@@ -57,71 +62,83 @@ async function create() {
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h1 class="text-3xl font-semibold">新建世界</h1>
-        <p class="e-muted mt-1 text-sm">第 {{ step }} / 5 步</p>
+        <p class="text-muted-foreground mt-1 text-sm">第 {{ step }} / 5 步</p>
       </div>
-      <RouterLink class="e-btn" to="/">返回首页</RouterLink>
+      <Button variant="outline" type="button" @click="router.push('/')">返回首页</Button>
     </div>
 
     <div class="mt-5 grid gap-5 lg:grid-cols-[1fr_340px]">
-      <div class="e-panel p-5">
+      <Card class="p-5">
         <div v-if="step === 1" class="space-y-4">
-          <label class="block text-sm">世界名称<input v-model="draft.world_name" class="e-field mt-2" /></label>
-          <label class="block text-sm">类型<select v-model="draft.genre" class="e-field mt-2"><option>奇幻</option><option>科幻</option><option>现代都市</option><option>武侠</option></select></label>
-          <label class="block text-sm">基调<select v-model="draft.tone" class="e-field mt-2"><option>冒险</option><option>政治</option><option>悬疑</option><option>温情</option></select></label>
+          <label class="block text-sm">世界名称<Input v-model="draft.world_name" class="mt-2" /></label>
+          <label class="block text-sm">
+            类型
+            <Select v-model="draft.genre" :options="[{label: '奇幻', value: '奇幻'}, {label: '科幻', value: '科幻'}, {label: '现代都市', value: '现代都市'}, {label: '武侠', value: '武侠'}]" class="mt-2" />
+          </label>
+          <label class="block text-sm">
+            基调
+            <Select v-model="draft.tone" :options="[{label: '冒险', value: '冒险'}, {label: '政治', value: '政治'}, {label: '悬疑', value: '悬疑'}, {label: '温情', value: '温情'}]" class="mt-2" />
+          </label>
         </div>
         <div v-else-if="step === 2" class="space-y-4">
-          <label class="block text-sm">主角姓名<input v-model="draft.hero.name" class="e-field mt-2" /></label>
-          <label class="block text-sm">身份描述<textarea v-model="draft.hero.description" class="e-field mt-2 min-h-24" /></label>
-          <label class="block text-sm">目标<input v-model="draft.hero.goal" class="e-field mt-2" /></label>
+          <label class="block text-sm">主角姓名<Input v-model="draft.hero.name" class="mt-2" /></label>
+          <label class="block text-sm">身份描述<Textarea v-model="draft.hero.description" class="mt-2 min-h-24" /></label>
+          <label class="block text-sm">目标<Input v-model="draft.hero.goal" class="mt-2" /></label>
           <div class="grid gap-3 sm:grid-cols-2">
-            <label class="block text-sm">能力<input v-model="draft.hero.ability" class="e-field mt-2" /></label>
-            <label class="block text-sm">弱点<input v-model="draft.hero.weakness" class="e-field mt-2" /></label>
+            <label class="block text-sm">能力<Input v-model="draft.hero.ability" class="mt-2" /></label>
+            <label class="block text-sm">弱点<Input v-model="draft.hero.weakness" class="mt-2" /></label>
           </div>
         </div>
         <div v-else-if="step === 3" class="space-y-4">
           <fieldset v-for="(character, index) in draft.key_characters" :key="index" class="rounded-md border border-white/10 bg-black/20 p-3">
             <legend class="px-1 text-sm font-medium text-white/86">关键角色 {{ index + 1 }}</legend>
             <div class="grid gap-3 sm:grid-cols-2">
-              <label class="block text-sm">姓名<input v-model="character.name" class="e-field mt-2" /></label>
-              <label class="block text-sm">身份<input v-model="character.role" class="e-field mt-2" /></label>
-              <label class="block text-sm">与主角关系<input v-model="character.relationship" class="e-field mt-2" /></label>
-              <label class="block text-sm">性格标签<input v-model="character.personality" class="e-field mt-2" /></label>
-              <label class="block text-sm">目标<input v-model="character.goal" class="e-field mt-2" /></label>
-              <label class="block text-sm">秘密<input v-model="character.secret" class="e-field mt-2" /></label>
+              <label class="block text-sm">姓名<Input v-model="character.name" class="mt-2" /></label>
+              <label class="block text-sm">身份<Input v-model="character.role" class="mt-2" /></label>
+              <label class="block text-sm">与主角关系<Input v-model="character.relationship" class="mt-2" /></label>
+              <label class="block text-sm">性格标签<Input v-model="character.personality" class="mt-2" /></label>
+              <label class="block text-sm">目标<Input v-model="character.goal" class="mt-2" /></label>
+              <label class="block text-sm">秘密<Input v-model="character.secret" class="mt-2" /></label>
             </div>
-            <label class="mt-3 block text-sm">行动倾向<textarea v-model="character.action_tendency" class="e-field mt-2 min-h-20" /></label>
+            <label class="mt-3 block text-sm">行动倾向<Textarea v-model="character.action_tendency" class="mt-2 min-h-20" /></label>
           </fieldset>
-          <button class="e-btn" type="button" @click="draft.key_characters.push({ name: '', role: '', relationship: '', personality: '', goal: '', secret: '', action_tendency: '', description: '' })">添加角色</button>
+          <Button variant="outline" type="button" @click="draft.key_characters.push({ name: '', role: '', relationship: '', personality: '', goal: '', secret: '', action_tendency: '', description: '' })">添加角色</Button>
         </div>
         <div v-else-if="step === 4" class="space-y-4">
-          <label class="block text-sm">内容偏好与禁用内容<textarea v-model="draft.limits" class="e-field mt-2 min-h-24" /></label>
-          <label class="block text-sm">叙事详细度<select v-model="draft.narrative_detail" class="e-field mt-2"><option>简洁</option><option>适中</option><option>详细</option></select></label>
-          <label class="block text-sm">NPC 自主频率<select v-model="draft.npc_autonomy_frequency" class="e-field mt-2"><option>低频</option><option>中频</option><option>高频</option></select></label>
+          <label class="block text-sm">内容偏好与禁用内容<Textarea v-model="draft.limits" class="mt-2 min-h-24" /></label>
+          <label class="block text-sm">
+            叙事详细度
+            <Select v-model="draft.narrative_detail" :options="[{label: '简洁', value: '简洁'}, {label: '适中', value: '适中'}, {label: '详细', value: '详细'}]" class="mt-2" />
+          </label>
+          <label class="block text-sm">
+            NPC 自主频率
+            <Select v-model="draft.npc_autonomy_frequency" :options="[{label: '低频', value: '低频'}, {label: '中频', value: '中频'}, {label: '高频', value: '高频'}]" class="mt-2" />
+          </label>
         </div>
         <div v-else class="space-y-4">
           <div class="rounded-md bg-black/24 p-4 text-sm leading-6">
             <div class="font-medium">{{ draft.world_name }} · {{ draft.genre }} · {{ draft.tone }}</div>
-            <div class="e-muted mt-2">主角：{{ draft.hero.name }}，目标：{{ draft.hero.goal }}</div>
-            <div class="e-muted">关键角色：{{ draft.key_characters.map((c) => c.name).filter(Boolean).join("、") }}</div>
+            <div class="text-muted-foreground mt-2">主角：{{ draft.hero.name }}，目标：{{ draft.hero.goal }}</div>
+            <div class="text-muted-foreground">关键角色：{{ draft.key_characters.map((c) => c.name).filter(Boolean).join("、") }}</div>
           </div>
           <div class="rounded-md border border-amber-300/30 bg-amber-300/10 p-3 text-sm text-amber-50">{{ estimate }}</div>
         </div>
 
         <div class="mt-6 flex justify-between">
-          <button class="e-btn" :disabled="step === 1 || world.busy" type="button" @click="step -= 1">上一步</button>
-          <button v-if="step < 5" class="e-btn e-btn-primary" type="button" @click="step += 1">下一步</button>
-          <button v-else class="e-btn e-btn-primary" :disabled="world.busy" type="button" @click="requestCreate">{{ world.busy ? "正在扩写..." : "创建并扩写世界" }}</button>
+          <Button variant="outline" :disabled="step === 1 || world.busy" type="button" @click="step -= 1">上一步</Button>
+          <Button v-if="step < 5" :disabled="world.busy" type="button" @click="step += 1">下一步</Button>
+          <Button v-else :disabled="world.busy" type="button" @click="requestCreate">{{ world.busy ? "正在扩写..." : "创建并扩写世界" }}</Button>
         </div>
-      </div>
+      </Card>
 
-      <aside class="e-panel p-5">
+      <Card class="p-5">
         <div class="font-medium">预览</div>
         <div class="mt-4 space-y-3 text-sm text-white/68">
           <p>{{ draft.limits }}</p>
           <p>叙事：{{ draft.narrative_detail }} · NPC：{{ draft.npc_autonomy_frequency }}</p>
           <p>所有 AI 请求都会先校验 JSON 和状态 patch，失败不会修改世界。</p>
         </div>
-      </aside>
+      </Card>
     </div>
 
     <AiCallConfirmDialog

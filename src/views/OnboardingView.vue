@@ -50,7 +50,7 @@ async function finish(saveToken: boolean) {
 
 <template>
   <section class="mx-auto max-w-3xl">
-    <h1 class="text-3xl font-semibold">初始配置</h1>
+    <h1 class="font-serif text-3xl font-semibold">初始配置</h1>
     <p class="text-muted-foreground mt-2 text-sm leading-6">Evolvria 可以离线运行；填写 Glosc One 后才会消耗远端额度。访问令牌会保存在本机应用数据目录，保存前需要确认本机存储风险。</p>
     <Card class="mt-6">
       <CardHeader>

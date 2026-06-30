@@ -1,33 +1,32 @@
 import { defineStore } from "pinia";
 import { ref } from "vue";
+import { toast } from "vue-sonner";
 import type { RouteName } from "@/types/domain";
 
+/**
+ * 应用级状态。
+ * 错误/通知横幅已改为 vue-sonner toast:setError/setNotice 直接弹 toast,
+ * 不再维护 lastError/lastNotice 引用。clearBanners 保留为空操作以兼容路由切换调用。
+ */
 export const useAppStore = defineStore("app", () => {
   const routeBeforeSettings = ref<RouteName>("main_menu");
-  const lastError = ref("");
-  const lastNotice = ref("");
   const focusedCharacterId = ref("");
   const focusedLocationId = ref("");
 
   function setError(message: string): void {
-    lastError.value = message;
-    lastNotice.value = "";
+    toast.error(message || "操作失败。");
   }
 
   function setNotice(message: string): void {
-    lastNotice.value = message;
-    lastError.value = "";
+    toast.success(message || "操作完成。");
   }
 
   function clearBanners(): void {
-    lastError.value = "";
-    lastNotice.value = "";
+    // toast 由 vue-sonner 自行管理生命周期,无需清理。
   }
 
   return {
     routeBeforeSettings,
-    lastError,
-    lastNotice,
     focusedCharacterId,
     focusedLocationId,
     setError,

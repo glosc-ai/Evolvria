@@ -103,7 +103,7 @@ async function importFromText() {
 <template>
   <section>
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-2xl font-semibold">存档列表</h1>
+      <h1 class="font-serif text-2xl font-semibold">存档列表</h1>
       <div class="flex gap-2">
         <Button variant="outline" size="sm" type="button" @click="world.refreshSaveEntries">
           <RefreshCcw data-icon="inline-start" />

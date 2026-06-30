@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import AppSelect from "@/components/AppSelect.vue";
@@ -154,11 +155,12 @@ async function create() {
   <section class="mx-auto max-w-5xl">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <h1 class="text-3xl font-semibold">新建世界</h1>
+        <h1 class="font-serif text-3xl font-semibold">新建世界</h1>
         <Badge variant="secondary" class="mt-2">第 {{ step }} / 5 步</Badge>
       </div>
       <Button variant="outline" type="button" @click="router.push('/')">返回首页</Button>
     </div>
+    <Progress :model-value="(step / 5) * 100" class="mt-4" />
 
     <div class="mt-5 grid gap-5 lg:grid-cols-[1fr_340px]">
       <Card>
@@ -231,7 +233,7 @@ async function create() {
           <FieldSet v-for="(character, index) in draft.key_characters" :key="index" class="relative rounded-md border p-4 pr-16">
             <FieldLegend>关键角色 {{ index + 1 }}</FieldLegend>
             <Button class="absolute right-4 top-4" variant="ghost" size="icon" type="button" title="删除角色" @click="removeCharacter(index)">
-              <Trash2 data-icon="icon" />
+              <Trash2 />
             </Button>
             <FieldGroup class="grid gap-3 sm:grid-cols-2">
               <Field>

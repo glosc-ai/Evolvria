@@ -14,7 +14,7 @@ const notes = ref<Record<string, string>>({});
 
 <template>
   <section v-if="world.hasWorld">
-    <h1 class="mb-5 text-2xl font-semibold">地点</h1>
+    <h1 class="mb-5 font-serif text-2xl font-semibold">地点</h1>
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <Card v-for="location in world.locations" :key="location.id">
         <CardHeader>

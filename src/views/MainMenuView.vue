@@ -24,9 +24,9 @@ async function continueGame() {
 <template>
   <section class="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1fr_360px]">
     <div class="flex min-h-[70dvh] flex-col justify-center">
-      <p class="text-sm uppercase tracking-[0.22em] text-emerald-300/80">Evolvria</p>
-      <h1 class="mt-4 max-w-3xl text-4xl font-semibold leading-tight sm:text-5xl">让角色、地点和时间线在本地持续演化</h1>
-      <p class="mt-5 max-w-2xl text-base leading-7 text-white/64">创建主角与世界种子，AI 扩写世界并记录每一次行动、记忆、关系和地图变化。未配置 Glosc One 时自动使用本地模拟。</p>
+      <p class="text-sm uppercase tracking-[0.22em] text-primary/80">Evolvria</p>
+      <h1 class="mt-4 max-w-3xl font-serif text-4xl font-semibold leading-tight sm:text-5xl">让角色、地点和时间线在本地持续演化</h1>
+      <p class="mt-5 max-w-2xl text-base leading-7 text-muted-foreground">创建主角与世界种子,AI 扩写世界并记录每一次行动、记忆、关系和地图变化。未配置 Glosc One 时自动使用本地模拟。</p>
       <div class="mt-8 flex flex-wrap gap-3">
         <Button type="button" :variant="world.hasWorld ? 'default' : 'outline'" :disabled="!world.hasWorld" @click="continueGame">
           <Play data-icon="inline-start" />

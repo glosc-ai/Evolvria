@@ -8,63 +8,185 @@
   font-display: swap;
 }
 
-:root {
-  color-scheme: dark;
-  font-family: "Noto Sans CJK SC", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-
-  /* shadcn-vue CSS variables - Dark theme with Emerald accent */
-  --background: 221 7% 6.3%;       /* #101615 */
-  --foreground: 221 10% 94%;       /* #eef3ef */
-
-  --card: 221 7% 7%;
-  --card-foreground: 221 10% 94%;
-
-  --popover: 221 7% 7%;
-  --popover-foreground: 221 10% 94%;
-
-  --muted: 221 8% 36%;
-  --muted-foreground: 221 10% 73%;
-
-  --accent: 161 75% 42%;           /* emerald-500 */
-  --accent-foreground: 0 0% 100%;
-
-  --destructive: 0 72% 51%;        /* red-500 */
-  --destructive-foreground: 0 0% 100%;
-
-  --border: 221 8% 16%;
-  --input: 221 8% 10%;
-  --ring: 161 75% 42%;             /* emerald-500 */
-
-  --primary: 161 75% 42%;          /* emerald-500 */
-  --primary-foreground: 0 0% 100%;
-
-  --secondary: 221 8% 18%;
-  --secondary-foreground: 221 10% 94%;
-
-  --radius: 0.5rem;
+@font-face {
+  font-family: "Noto Serif CJK SC";
+  src: url("/assets/fonts/NotoSerifCJKsc-Regular.otf") format("opentype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-/* Tailwind v4 theme mapping - register shadcn tokens as Tailwind utilities */
+/*
+ * Evolvria · 羊皮纸复古 (Parchment Vintage) 主题
+ * 浅色: 陈年羊皮纸奶油底 + 蜡封红 + 黄铜金 + 墨黑
+ * 深色: 烛光皮革棕 + 暗金 + 锈红 + 暖白
+ * 所有颜色用 OKLCH。语义 token 驱动 shadcn-vue 组件。
+ */
+:root {
+  color-scheme: light;
+  font-family: "Noto Serif CJK SC", "Noto Sans CJK SC", ui-serif, Georgia, Cambria, "Times New Roman", serif;
+
+  /* 背景层 */
+  --background: oklch(0.93 0.018 80);          /* 陈年羊皮纸奶油 */
+  --foreground: oklch(0.27 0.03 55);           /* 墨褐 */
+
+  --card: oklch(0.95 0.022 82);                /* 略浅于背景,似未泛黄纸面 */
+  --card-foreground: oklch(0.27 0.03 55);
+
+  --popover: oklch(0.96 0.02 82);
+  --popover-foreground: oklch(0.27 0.03 55);
+
+  /* 次级表面 */
+  --muted: oklch(0.88 0.025 78);
+  --muted-foreground: oklch(0.5 0.03 60);
+
+  /* 强调:黄铜金 */
+  --accent: oklch(0.72 0.12 75);
+  --accent-foreground: oklch(0.22 0.04 60);
+
+  /* 主操作:蜡封红 */
+  --primary: oklch(0.5 0.14 28);
+  --primary-foreground: oklch(0.96 0.015 82);
+
+  --secondary: oklch(0.86 0.03 76);
+  --secondary-foreground: oklch(0.3 0.03 55);
+
+  /* 破坏:暗锈红 */
+  --destructive: oklch(0.48 0.16 27);
+  --destructive-foreground: oklch(0.97 0.01 82);
+
+  --border: oklch(0.82 0.035 74);              /* 磨损纸边棕 */
+  --input: oklch(0.82 0.035 74);
+  --ring: oklch(0.5 0.14 28);
+
+  --radius: 0.4rem;
+
+  /* Sidebar tokens (羊皮纸左侧栏略深,似书脊) */
+  --sidebar: oklch(0.89 0.028 76);
+  --sidebar-foreground: oklch(0.3 0.03 55);
+  --sidebar-primary: oklch(0.5 0.14 28);
+  --sidebar-primary-foreground: oklch(0.96 0.015 82);
+  --sidebar-accent: oklch(0.84 0.035 74);
+  --sidebar-accent-foreground: oklch(0.27 0.03 55);
+  --sidebar-border: oklch(0.8 0.035 72);
+  --sidebar-ring: oklch(0.5 0.14 28);
+
+  /* 成功/警告:用于状态 Badge (非 shadcn 默认,补充) */
+  --success: oklch(0.6 0.1 145);
+  --success-foreground: oklch(0.97 0.01 145);
+  --warning: oklch(0.74 0.14 70);
+  --warning-foreground: oklch(0.25 0.04 60);
+
+  /* 地图 SVG 颜色 */
+  --map-terrain-1: oklch(0.62 0.06 95);
+  --map-terrain-2: oklch(0.55 0.08 110);
+  --map-terrain-3: oklch(0.5 0.08 200);
+  --map-river: oklch(0.6 0.09 220);
+  --map-route: oklch(0.72 0.12 75);
+  --map-node-current: oklch(0.5 0.14 28);
+  --map-node-known: oklch(0.85 0.01 80);
+  --map-node-unknown: oklch(0.6 0.02 70);
+  --map-node-stroke: oklch(0.35 0.03 60);
+  --map-label: oklch(0.22 0.03 55);
+  --map-bg: oklch(0.84 0.03 76);
+}
+
+.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.24 0.018 55);          /* 烛光皮革深棕 */
+  --foreground: oklch(0.9 0.022 80);
+
+  --card: oklch(0.27 0.02 56);
+  --card-foreground: oklch(0.9 0.022 80);
+
+  --popover: oklch(0.28 0.02 56);
+  --popover-foreground: oklch(0.9 0.022 80);
+
+  --muted: oklch(0.33 0.022 58);
+  --muted-foreground: oklch(0.7 0.025 75);
+
+  --accent: oklch(0.7 0.1 78);                 /* 暗金 */
+  --accent-foreground: oklch(0.2 0.03 60);
+
+  --primary: oklch(0.6 0.15 30);               /* 锈红烛光下 */
+  --primary-foreground: oklch(0.16 0.018 55);
+
+  --secondary: oklch(0.35 0.025 60);
+  --secondary-foreground: oklch(0.88 0.022 80);
+
+  --destructive: oklch(0.55 0.17 28);
+  --destructive-foreground: oklch(0.95 0.015 80);
+
+  --border: oklch(0.38 0.025 58);
+  --input: oklch(0.33 0.022 58);
+  --ring: oklch(0.6 0.15 30);
+
+  --sidebar: oklch(0.22 0.02 55);
+  --sidebar-foreground: oklch(0.85 0.022 78);
+  --sidebar-primary: oklch(0.6 0.15 30);
+  --sidebar-primary-foreground: oklch(0.16 0.018 55);
+  --sidebar-accent: oklch(0.32 0.025 60);
+  --sidebar-accent-foreground: oklch(0.9 0.022 80);
+  --sidebar-border: oklch(0.35 0.025 58);
+  --sidebar-ring: oklch(0.6 0.15 30);
+
+  --success: oklch(0.62 0.1 145);
+  --success-foreground: oklch(0.16 0.02 145);
+  --warning: oklch(0.72 0.14 70);
+  --warning-foreground: oklch(0.2 0.03 60);
+
+  --map-terrain-1: oklch(0.42 0.05 95);
+  --map-terrain-2: oklch(0.38 0.06 110);
+  --map-terrain-3: oklch(0.35 0.07 200);
+  --map-river: oklch(0.48 0.08 220);
+  --map-route: oklch(0.7 0.1 78);
+  --map-node-current: oklch(0.6 0.15 30);
+  --map-node-known: oklch(0.75 0.012 80);
+  --map-node-unknown: oklch(0.55 0.02 70);
+  --map-node-stroke: oklch(0.18 0.018 55);
+  --map-label: oklch(0.9 0.022 80);
+  --map-bg: oklch(0.3 0.025 60);
+}
+
+/* Tailwind v4: register semantic tokens as utilities */
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+
+  --radius: var(--radius);
+
+  --font-sans: "Noto Sans CJK SC", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-serif: "Noto Serif CJK SC", ui-serif, Georgia, Cambria, "Times New Roman", serif;
 }
 
 * {
@@ -75,11 +197,11 @@ body {
   margin: 0;
   min-width: 320px;
   min-height: 100vh;
-  background:
-    linear-gradient(180deg, rgba(16, 22, 21, 0.96), rgba(16, 22, 21, 0.98)),
-    radial-gradient(circle at 20% 10%, rgba(138, 116, 72, 0.2), transparent 32%),
-    #101615;
-  color: hsl(var(--foreground));
+  background-color: var(--background);
+  background-image:
+    radial-gradient(ellipse at 18% 12%, color-mix(in oklch, var(--accent) 12%, transparent), transparent 38%),
+    radial-gradient(ellipse at 82% 88%, color-mix(in oklch, var(--primary) 8%, transparent), transparent 42%);
+  color: var(--foreground);
 }
 
 button,

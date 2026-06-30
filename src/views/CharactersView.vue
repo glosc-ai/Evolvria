@@ -2,6 +2,7 @@
 import { computed, ref } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
@@ -13,12 +14,16 @@ const world = useWorldStore();
 const filter = ref("全部");
 const notes = ref<Record<string, string>>({});
 const filteredCharacters = computed(() => world.filteredCharacters(filter.value));
+
+function initials(name: string): string {
+  return name.trim().charAt(0) || "？";
+}
 </script>
 
 <template>
   <section v-if="world.hasWorld">
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
-      <h1 class="text-2xl font-semibold">人物名册</h1>
+      <h1 class="font-serif text-2xl font-semibold">人物名册</h1>
       <AppSelect
         v-model="filter"
         :options="[
@@ -33,12 +38,17 @@ const filteredCharacters = computed(() => world.filteredCharacters(filter.value)
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
       <Card v-for="character in filteredCharacters" :key="character.id">
         <CardHeader>
-          <div class="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle>{{ character.name }}</CardTitle>
-              <p class="text-muted-foreground text-sm">{{ character.role }} · {{ character.gender || "未指定" }} · {{ character.status }}</p>
+          <div class="flex items-start gap-3">
+            <Avatar class="size-11">
+              <AvatarFallback>{{ initials(character.name) }}</AvatarFallback>
+            </Avatar>
+            <div class="flex-1">
+              <div class="flex items-center justify-between gap-2">
+                <CardTitle>{{ character.name }}</CardTitle>
+                <Badge v-if="character.companion">同行</Badge>
+              </div>
+              <p class="mt-1 text-sm text-muted-foreground">{{ character.role }} · {{ character.gender || "未指定" }} · {{ character.status }}</p>
             </div>
-            <Badge v-if="character.companion">同行</Badge>
           </div>
         </CardHeader>
         <CardContent>

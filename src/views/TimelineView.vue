@@ -21,7 +21,7 @@ const eventTypes = computed(() => Array.from(new Set(world.timeline.map((event) 
 
 <template>
   <section v-if="world.hasWorld">
-    <h1 class="text-2xl font-semibold">时间线</h1>
+    <h1 class="font-serif text-2xl font-semibold">时间线</h1>
     <Card class="mt-5">
       <CardContent class="grid gap-3 md:grid-cols-4">
         <Field>

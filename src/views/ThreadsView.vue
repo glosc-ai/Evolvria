@@ -11,7 +11,7 @@ const world = useWorldStore();
 
 <template>
   <section v-if="world.hasWorld">
-    <h1 class="text-2xl font-semibold">线索与目标</h1>
+    <h1 class="font-serif text-2xl font-semibold">线索与目标</h1>
     <div class="mt-5 grid gap-4 lg:grid-cols-2">
       <Card v-for="thread in world.threads" :key="thread.id" :class="cn(thread.status === 'resolved' && 'opacity-60')">
         <CardHeader>

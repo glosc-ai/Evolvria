@@ -1,32 +1,28 @@
 <script setup lang="ts">
+import type { Component } from "vue";
 import {
   BookOpen,
   Compass,
   Database,
   Home,
-  Map,
-  Menu,
+  Map as MapIcon,
   MessageSquareText,
+  Moon,
   ScrollText,
   Settings,
+  Sun,
   Users,
-  X,
 } from "@lucide/vue";
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onMounted } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
-import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarSeparator, SidebarTrigger } from "@/components/ui/sidebar";
+import { Toaster } from "@/components/ui/sonner";
 import { Button } from "@/components/ui/button";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-} from "@/components/ui/sheet";
 import { useAppStore } from "@/stores/app";
 import { usePlatformStore } from "@/stores/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorldStore } from "@/stores/world";
+import { useTheme } from "@/composables/useTheme";
 
 const app = useAppStore();
 const settings = useSettingsStore();
@@ -34,12 +30,19 @@ const platform = usePlatformStore();
 const world = useWorldStore();
 const route = useRoute();
 const router = useRouter();
-const mobileMenuOpen = ref(false);
+const { isDark, apply: applyTheme, toggle: toggleTheme } = useTheme();
 
-const navItems = computed(() => [
+interface NavItem {
+  to: string;
+  label: string;
+  icon: Component;
+  enabled: boolean;
+}
+
+const navItems = computed<NavItem[]>(() => [
   { to: "/", label: "首页", icon: Home, enabled: true },
   { to: "/exploration", label: "探索", icon: Compass, enabled: world.hasWorld },
-  { to: "/map", label: "地图", icon: Map, enabled: world.hasWorld },
+  { to: "/map", label: "地图", icon: MapIcon, enabled: world.hasWorld },
   { to: "/characters", label: "人物", icon: Users, enabled: world.hasWorld },
   { to: "/locations", label: "地点", icon: BookOpen, enabled: world.hasWorld },
   { to: "/timeline", label: "时间线", icon: ScrollText, enabled: world.hasWorld },
@@ -49,98 +52,108 @@ const navItems = computed(() => [
   { to: "/settings", label: "设置", icon: Settings, enabled: true },
 ]);
 
+function isActive(to: string): boolean {
+  return route.path === to;
+}
+
 onMounted(async () => {
   await settings.load();
+  applyTheme();
   await platform.load();
   await world.load();
   if (settings.onboardingRequired && route.name === "main_menu") {
     await router.replace({ name: "onboarding" });
   }
 });
-
-watch(
-  () => route.fullPath,
-  () => {
-    app.clearBanners();
-    mobileMenuOpen.value = false;
-  },
-);
 </script>
 
 <template>
-  <div class="min-h-dvh text-white">
-    <aside class="fixed inset-y-0 left-0 z-30 hidden w-64 border-r border-white/10 bg-[#111817]/95 p-4 lg:block">
-      <div class="mb-6">
-        <div class="text-lg font-semibold tracking-wide">Evolvria</div>
-        <div class="text-muted-foreground mt-1 text-xs">AI 驱动的本地优先叙事世界</div>
-      </div>
-      <nav class="flex flex-col gap-1">
-        <RouterLink
-          v-for="item in navItems"
-          :key="item.to"
-          :to="item.enabled ? item.to : route.fullPath"
-          class="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition"
-          :class="route.path === item.to ? 'bg-primary/15 text-primary' : item.enabled ? 'text-muted-foreground hover:bg-secondary hover:text-foreground' : 'cursor-not-allowed text-muted-foreground/40'"
-        >
-          <component :is="item.icon" class="size-4" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </nav>
-      <div class="absolute inset-x-4 bottom-4 rounded-md border border-white/10 bg-black/20 p-3 text-xs text-white/58">
-        <div>{{ platform.capabilities.os }} · {{ platform.capabilities.mobile ? "移动端" : "桌面/浏览器" }}</div>
-        <div v-if="world.hasWorld" class="mt-1 truncate">{{ world.world.name }} · 第 {{ world.world.current_time.day }} 天 {{ world.world.current_time.hour }} 时</div>
-      </div>
-    </aside>
+  <SidebarProvider>
+    <Sidebar collapsible="icon">
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" as-child>
+              <RouterLink to="/" class="flex items-center gap-2">
+                <div class="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground font-serif text-lg font-semibold">E</div>
+                <div class="flex flex-col gap-0.5 leading-none">
+                  <span class="font-serif text-base font-semibold">Evolvria</span>
+                  <span class="text-xs text-muted-foreground">AI 叙事世界</span>
+                </div>
+              </RouterLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
 
-    <header class="safe-top sticky top-0 z-20 border-b border-white/10 bg-[#101615]/95 px-4 py-3 backdrop-blur lg:hidden">
-      <div class="flex items-center justify-between">
-        <Button variant="ghost" size="icon" aria-label="打开导航" @click="mobileMenuOpen = true">
-          <Menu />
-        </Button>
-        <div class="text-sm font-semibold">Evolvria</div>
-        <Button :as="RouterLink" to="/settings" variant="ghost" size="icon" aria-label="设置">
-          <Settings />
-        </Button>
-      </div>
-    </header>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem v-for="item in navItems" :key="item.to">
+                <SidebarMenuButton
+                  v-if="item.enabled"
+                  :is-active="isActive(item.to)"
+                  :tooltip="item.label"
+                  as-child
+                >
+                  <RouterLink :to="item.to">
+                    <component :is="item.icon" />
+                    <span>{{ item.label }}</span>
+                  </RouterLink>
+                </SidebarMenuButton>
+                <SidebarMenuButton
+                  v-else
+                  :tooltip="`${item.label}（需先创建世界）`"
+                  disabled
+                >
+                  <component :is="item.icon" />
+                  <span>{{ item.label }}</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
 
-    <Sheet v-model:open="mobileMenuOpen">
-      <SheetContent side="left" class="safe-top w-72 max-w-[86vw] p-0 lg:hidden">
-        <SheetHeader>
-          <SheetTitle>Evolvria</SheetTitle>
-          <SheetDescription>导航</SheetDescription>
-        </SheetHeader>
-        <nav class="flex flex-col gap-1 px-4">
-          <RouterLink
-            v-for="item in navItems"
-            :key="item.to"
-            :to="item.enabled ? item.to : route.fullPath"
-            class="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
-            :class="route.path === item.to ? 'bg-primary/15 text-primary' : item.enabled ? 'text-muted-foreground' : 'cursor-not-allowed text-muted-foreground/40'"
-          >
-            <component :is="item.icon" class="size-4" />
-            <span>{{ item.label }}</span>
-          </RouterLink>
-        </nav>
-      </SheetContent>
-    </Sheet>
+      <SidebarFooter>
+        <div v-if="world.hasWorld" class="rounded-md border border-sidebar-border bg-sidebar-accent/40 p-3 text-xs text-sidebar-foreground">
+          <div class="truncate font-medium">{{ world.world.name }}</div>
+          <div class="mt-1 text-muted-foreground">第 {{ world.world.current_time.day }} 天 {{ world.world.current_time.hour }} 时</div>
+        </div>
+        <SidebarSeparator />
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton :tooltip="isDark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
+              <Moon v-if="!isDark" />
+              <Sun v-else />
+              <span>{{ isDark ? "浅色" : "深色" }}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton tooltip="设置" as-child>
+              <RouterLink to="/settings">
+                <Settings />
+                <span>设置</span>
+              </RouterLink>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+        <p class="px-2 text-[10px] text-muted-foreground">{{ platform.capabilities.os }} · {{ platform.capabilities.mobile ? "移动端" : "桌面/浏览器" }}</p>
+      </SidebarFooter>
+    </Sidebar>
 
-    <main class="mobile-bottom-offset min-h-dvh px-4 py-5 sm:px-6 lg:ml-64 lg:px-8">
-      <Alert v-if="app.lastError" variant="destructive" class="mb-4">
-        <X />
-        <AlertDescription>{{ app.lastError }}</AlertDescription>
-      </Alert>
-      <Alert v-if="app.lastNotice" class="mb-4">
-        <AlertDescription>{{ app.lastNotice }}</AlertDescription>
-      </Alert>
-      <RouterView />
-    </main>
+    <SidebarInset>
+      <header class="safe-top sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur">
+        <SidebarTrigger />
+        <div class="font-serif text-sm font-medium">Evolvria</div>
+      </header>
 
-    <nav class="safe-bottom fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-white/10 bg-[#101615]/96 px-2 pt-2 lg:hidden">
-      <RouterLink v-for="item in navItems.slice(1, 6)" :key="item.to" :to="item.enabled ? item.to : route.fullPath" class="flex flex-col items-center gap-1 rounded-md py-1.5 text-[11px]" :class="route.path === item.to ? 'text-primary' : item.enabled ? 'text-muted-foreground' : 'text-muted-foreground/40'">
-        <component :is="item.icon" class="size-4" />
-        <span>{{ item.label }}</span>
-      </RouterLink>
-    </nav>
-  </div>
+      <main class="mobile-bottom-offset min-h-[calc(100dvh-3.5rem)] px-4 py-5 sm:px-6 lg:px-8">
+        <RouterView />
+      </main>
+    </SidebarInset>
+  </SidebarProvider>
+
+  <Toaster position="top-right" rich-colors close-button />
 </template>

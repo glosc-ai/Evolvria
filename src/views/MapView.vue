@@ -40,31 +40,31 @@ async function addLocation() {
       </div>
       </CardHeader>
       <CardContent>
-      <div class="overflow-auto rounded-md border border-white/10 bg-[#18201e]">
+      <div class="overflow-auto rounded-md border border-border" :style="{ backgroundColor: 'var(--map-bg)' }">
         <svg :width="960 * zoom" :height="640 * zoom" viewBox="0 0 960 640" class="block min-w-full">
           <defs>
             <linearGradient id="terrain" x1="0" x2="1" y1="0" y2="1">
-              <stop offset="0%" stop-color="#264b45" />
-              <stop offset="48%" stop-color="#5f6942" />
-              <stop offset="100%" stop-color="#2e5867" />
+              <stop offset="0%" :stop-color="'var(--map-terrain-1)'" />
+              <stop offset="48%" :stop-color="'var(--map-terrain-2)'" />
+              <stop offset="100%" :stop-color="'var(--map-terrain-3)'" />
             </linearGradient>
           </defs>
           <rect width="960" height="640" fill="url(#terrain)" />
-          <path d="M120 530 C220 420 330 500 430 390 C560 250 690 320 810 160" fill="none" stroke="#84c5d6" stroke-width="8" opacity="0.42" />
+          <path d="M120 530 C220 420 330 500 430 390 C560 250 690 320 810 160" fill="none" stroke="var(--map-river)" stroke-width="8" opacity="0.42" />
           <g v-for="route in world.world.map_routes" :key="route.id">
             <line
               :x1="(world.locations.find((l) => l.id === route.from_location_id)?.position.x ?? 0.5) * 960"
               :y1="(world.locations.find((l) => l.id === route.from_location_id)?.position.y ?? 0.5) * 640"
               :x2="(world.locations.find((l) => l.id === route.to_location_id)?.position.x ?? 0.5) * 960"
               :y2="(world.locations.find((l) => l.id === route.to_location_id)?.position.y ?? 0.5) * 640"
-              stroke="#f2d58b"
+              stroke="var(--map-route)"
               stroke-width="4"
               opacity="0.74"
             />
           </g>
           <g v-for="location in mapLocations" :key="location.id" class="cursor-pointer" @click="selectedId = location.id">
-            <circle :cx="location.position.x * 960" :cy="location.position.y * 640" r="13" :fill="location.id === world.current?.id ? '#34d399' : location.known_to_player ? '#f8fafc' : '#94a3b8'" stroke="#111817" stroke-width="4" />
-            <text :x="location.position.x * 960 + 18" :y="location.position.y * 640 + 5" fill="#fff" font-size="20">{{ location.name }}</text>
+            <circle :cx="location.position.x * 960" :cy="location.position.y * 640" r="13" :fill="location.id === world.current?.id ? 'var(--map-node-current)' : location.known_to_player ? 'var(--map-node-known)' : 'var(--map-node-unknown)'" stroke="var(--map-node-stroke)" stroke-width="4" />
+            <text :x="location.position.x * 960 + 18" :y="location.position.y * 640 + 5" fill="var(--map-label)" font-size="20">{{ location.name }}</text>
           </g>
         </svg>
       </div>

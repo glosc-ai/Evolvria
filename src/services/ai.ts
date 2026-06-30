@@ -1,7 +1,8 @@
 import { mockPlayerAction } from "@/domain/fixtures";
+import { aiSdkJsonObjectSchema, callAiSdkJson, playerActionAiSchema } from "@/services/ai-sdk";
 import { safeInvoke } from "@/services/tauri";
 import { buildSeedWorkspaceAiContext } from "@/services/world-workspace";
-import type { AIUsage, PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
+import type { AIUsage, AIPurpose, PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
 
 export interface UsageEstimate {
   purpose: string;
@@ -70,7 +71,7 @@ export function estimateUsage(purpose: string, input: unknown, settings: Setting
     output_tokens: outputTokens,
     total_tokens: inputTokens + outputTokens,
     cost_estimate: null,
-    billing_note: remote ? "将消耗 Glosc One 额度" : "未配置 Glosc One：本地模拟不消耗远端额度",
+    billing_note: remote ? "远端模型" : "本地模拟",
     risk_level: purpose === "world_expand" ? "高" : remote ? "中" : "低",
     risk_reasons: remote ? ["会发送当前场景和相关记忆到 Glosc One"] : ["本地 mock 不发送网络请求"],
     retry_note: settings.auto_retry ? "失败时会按设置自动重试一次" : "失败时不会自动重试",
@@ -78,23 +79,15 @@ export function estimateUsage(purpose: string, input: unknown, settings: Setting
 }
 
 export function estimateUsageText(estimate: UsageEstimate): string {
-  return `${estimate.purpose_label} · 预计 Token ${estimate.total_tokens}（输入 ${estimate.input_tokens} / 输出 ${estimate.output_tokens}）· 风险 ${estimate.risk_level} · ${estimate.billing_note}`;
+  return `${estimate.purpose_label} · 预计 Token ${estimate.total_tokens}（输入 ${estimate.input_tokens} / 输出 ${estimate.output_tokens}）`;
 }
 
 export async function generateWorld(seed: WorldSeed, settings: Settings): Promise<WorldExpansionResult> {
   if (!isGloscConfigured(settings)) {
     return localWorldExpansion(seed);
   }
-  const result = await safeInvoke<GloscCallResult>("call_glosc", {
-    request: {
-      baseUrl: settings.glosc_base_url,
-      token: settings.glosc_token,
-      model: settings.model,
-      purpose: "world_expand",
-      payload: { seed, workspace_context: buildSeedWorkspaceAiContext(seed) },
-      timeoutSeconds: settings.timeout_seconds,
-    },
-  });
+  const payload = { seed, workspace_context: buildSeedWorkspaceAiContext(seed) };
+  const result = await callGlosc("world_expand", payload, settings, 1200);
   if (!result || result.status !== "ok") {
     return localWorldExpansion(seed, result?.error ? `Glosc One 调用失败：${result.error}` : "Glosc One 调用失败");
   }
@@ -105,19 +98,33 @@ export async function resolvePlayerAction(action: string, context: unknown, sett
   if (!isGloscConfigured(settings)) {
     return mockPlayerAction(action, context);
   }
-  const result = await safeInvoke<GloscCallResult>("call_glosc", {
+  const result = await callGlosc("player_action", { action, context }, settings, 600);
+  const normalized = normalizeGloscPlayerAction(result);
+  if (normalized) return normalized;
+  return { ...mockPlayerAction(action, context), warnings: ["远端响应不可用，已使用本地模拟结果。"] };
+}
+
+async function callGlosc(purpose: AIPurpose, payload: unknown, settings: Settings, maxOutputTokens: number): Promise<GloscCallResult | null> {
+  const sdkResult = await callAiSdkJson({
+    settings,
+    purpose,
+    payload,
+    schema: purpose === "player_action" ? playerActionAiSchema : aiSdkJsonObjectSchema,
+    maxOutputTokens,
+  });
+  if (sdkResult.status === "ok") return sdkResult;
+
+  const nativeResult = await safeInvoke<GloscCallResult>("call_glosc", {
     request: {
       baseUrl: settings.glosc_base_url,
       token: settings.glosc_token,
       model: settings.model,
-      purpose: "player_action",
-      payload: { action, context },
+      purpose,
+      payload,
       timeoutSeconds: settings.timeout_seconds,
     },
   });
-  const normalized = normalizeGloscPlayerAction(result);
-  if (normalized) return normalized;
-  return { ...mockPlayerAction(action, context), warnings: ["远端响应不可用，已使用本地模拟结果。"] };
+  return nativeResult ?? sdkResult;
 }
 
 export function normalizeGloscPlayerAction(result: GloscCallResult | null): PlayerActionResult | null {

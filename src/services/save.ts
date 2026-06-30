@@ -117,6 +117,12 @@ export async function deleteSaveEntry(entry: SaveEntry): Promise<void> {
   localStorage.setItem(BACKUP_KEY, JSON.stringify(backups));
 }
 
+export async function openSaveDirectory(): Promise<void> {
+  const native = await safeInvoke<boolean>("open_save_directory");
+  if (native) return;
+  throw new Error("当前运行环境不支持打开存档目录。");
+}
+
 export async function exportWorld(payload: SavePayload): Promise<ExportWorldResult> {
   if (!validatePayloadSchema(payload)) throw new Error("存档 schema 无效。");
   const native = await safeInvoke<ExportWorldResult>("export_world", { payload });

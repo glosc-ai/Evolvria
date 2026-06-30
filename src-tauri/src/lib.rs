@@ -493,6 +493,14 @@ fn reveal_or_share_path(path: String) -> Result<bool, String> {
     Ok(true)
 }
 
+#[tauri::command]
+fn open_save_directory(app: AppHandle) -> Result<bool, String> {
+    let path = save_dir(&app)?;
+    fs::create_dir_all(&path).map_err(to_string)?;
+    tauri_plugin_opener::open_path(path_to_string(path), None::<String>).map_err(to_string)?;
+    Ok(true)
+}
+
 fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("settings.json"))
 }
@@ -869,9 +877,10 @@ fn build_character_markdown(character: &Value, payload: &Value) -> String {
     let location_id = str_at(character, "current_location_id", "");
     let location_name = find_named(payload, "locations", &location_id).unwrap_or(location_id.clone());
     format!(
-        "# {}\n\n- ID：{}\n- 身份：{}\n- 状态：{}\n- 可见性：{}\n- 当前位置：{} ({})\n- 同行：{}\n\n## 简介\n\n{}\n\n## 性格与目标\n\n- 性格：{}\n- 目标：{}\n- 特质：{}\n- 行动倾向：{}\n\n## 玩家笔记\n\n{}\n\n## 记忆摘要\n\n{}\n",
+        "# {}\n\n- ID：{}\n- 性别：{}\n- 身份：{}\n- 状态：{}\n- 可见性：{}\n- 当前位置：{} ({})\n- 同行：{}\n\n## 简介\n\n{}\n\n## 性格与目标\n\n- 性格：{}\n- 目标：{}\n- 特质：{}\n- 行动倾向：{}\n\n## 玩家笔记\n\n{}\n\n## 记忆摘要\n\n{}\n",
         str_at(character, "name", "未命名角色"),
         str_at(character, "id", "character"),
+        str_at(character, "gender", "未指定"),
         str_at(character, "role", ""),
         str_at(character, "status", ""),
         str_at(character, "visibility", "met"),
@@ -1166,7 +1175,8 @@ pub fn run() {
             generate_map_from_reference,
             call_glosc,
             check_glosc_connection,
-            reveal_or_share_path
+            reveal_or_share_path,
+            open_save_directory
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Evolvria");

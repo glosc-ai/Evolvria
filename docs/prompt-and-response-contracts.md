@@ -4,7 +4,7 @@
 
 所有 AI 调用必须有明确目的、固定上下文结构和可校验响应。客户端不能依赖自由文本猜测状态变化。
 
-当前实现的远端调用由 Tauri `call_glosc` 发送到 OpenAI-compatible `/v1/chat/completions` 接口；未配置 Glosc One 或远端玩家行动响应不可用时使用本地 mock。
+当前实现的远端调用优先由 AI SDK 发送到 OpenAI-compatible Chat Completions 接口；若 AI SDK 直连失败且处于 Tauri 环境，会降级到 Tauri `call_glosc`。未配置 Glosc One 或远端玩家行动响应不可用时使用本地 mock。
 
 ## 请求类型
 
@@ -26,29 +26,19 @@
 
 ## 通用远端请求
 
-Rust 端 `call_glosc` 构造：
+TypeScript 端 `callAiSdkJson` 构造：
 
 ```json
 {
-  "model": "deepseek/deepseek-v4-pro",
-  "messages": [
-    {
-      "role": "system",
-      "content": "你是 Evolvria 的叙事与世界模拟引擎。只返回合法 JSON，不要输出 JSON 以外的内容。"
-    },
-    {
-      "role": "user",
-      "content": "{\"purpose\":\"player_action\",\"payload\":{}}"
-    }
-  ],
-  "response_format": {
-    "type": "json_object"
-  },
-  "temperature": 0.7
+  "purpose": "player_action",
+  "payload": {},
+  "output_contract": "返回 PlayerActionResult JSON..."
 }
 ```
 
-`baseUrl` 会自动补齐为 `/v1/chat/completions`。
+AI SDK 使用 `Output.json()`，由 provider 发送 JSON 响应格式，并在客户端用 Zod 校验关键结构。`baseUrl` 会标准化为 OpenAI-compatible base URL，例如 `https://one.gloscai.com` 会变成 `https://one.gloscai.com/v1`。
+
+Tauri `call_glosc` fallback 仍直接构造 `/v1/chat/completions` 请求，并使用 `response_format: {"type":"json_object"}`。
 
 ## player_action 上下文
 

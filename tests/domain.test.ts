@@ -16,6 +16,7 @@ import {
   validateWorldConsistency,
 } from "@/domain/world";
 import { estimateUsage, normalizeGloscPlayerAction, normalizeGloscWorldExpansion } from "@/services/ai";
+import { normalizeOpenAiBaseUrl } from "@/services/ai-sdk";
 import { importWorldFromText } from "@/services/save";
 import { DEFAULT_SETTINGS } from "@/services/settings";
 import { buildSeedWorkspaceAiContext, buildWorkspaceAiContext, buildWorldWorkspaceFiles } from "@/services/world-workspace";
@@ -25,6 +26,7 @@ describe("world domain", () => {
     const payload = createInitialPayload(defaultSeed());
     expect(validatePayloadSchema(payload)).toBe(true);
     expect(payload.characters.length).toBeGreaterThanOrEqual(3);
+    expect(payload.characters.find((character) => character.id === "char_001")?.gender).toBe("女");
     expect(payload.locations.length).toBeGreaterThanOrEqual(4);
     expect(payload.factions.length).toBeGreaterThanOrEqual(3);
     expect(payload.threads.length).toBeGreaterThanOrEqual(2);
@@ -108,6 +110,12 @@ describe("world domain", () => {
     expect(estimate.total_tokens).toBeGreaterThan(estimate.output_tokens);
     const payload = createInitialPayload(defaultSeed());
     expect(aiUsageSummary(payload.ai_logs).calls).toBe(0);
+  });
+
+  it("normalizes OpenAI-compatible base URLs for AI SDK", () => {
+    expect(normalizeOpenAiBaseUrl("https://one.gloscai.com")).toBe("https://one.gloscai.com/v1");
+    expect(normalizeOpenAiBaseUrl("https://one.gloscai.com/v1")).toBe("https://one.gloscai.com/v1");
+    expect(normalizeOpenAiBaseUrl("https://one.gloscai.com/v1/chat/completions")).toBe("https://one.gloscai.com/v1");
   });
 
   it("normalizes wrapped Glosc player-action responses", () => {

@@ -10,6 +10,7 @@ export function defaultSeed(): WorldSeed {
     npc_autonomy_frequency: "中频",
     hero: {
       name: "主角",
+      gender: "未指定",
       description: "刚抵达边境城镇的旅人。",
       goal: "理解世界背后的异常变化。",
       ability: "观察,交涉",
@@ -18,6 +19,7 @@ export function defaultSeed(): WorldSeed {
     key_characters: [
       {
         name: "璃安",
+        gender: "女",
         role: "旧友",
         relationship: "同行",
         personality: "温和,谨慎",
@@ -28,6 +30,7 @@ export function defaultSeed(): WorldSeed {
       },
       {
         name: "赛拉",
+        gender: "女",
         role: "竞争者",
         relationship: "竞争",
         personality: "果断,好胜",

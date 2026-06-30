@@ -39,23 +39,24 @@ TypeScript：
 - `generateWorld(seed, settings)`
 - `resolvePlayerAction(action, context, settings)`
 - `estimateUsage(purpose, input, settings)`
+- `callAiSdkJson(options)`：使用 AI SDK 调用 OpenAI-compatible Chat Completions，并要求返回 JSON
 
 Tauri：
 
 - `call_glosc(request)`
 - `check_glosc_connection(base_url, token, model)`
 
-当前设置页尚未接入 `check_glosc_connection` 按钮。
+远端主路径优先使用 AI SDK；如果 AI SDK 直连失败且当前在 Tauri 环境中，会降级到 `call_glosc` 原生命令以保留桌面端可用性。
 
 ## HTTP 形态
 
-`base_url` 会转换为聊天接口：
+`base_url` 会转换为 OpenAI-compatible base URL，供 AI SDK 的 OpenAI provider 自动调用聊天接口：
 
-- `https://one.gloscai.com` -> `https://one.gloscai.com/v1/chat/completions`
-- `https://one.gloscai.com/v1` -> `https://one.gloscai.com/v1/chat/completions`
-- 已以 `/v1/chat/completions` 结尾则保持不变。
+- `https://one.gloscai.com` -> `https://one.gloscai.com/v1`
+- `https://one.gloscai.com/v1` -> `https://one.gloscai.com/v1`
+- 已以 `/v1/chat/completions` 结尾则回退为 `.../v1`
 
-请求使用 bearer token 和 `User-Agent: Evolvria/0.1 Tauri/2`。
+AI SDK 请求使用 bearer token。Tauri 原生 fallback 仍使用 `User-Agent: Evolvria/0.1 Tauri/2`。
 
 ## 用量估算
 
@@ -89,7 +90,7 @@ Tauri：
 当前策略：
 
 - 未配置 Glosc One：世界扩写和玩家行动都使用本地 mock。
-- 远端 `generateWorld` 失败：抛错并提示，世界不创建。
+- 远端 `generateWorld` 失败：使用本地扩写摘要，并在摘要中说明失败原因。
 - 远端 `resolvePlayerAction` 响应不可用：使用本地 mock，并附加 warning。
 - AI 请求前保存 checkpoint，降低半途失败导致状态丢失的风险。
 

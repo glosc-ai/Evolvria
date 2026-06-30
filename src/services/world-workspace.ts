@@ -89,6 +89,7 @@ export function buildSeedWorkspaceAiContext(seed: WorldSeed): WorkspaceAiContext
     "## 主角",
     "",
     `- 名字：${seed.hero.name}`,
+    `- 性别：${seed.hero.gender || "未指定"}`,
     `- 描述：${seed.hero.description}`,
     `- 目标：${seed.hero.goal}`,
     `- 能力：${seed.hero.ability}`,
@@ -98,7 +99,7 @@ export function buildSeedWorkspaceAiContext(seed: WorldSeed): WorkspaceAiContext
     "",
     ...seed.key_characters.map(
       (character, index) =>
-        `- ${index + 1}. ${character.name}：${character.role}，关系 ${character.relationship}，目标 ${character.goal}，秘密 ${character.secret}`,
+        `- ${index + 1}. ${character.name}：性别 ${character.gender || "未指定"}，${character.role}，关系 ${character.relationship}，目标 ${character.goal}，秘密 ${character.secret}`,
     ),
     "",
   ].join("\n");
@@ -319,6 +320,7 @@ function buildCharacterMarkdown(character: Character, payload: SavePayload): str
     `# ${character.name}`,
     "",
     `- ID：${character.id}`,
+    `- 性别：${character.gender ?? "未指定"}`,
     `- 身份：${character.role}`,
     `- 状态：${character.status}`,
     `- 可见性：${character.visibility ?? "met"}`,

@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
-import { Plus, Route, ZoomIn, ZoomOut } from "lucide-vue-next";
+import { Plus, Route, ZoomIn, ZoomOut } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useWorldStore } from "@/stores/world";
 
@@ -23,15 +25,21 @@ async function addLocation() {
 
 <template>
   <section v-if="world.hasWorld" class="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
-    <Card class="overflow-hidden p-4">
-      <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
-        <h1 class="text-2xl font-semibold">地图</h1>
+    <Card class="overflow-hidden">
+      <CardHeader>
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <CardTitle>地图</CardTitle>
         <div class="flex gap-2">
-          <Button variant="outline" size="sm" type="button" @click="zoom = Math.max(0.7, zoom - 0.15)"><ZoomOut :size="16" /></Button>
-          <Button variant="outline" size="sm" type="button" @click="zoom = Math.min(1.8, zoom + 0.15)"><ZoomIn :size="16" /></Button>
-          <Button variant="outline" size="sm" type="button" @click="revealUnknown = !revealUnknown">{{ revealUnknown ? "隐藏未知" : "显示未知" }}</Button>
+          <Button variant="outline" size="sm" type="button" aria-label="缩小地图" @click="zoom = Math.max(0.7, zoom - 0.15)"><ZoomOut /></Button>
+          <Button variant="outline" size="sm" type="button" aria-label="放大地图" @click="zoom = Math.min(1.8, zoom + 0.15)"><ZoomIn /></Button>
+          <Field orientation="horizontal" class="w-auto gap-2">
+            <Switch id="reveal-unknown" v-model="revealUnknown" />
+            <FieldLabel for="reveal-unknown">{{ revealUnknown ? "隐藏未知" : "显示未知" }}</FieldLabel>
+          </Field>
         </div>
       </div>
+      </CardHeader>
+      <CardContent>
       <div class="overflow-auto rounded-md border border-white/10 bg-[#18201e]">
         <svg :width="960 * zoom" :height="640 * zoom" viewBox="0 0 960 640" class="block min-w-full">
           <defs>
@@ -60,28 +68,55 @@ async function addLocation() {
           </g>
         </svg>
       </div>
+      </CardContent>
     </Card>
-    <aside class="space-y-5">
-      <Card class="p-5">
-        <div class="font-medium">{{ selectedLocation?.name }}</div>
-        <p class="text-muted-foreground mt-2 text-sm leading-6">{{ selectedLocation?.description }}</p>
+    <aside class="flex flex-col gap-5">
+      <Card>
+        <CardHeader>
+          <CardTitle>{{ selectedLocation?.name }}</CardTitle>
+        </CardHeader>
+        <CardContent>
+        <p class="text-muted-foreground text-sm leading-6">{{ selectedLocation?.description }}</p>
         <div class="mt-4 flex gap-2">
           <Button v-if="selectedLocation" type="button" @click="world.goToLocation(selectedLocation.id)">移动到此处</Button>
-          <Button v-if="selectedLocation && world.current" variant="outline" type="button" @click="world.createRoute(world.current.id, selectedLocation.id)"><Route :size="16" />添加路线</Button>
+          <Button v-if="selectedLocation && world.current" variant="outline" type="button" @click="world.createRoute(world.current.id, selectedLocation.id)">
+            <Route data-icon="inline-start" />
+            添加路线
+          </Button>
         </div>
+        </CardContent>
       </Card>
-      <Card class="p-5">
-        <div class="mb-3 flex items-center gap-2 font-medium"><Plus :size="16" />添加标记</div>
-        <div class="space-y-3">
-          <Input v-model="draft.name" placeholder="地点名称" />
-          <Input v-model="draft.type" placeholder="类型" />
-          <Textarea v-model="draft.description" class="min-h-20" placeholder="描述" />
-          <div class="grid grid-cols-2 gap-2">
-            <Input v-model.number="draft.x" type="number" min="0.05" max="0.95" step="0.01" />
-            <Input v-model.number="draft.y" type="number" min="0.05" max="0.95" step="0.01" />
-          </div>
+      <Card>
+        <CardHeader>
+          <CardTitle class="flex items-center gap-2"><Plus class="size-4" />添加标记</CardTitle>
+        </CardHeader>
+        <CardContent>
+        <FieldGroup class="gap-3">
+          <Field>
+            <FieldLabel for="map-location-name">地点名称</FieldLabel>
+            <Input id="map-location-name" v-model="draft.name" placeholder="地点名称" />
+          </Field>
+          <Field>
+            <FieldLabel for="map-location-type">类型</FieldLabel>
+            <Input id="map-location-type" v-model="draft.type" placeholder="类型" />
+          </Field>
+          <Field>
+            <FieldLabel for="map-location-description">描述</FieldLabel>
+            <Textarea id="map-location-description" v-model="draft.description" class="min-h-20" placeholder="描述" />
+          </Field>
+          <FieldGroup class="grid grid-cols-2 gap-2">
+            <Field>
+              <FieldLabel for="map-location-x">X</FieldLabel>
+              <Input id="map-location-x" v-model.number="draft.x" type="number" min="0.05" max="0.95" step="0.01" />
+            </Field>
+            <Field>
+              <FieldLabel for="map-location-y">Y</FieldLabel>
+              <Input id="map-location-y" v-model.number="draft.y" type="number" min="0.05" max="0.95" step="0.01" />
+            </Field>
+          </FieldGroup>
           <Button class="w-full" type="button" @click="addLocation">保存标记</Button>
-        </div>
+        </FieldGroup>
+        </CardContent>
       </Card>
     </aside>
   </section>

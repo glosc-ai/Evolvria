@@ -1,5 +1,7 @@
+import { callAiSdkJson } from "@/services/ai-sdk";
 import { safeInvoke } from "@/services/tauri";
 import type { Settings } from "@/types/domain";
+import { z } from "zod";
 
 export const DEFAULT_GLOSC_MODEL = "deepseek/deepseek-v4-pro";
 
@@ -14,7 +16,7 @@ export const DEFAULT_SETTINGS: Settings = {
   model: DEFAULT_GLOSC_MODEL,
   timeout_seconds: 45,
   auto_retry: true,
-  confirm_ai_calls: true,
+  confirm_ai_calls: false,
   show_usage_estimate: true,
   auto_save_enabled: true,
   debug_logs: true,
@@ -63,6 +65,26 @@ export async function saveSettings(settings: Settings): Promise<void> {
 }
 
 export async function checkGloscConnection(settings: Settings): Promise<GloscConnectionCheck> {
+  let aiSdkError = "";
+  if (settings.glosc_token.trim()) {
+    const aiSdkResult = await callAiSdkJson({
+      settings,
+      purpose: "consistency_check",
+      payload: { status: "ok", chat: "ok" },
+      schema: z.record(z.string(), z.unknown()),
+      maxOutputTokens: 80,
+      temperature: 0,
+    });
+    if (aiSdkResult.status === "ok") {
+      return {
+        ok: true,
+        status: "ok",
+        message: "Glosc One 连接测试通过。",
+        checked_at: new Date().toISOString(),
+      };
+    }
+    aiSdkError = aiSdkResult.error ?? "AI SDK 连接测试失败。";
+  }
   const result = await safeInvoke<GloscConnectionCheck>("check_glosc_connection", {
     baseUrl: settings.glosc_base_url,
     token: settings.glosc_token,
@@ -72,6 +94,6 @@ export async function checkGloscConnection(settings: Settings): Promise<GloscCon
   return {
     ok: false,
     status: "error",
-    error: "当前不在 Tauri 环境，无法执行原生连接测试。",
+    error: aiSdkError || "当前不在 Tauri 环境，无法执行原生连接测试。",
   };
 }

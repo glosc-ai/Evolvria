@@ -68,7 +68,7 @@ test("exploration hides travel suggestions for the current location", async ({ p
   await expect(page.getByRole("button", { name: "前往雾松林" })).toBeHidden();
 });
 
-test("remote AI calls require confirmation and local mock does not", async ({ page }) => {
+test("AI calls proceed without confirmation dialogs", async ({ page }) => {
   const remoteSettings = {
     glosc_base_url: "https://one.gloscai.com",
     glosc_token: "test-token",
@@ -76,7 +76,6 @@ test("remote AI calls require confirmation and local mock does not", async ({ pa
     local_token_risk_acknowledged: true,
     onboarding_completed: true,
   };
-  const localSettings = { ...remoteSettings, glosc_token: "" };
 
   await page.goto("/");
   await page.evaluate((settings) => {
@@ -90,27 +89,12 @@ test("remote AI calls require confirmation and local mock does not", async ({ pa
     await page.getByRole("button", { name: "下一步" }).click();
   }
   await page.getByRole("button", { name: "创建并扩写世界" }).click();
-  await expect(page.getByRole("dialog", { name: "确认调用 Glosc One 扩写世界" })).toBeVisible();
-  await expect(page.getByText("用量估算")).toBeVisible();
-  await page.getByRole("button", { name: "取消" }).click();
-  await expect(page.getByRole("dialog", { name: "确认调用 Glosc One 扩写世界" })).toBeHidden();
-
-  await page.evaluate((settings) => localStorage.setItem("evolvria.settings", JSON.stringify(settings)), localSettings);
-  await page.reload();
-  for (let index = 0; index < 4; index += 1) {
-    await page.getByRole("button", { name: "下一步" }).click();
-  }
-  await page.getByRole("button", { name: "创建并扩写世界" }).click();
+  await expect(page.locator('[role="dialog"]')).toBeHidden();
   await expect(page.getByText("当前地点")).toBeVisible();
 
-  await page.evaluate((settings) => localStorage.setItem("evolvria.settings", JSON.stringify(settings)), remoteSettings);
-  await page.reload();
   await page.getByPlaceholder("输入你的行动...").fill("调查公告上的徽记");
   await page.keyboard.press("Control+Enter");
-  await expect(page.getByRole("dialog", { name: "确认调用 Glosc One 解析行动" })).toBeVisible();
-  await expect(page.getByText(/玩家行动 · 预计 Token/)).toBeVisible();
-  await page.getByRole("button", { name: "取消" }).click();
-  await expect(page.getByRole("dialog", { name: "确认调用 Glosc One 解析行动" })).toBeHidden();
+  await expect(page.locator('[role="dialog"]')).toBeHidden();
 });
 
 test("onboarding only enables remote start after key and risk acknowledgement", async ({ page }) => {

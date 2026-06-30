@@ -78,6 +78,7 @@ ID 由系统生成，不依赖显示名称。
 {
   "id": "char_001",
   "name": "璃安",
+  "gender": "女",
   "role": "旧友",
   "description": "熟悉边境传闻的人。",
   "personality": ["温和", "谨慎"],
@@ -105,7 +106,7 @@ ID 由系统生成，不依赖显示名称。
 }
 ```
 
-AI patch 不允许覆盖 `name`。`visibility` 当前使用 `met`、`heard`、`hidden`。
+AI patch 不允许覆盖 `name`。`gender` 是可选兼容字段，旧存档缺失时 UI 显示为“未指定”。`visibility` 当前使用 `met`、`heard`、`hidden`。
 
 ## Location
 

@@ -1,10 +1,12 @@
 <script setup lang="ts">
-import { Play, Plus, Settings, Upload } from "lucide-vue-next";
+import { Play, Plus, Settings, Upload } from "@lucide/vue";
 import { RouterLink, useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import { useWorldStore } from "@/stores/world";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 
 const router = useRouter();
 const app = useAppStore();
@@ -26,26 +28,47 @@ async function continueGame() {
       <h1 class="mt-4 max-w-3xl text-4xl font-semibold leading-tight sm:text-5xl">让角色、地点和时间线在本地持续演化</h1>
       <p class="mt-5 max-w-2xl text-base leading-7 text-white/64">创建主角与世界种子，AI 扩写世界并记录每一次行动、记忆、关系和地图变化。未配置 Glosc One 时自动使用本地模拟。</p>
       <div class="mt-8 flex flex-wrap gap-3">
-        <Button type="button" :variant="world.hasWorld ? 'default' : 'outline'" :disabled="!world.hasWorld" @click="continueGame"><Play :size="18" />继续游戏</Button>
-        <Button :as="RouterLink" to="/new-world"><Plus :size="18" />新建世界</Button>
-        <Button :as="RouterLink" to="/saves" variant="outline"><Upload :size="18" />存档列表</Button>
-        <Button :as="RouterLink" to="/settings" variant="outline"><Settings :size="18" />设置</Button>
+        <Button type="button" :variant="world.hasWorld ? 'default' : 'outline'" :disabled="!world.hasWorld" @click="continueGame">
+          <Play data-icon="inline-start" />
+          继续游戏
+        </Button>
+        <Button :as="RouterLink" to="/new-world">
+          <Plus data-icon="inline-start" />
+          新建世界
+        </Button>
+        <Button :as="RouterLink" to="/saves" variant="outline">
+          <Upload data-icon="inline-start" />
+          存档列表
+        </Button>
+        <Button :as="RouterLink" to="/settings" variant="outline">
+          <Settings data-icon="inline-start" />
+          设置
+        </Button>
       </div>
     </div>
     <aside class="self-center">
-      <Card class="p-5">
-        <div class="text-sm font-medium text-white/80">当前状态</div>
-        <div v-if="world.hasWorld" class="mt-4 space-y-3 text-sm">
+      <Card>
+        <CardHeader>
+          <CardTitle>当前状态</CardTitle>
+          <CardDescription v-if="world.hasWorld">{{ world.world.genre }} · {{ world.world.tone.join(" / ") }}</CardDescription>
+        </CardHeader>
+        <CardContent>
+        <div v-if="world.hasWorld" class="flex flex-col gap-3 text-sm">
           <div class="text-2xl font-semibold">{{ world.world.name }}</div>
-          <div class="text-muted-foreground">{{ world.world.genre }} · {{ world.world.tone.join(" / ") }}</div>
           <div class="grid grid-cols-2 gap-2">
-            <div class="rounded-md bg-black/24 p-3"><div class="text-muted-foreground text-xs">角色</div><div class="mt-1 text-lg">{{ world.characters.length }}</div></div>
-            <div class="rounded-md bg-black/24 p-3"><div class="text-muted-foreground text-xs">地点</div><div class="mt-1 text-lg">{{ world.locations.length }}</div></div>
-            <div class="rounded-md bg-black/24 p-3"><div class="text-muted-foreground text-xs">事件</div><div class="mt-1 text-lg">{{ world.timeline.length }}</div></div>
-            <div class="rounded-md bg-black/24 p-3"><div class="text-muted-foreground text-xs">线索</div><div class="mt-1 text-lg">{{ world.activeThreads.length }}</div></div>
+            <Badge variant="secondary" class="justify-between rounded-md px-3 py-2">角色 <span>{{ world.characters.length }}</span></Badge>
+            <Badge variant="secondary" class="justify-between rounded-md px-3 py-2">地点 <span>{{ world.locations.length }}</span></Badge>
+            <Badge variant="secondary" class="justify-between rounded-md px-3 py-2">事件 <span>{{ world.timeline.length }}</span></Badge>
+            <Badge variant="secondary" class="justify-between rounded-md px-3 py-2">线索 <span>{{ world.activeThreads.length }}</span></Badge>
           </div>
         </div>
-        <div v-else class="mt-4 text-sm leading-6 text-white/58">还没有世界。先创建一个世界，或从存档页导入已有存档。</div>
+        <Empty v-else>
+          <EmptyHeader>
+            <EmptyTitle>还没有世界</EmptyTitle>
+            <EmptyDescription>先创建一个世界，或从存档页导入已有存档。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+        </CardContent>
       </Card>
     </aside>
   </section>

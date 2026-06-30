@@ -44,6 +44,7 @@ export interface Relationship {
 export interface Character {
   id: string;
   name: string;
+  gender?: string;
   role: string;
   description: string;
   personality: string[];
@@ -248,6 +249,7 @@ export interface WorldSeed {
   npc_autonomy_frequency: string;
   hero: {
     name: string;
+    gender: string;
     description: string;
     goal: string;
     ability: string;
@@ -255,6 +257,7 @@ export interface WorldSeed {
   };
   key_characters: Array<{
     name: string;
+    gender: string;
     role: string;
     relationship: string;
     personality: string;

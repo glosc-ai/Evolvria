@@ -1,7 +1,10 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Textarea } from "@/components/ui/textarea";
 import AppSelect from "@/components/AppSelect.vue";
 import { useWorldStore } from "@/stores/world";
@@ -9,6 +12,7 @@ import { useWorldStore } from "@/stores/world";
 const world = useWorldStore();
 const filter = ref("全部");
 const notes = ref<Record<string, string>>({});
+const filteredCharacters = computed(() => world.filteredCharacters(filter.value));
 </script>
 
 <template>
@@ -27,16 +31,36 @@ const notes = ref<Record<string, string>>({});
       />
     </div>
     <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      <Card v-for="character in world.filteredCharacters(filter)" :key="character.id" class="p-4">
-        <div class="flex items-start justify-between gap-3">
-          <div><h2 class="text-lg font-medium">{{ character.name }}</h2><p class="text-muted-foreground text-sm">{{ character.role }} · {{ character.status }}</p></div>
-          <span v-if="character.companion" class="rounded bg-emerald-400/15 px-2 py-1 text-xs text-emerald-200">同行</span>
-        </div>
-        <p class="mt-3 text-sm leading-6 text-white/70">{{ character.description }}</p>
-        <div class="mt-3 flex flex-wrap gap-2"><span v-for="tag in character.personality" :key="tag" class="rounded bg-white/8 px-2 py-1 text-xs">{{ tag }}</span></div>
-        <Textarea v-model="notes[character.id]" class="mt-4 min-h-20" :placeholder="character.player_notes || '玩家备注'" />
-        <Button class="mt-2 w-full" type="button" @click="world.editCharacterNote(character.id, notes[character.id] ?? '')">保存备注</Button>
+      <Card v-for="character in filteredCharacters" :key="character.id">
+        <CardHeader>
+          <div class="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>{{ character.name }}</CardTitle>
+              <p class="text-muted-foreground text-sm">{{ character.role }} · {{ character.gender || "未指定" }} · {{ character.status }}</p>
+            </div>
+            <Badge v-if="character.companion">同行</Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p class="text-sm leading-6 text-muted-foreground">{{ character.description }}</p>
+          <div class="mt-3 flex flex-wrap gap-2">
+            <Badge v-for="tag in character.personality" :key="tag" variant="secondary">{{ tag }}</Badge>
+          </div>
+          <Field class="mt-4">
+            <FieldLabel :for="`note-${character.id}`">玩家备注</FieldLabel>
+            <Textarea :id="`note-${character.id}`" v-model="notes[character.id]" class="min-h-20" :placeholder="character.player_notes || '玩家备注'" />
+          </Field>
+        </CardContent>
+        <CardFooter>
+          <Button class="w-full" type="button" @click="world.editCharacterNote(character.id, notes[character.id] ?? '')">保存备注</Button>
+        </CardFooter>
       </Card>
     </div>
+    <Empty v-if="filteredCharacters.length === 0" class="mt-6">
+      <EmptyHeader>
+        <EmptyTitle>没有符合条件的人物</EmptyTitle>
+        <EmptyDescription>调整筛选后再查看。</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
   </section>
 </template>

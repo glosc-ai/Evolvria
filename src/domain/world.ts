@@ -64,6 +64,7 @@ export function buildCharacters(seed: WorldSeed): Character[] {
   const hero: Character = {
     id: "char_hero",
     name: seed.hero.name || "主角",
+    gender: seed.hero.gender || "未指定",
     role: "player",
     description: seed.hero.description || "玩家创建的主角。",
     personality: splitTags(seed.hero.ability),
@@ -87,6 +88,7 @@ export function buildCharacters(seed: WorldSeed): Character[] {
     characters.push({
       id,
       name: character.name || `关键角色 ${index + 1}`,
+      gender: character.gender || "未指定",
       role: character.role || "关键角色",
       description: character.description,
       personality: splitTags(character.personality),

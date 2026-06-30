@@ -131,6 +131,7 @@ export const useWorldStore = defineStore("world", () => {
       characters: payload.value.characters.map((character) => ({
         id: character.id,
         name: character.name,
+        gender: character.gender,
         role: character.role,
         companion: character.companion,
         current_location_id: character.current_location_id,

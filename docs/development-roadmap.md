@@ -55,7 +55,7 @@
 目标：补齐 native 文件能力到 Vue UI。
 
 - 文件选择导入 zip。
-- 从 zip 恢复 `payload.json`。
+- 从 zip 恢复 `state/payload.json`，并兼容旧版 `payload.json`。
 - reveal/share 导出路径。
 - 备份列表恢复/删除。
 - 大存档加载和损坏文件提示。
@@ -63,7 +63,7 @@
 验收：
 
 - 桌面端可导入导出 zip。
-- 浏览器 fallback 可导入导出 JSON。
+- 浏览器 fallback 可导入导出工作区 JSON bundle。
 - 损坏导入不会覆盖 active 世界。
 
 ## Phase 4：地图图片与空间玩法

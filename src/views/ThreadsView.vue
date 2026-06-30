@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();

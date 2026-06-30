@@ -11,14 +11,22 @@ import {
   Settings,
   Users,
   X,
-} from "lucide-vue-next";
+} from "@lucide/vue";
 import { computed, onMounted, ref, watch } from "vue";
 import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 import { useAppStore } from "@/stores/app";
 import { usePlatformStore } from "@/stores/platform";
 import { useSettingsStore } from "@/stores/settings";
 import { useWorldStore } from "@/stores/world";
-import Button from "@/components/ui/Button.vue";
 
 const app = useAppStore();
 const settings = useSettingsStore();
@@ -66,15 +74,15 @@ watch(
         <div class="text-lg font-semibold tracking-wide">Evolvria</div>
         <div class="text-muted-foreground mt-1 text-xs">AI 驱动的本地优先叙事世界</div>
       </div>
-      <nav class="space-y-1">
+      <nav class="flex flex-col gap-1">
         <RouterLink
           v-for="item in navItems"
           :key="item.to"
           :to="item.enabled ? item.to : route.fullPath"
           class="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm transition"
-          :class="route.path === item.to ? 'bg-emerald-500/18 text-emerald-50' : item.enabled ? 'text-white/72 hover:bg-white/8 hover:text-white' : 'cursor-not-allowed text-white/28'"
+          :class="route.path === item.to ? 'bg-primary/15 text-primary' : item.enabled ? 'text-muted-foreground hover:bg-secondary hover:text-foreground' : 'cursor-not-allowed text-muted-foreground/40'"
         >
-          <component :is="item.icon" :size="18" />
+          <component :is="item.icon" class="size-4" />
           <span>{{ item.label }}</span>
         </RouterLink>
       </nav>
@@ -87,52 +95,50 @@ watch(
     <header class="safe-top sticky top-0 z-20 border-b border-white/10 bg-[#101615]/95 px-4 py-3 backdrop-blur lg:hidden">
       <div class="flex items-center justify-between">
         <Button variant="ghost" size="icon" aria-label="打开导航" @click="mobileMenuOpen = true">
-          <Menu :size="20" />
+          <Menu />
         </Button>
         <div class="text-sm font-semibold">Evolvria</div>
-        <RouterLink class="inline-flex h-10 w-10 items-center justify-center rounded-md" to="/settings" aria-label="设置">
-          <Button variant="ghost" size="icon">
-            <Settings :size="18" />
-          </Button>
-        </RouterLink>
+        <Button :as="RouterLink" to="/settings" variant="ghost" size="icon" aria-label="设置">
+          <Settings />
+        </Button>
       </div>
     </header>
 
-    <div v-if="mobileMenuOpen" class="fixed inset-0 z-40 bg-black/60 lg:hidden" @click.self="mobileMenuOpen = false">
-      <div class="safe-top h-full w-72 max-w-[86vw] border-r border-white/10 bg-[#111817] p-4">
-        <div class="mb-4 flex items-center justify-between">
-          <div>
-            <div class="font-semibold">Evolvria</div>
-            <div class="text-muted-foreground text-xs">导航</div>
-          </div>
-          <Button variant="ghost" size="icon" aria-label="关闭导航" @click="mobileMenuOpen = false">
-            <X :size="18" />
-          </Button>
-        </div>
-        <nav class="space-y-1">
+    <Sheet v-model:open="mobileMenuOpen">
+      <SheetContent side="left" class="safe-top w-72 max-w-[86vw] p-0 lg:hidden">
+        <SheetHeader>
+          <SheetTitle>Evolvria</SheetTitle>
+          <SheetDescription>导航</SheetDescription>
+        </SheetHeader>
+        <nav class="flex flex-col gap-1 px-4">
           <RouterLink
             v-for="item in navItems"
             :key="item.to"
             :to="item.enabled ? item.to : route.fullPath"
             class="flex min-h-11 items-center gap-3 rounded-md px-3 text-sm"
-            :class="route.path === item.to ? 'bg-emerald-500/18 text-emerald-50' : item.enabled ? 'text-white/72' : 'text-white/28'"
+            :class="route.path === item.to ? 'bg-primary/15 text-primary' : item.enabled ? 'text-muted-foreground' : 'cursor-not-allowed text-muted-foreground/40'"
           >
-            <component :is="item.icon" :size="18" />
+            <component :is="item.icon" class="size-4" />
             <span>{{ item.label }}</span>
           </RouterLink>
         </nav>
-      </div>
-    </div>
+      </SheetContent>
+    </Sheet>
 
     <main class="mobile-bottom-offset min-h-dvh px-4 py-5 sm:px-6 lg:ml-64 lg:px-8">
-      <div v-if="app.lastError" class="mb-4 rounded-md border border-red-400/40 bg-red-500/15 px-4 py-3 text-sm text-red-50">{{ app.lastError }}</div>
-      <div v-if="app.lastNotice" class="mb-4 rounded-md border border-emerald-400/40 bg-emerald-500/15 px-4 py-3 text-sm text-emerald-50">{{ app.lastNotice }}</div>
+      <Alert v-if="app.lastError" variant="destructive" class="mb-4">
+        <X />
+        <AlertDescription>{{ app.lastError }}</AlertDescription>
+      </Alert>
+      <Alert v-if="app.lastNotice" class="mb-4">
+        <AlertDescription>{{ app.lastNotice }}</AlertDescription>
+      </Alert>
       <RouterView />
     </main>
 
     <nav class="safe-bottom fixed inset-x-0 bottom-0 z-20 grid grid-cols-5 border-t border-white/10 bg-[#101615]/96 px-2 pt-2 lg:hidden">
-      <RouterLink v-for="item in navItems.slice(1, 6)" :key="item.to" :to="item.enabled ? item.to : route.fullPath" class="flex flex-col items-center gap-1 rounded-md py-1.5 text-[11px]" :class="route.path === item.to ? 'text-emerald-300' : item.enabled ? 'text-white/62' : 'text-white/25'">
-        <component :is="item.icon" :size="18" />
+      <RouterLink v-for="item in navItems.slice(1, 6)" :key="item.to" :to="item.enabled ? item.to : route.fullPath" class="flex flex-col items-center gap-1 rounded-md py-1.5 text-[11px]" :class="route.path === item.to ? 'text-primary' : item.enabled ? 'text-muted-foreground' : 'text-muted-foreground/40'">
+        <component :is="item.icon" class="size-4" />
         <span>{{ item.label }}</span>
       </RouterLink>
     </nav>

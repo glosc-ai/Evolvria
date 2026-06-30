@@ -1,5 +1,6 @@
 import { mockPlayerAction } from "@/domain/fixtures";
 import { safeInvoke } from "@/services/tauri";
+import { buildSeedWorkspaceAiContext } from "@/services/world-workspace";
 import type { AIUsage, PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
 
 export interface UsageEstimate {
@@ -90,7 +91,7 @@ export async function generateWorld(seed: WorldSeed, settings: Settings): Promis
       token: settings.glosc_token,
       model: settings.model,
       purpose: "world_expand",
-      payload: seed,
+      payload: { seed, workspace_context: buildSeedWorkspaceAiContext(seed) },
       timeoutSeconds: settings.timeout_seconds,
     },
   });

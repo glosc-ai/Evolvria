@@ -2,11 +2,11 @@
 import { computed, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import AiCallConfirmDialog from "@/components/AiCallConfirmDialog.vue";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
-import Input from "@/components/ui/Input.vue";
-import Textarea from "@/components/ui/Textarea.vue";
-import Select from "@/components/ui/Select.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import AppSelect from "@/components/AppSelect.vue";
 import { estimateUsageText } from "@/services/ai";
 import { useAppStore } from "@/stores/app";
 import { useSettingsStore } from "@/stores/settings";
@@ -73,11 +73,11 @@ async function create() {
           <label class="block text-sm">世界名称<Input v-model="draft.world_name" class="mt-2" /></label>
           <label class="block text-sm">
             类型
-            <Select v-model="draft.genre" :options="[{label: '奇幻', value: '奇幻'}, {label: '科幻', value: '科幻'}, {label: '现代都市', value: '现代都市'}, {label: '武侠', value: '武侠'}]" class="mt-2" />
+            <AppSelect v-model="draft.genre" :options="[{label: '奇幻', value: '奇幻'}, {label: '科幻', value: '科幻'}, {label: '现代都市', value: '现代都市'}, {label: '武侠', value: '武侠'}]" class="mt-2" />
           </label>
           <label class="block text-sm">
             基调
-            <Select v-model="draft.tone" :options="[{label: '冒险', value: '冒险'}, {label: '政治', value: '政治'}, {label: '悬疑', value: '悬疑'}, {label: '温情', value: '温情'}]" class="mt-2" />
+            <AppSelect v-model="draft.tone" :options="[{label: '冒险', value: '冒险'}, {label: '政治', value: '政治'}, {label: '悬疑', value: '悬疑'}, {label: '温情', value: '温情'}]" class="mt-2" />
           </label>
         </div>
         <div v-else-if="step === 2" class="space-y-4">
@@ -108,11 +108,11 @@ async function create() {
           <label class="block text-sm">内容偏好与禁用内容<Textarea v-model="draft.limits" class="mt-2 min-h-24" /></label>
           <label class="block text-sm">
             叙事详细度
-            <Select v-model="draft.narrative_detail" :options="[{label: '简洁', value: '简洁'}, {label: '适中', value: '适中'}, {label: '详细', value: '详细'}]" class="mt-2" />
+            <AppSelect v-model="draft.narrative_detail" :options="[{label: '简洁', value: '简洁'}, {label: '适中', value: '适中'}, {label: '详细', value: '详细'}]" class="mt-2" />
           </label>
           <label class="block text-sm">
             NPC 自主频率
-            <Select v-model="draft.npc_autonomy_frequency" :options="[{label: '低频', value: '低频'}, {label: '中频', value: '中频'}, {label: '高频', value: '高频'}]" class="mt-2" />
+            <AppSelect v-model="draft.npc_autonomy_frequency" :options="[{label: '低频', value: '低频'}, {label: '中频', value: '中频'}, {label: '高频', value: '高频'}]" class="mt-2" />
           </label>
         </div>
         <div v-else class="space-y-4">

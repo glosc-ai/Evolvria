@@ -9,3 +9,4 @@ src-tauri/.tauri/
 .DS_Store
 .claude/
 output/
+.playwright-cli

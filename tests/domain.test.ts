@@ -16,7 +16,9 @@ import {
   validateWorldConsistency,
 } from "@/domain/world";
 import { estimateUsage, normalizeGloscPlayerAction, normalizeGloscWorldExpansion } from "@/services/ai";
+import { importWorldFromText } from "@/services/save";
 import { DEFAULT_SETTINGS } from "@/services/settings";
+import { buildSeedWorkspaceAiContext, buildWorkspaceAiContext, buildWorldWorkspaceFiles } from "@/services/world-workspace";
 
 describe("world domain", () => {
   it("creates a schema-valid local-first world", () => {
@@ -159,5 +161,51 @@ describe("world domain", () => {
     expect(next.memories[0].text).toBe("远端摘要已经写入世界状态。");
     expect(next.suggested_actions).toEqual(["查看远端摘要"]);
     expect(payload.world.summary).not.toBe(next.world.summary);
+  });
+
+  it("builds a folder-style world workspace with AGENTS.md as the entrypoint", () => {
+    const payload = createInitialPayload(defaultSeed());
+    const files = buildWorldWorkspaceFiles(payload);
+    const paths = files.map((file) => file.path);
+    expect(paths).toContain("AGENTS.md");
+    expect(paths).toContain("state/payload.json");
+    expect(paths).toContain("world/OVERVIEW.md");
+    expect(paths).toContain("memory/MEMORY.md");
+    expect(paths).toContain("maps/MAP.md");
+    expect(paths).toContain("history/TIMELINE.md");
+    expect(paths).toContain("threads/THREADS.md");
+    expect(paths).toContain("characters/char_hero.md");
+    expect(paths).toContain("locations/loc_start.md");
+    expect(files.find((file) => file.path === "AGENTS.md")?.content).toContain("每次处理世界模拟");
+  });
+
+  it("loads AGENTS.md and scoped workspace files into AI context", () => {
+    const payload = createInitialPayload(defaultSeed());
+    const context = buildWorkspaceAiContext(payload, {
+      currentLocationId: "loc_start",
+      participantIds: ["char_hero"],
+    });
+    expect(context.instructions_path).toBe("AGENTS.md");
+    expect(context.loaded_files[0].path).toBe("AGENTS.md");
+    expect(context.loaded_files.map((file) => file.path)).toContain("locations/loc_start.md");
+    expect(context.loaded_files.map((file) => file.path)).toContain("characters/char_hero.md");
+    expect(context.available_files.length).toBeGreaterThan(context.loaded_files.length);
+  });
+
+  it("wraps new-world expansion in seed workspace instructions", () => {
+    const context = buildSeedWorkspaceAiContext(defaultSeed());
+    expect(context.loaded_files.map((file) => file.path)).toEqual(["AGENTS.md", "world/SEED.md"]);
+    expect(context.instructions).toContain("新世界创建请求");
+  });
+
+  it("imports browser workspace bundles through state/payload.json", async () => {
+    const payload = createInitialPayload(defaultSeed());
+    const imported = await importWorldFromText(
+      JSON.stringify({
+        workspace_format: "evolvria_workspace_v1",
+        files: buildWorldWorkspaceFiles(payload),
+      }),
+    );
+    expect(imported.world.id).toBe(payload.world.id);
   });
 });

@@ -1,5 +1,17 @@
 import { expect, test } from "@playwright/test";
 
+test("main menu keeps continue unhighlighted when there is no active world", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => localStorage.clear());
+  await page.goto("/");
+
+  await expect(page.getByText("还没有世界。先创建一个世界，或从存档页导入已有存档。")).toBeVisible();
+  const continueButton = page.getByRole("button", { name: /继续游戏/ });
+  await expect(continueButton).toBeDisabled();
+  await expect(continueButton).toHaveAttribute("data-variant", "outline");
+  await expect(page.getByRole("link", { name: /新建世界/ })).toBeVisible();
+});
+
 test("main flows render across viewports", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /让角色、地点和时间线/ })).toBeVisible();

@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Download, RefreshCcw, Trash2 } from "lucide-vue-next";
 import { onMounted, ref } from "vue";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
-import Textarea from "@/components/ui/Textarea.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
 import { importWorldFromText, saveWorld } from "@/services/save";
 import { useAppStore } from "@/stores/app";
 import { useWorldStore } from "@/stores/world";

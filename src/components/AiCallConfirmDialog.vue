@@ -1,6 +1,15 @@
 <script setup lang="ts">
-import { AlertTriangle } from "lucide-vue-next";
-import Button from "./ui/Button.vue";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Spinner } from "@/components/ui/spinner";
 
 withDefaults(
   defineProps<{
@@ -23,32 +32,32 @@ const emit = defineEmits<{
   confirm: [];
   cancel: [];
 }>();
+
+function handleOpenChange(value: boolean) {
+  if (!value) emit("cancel");
+}
 </script>
 
 <template>
-  <Teleport to="body">
-    <div v-if="open" class="fixed inset-0 z-50 flex items-center justify-center bg-black/68 px-4 py-6" role="dialog" aria-modal="true" :aria-label="title">
-      <div class="w-full max-w-lg rounded-md border border-amber-300/30 bg-card p-5 shadow-2xl">
-        <div class="flex items-start gap-3">
-          <span class="mt-1 inline-flex size-9 shrink-0 items-center justify-center rounded-md border border-amber-300/30 bg-amber-300/12 text-amber-100">
-            <AlertTriangle :size="19" />
-          </span>
-          <div>
-            <h2 class="text-lg font-semibold text-white">{{ title }}</h2>
-            <p class="mt-2 text-sm leading-6 text-white/70">{{ description }}</p>
-          </div>
-        </div>
+  <Dialog :open="open" @update:open="handleOpenChange">
+    <DialogContent>
+      <DialogHeader>
+        <DialogTitle>{{ title }}</DialogTitle>
+        <DialogDescription>{{ description }}</DialogDescription>
+      </DialogHeader>
 
-        <div class="mt-4 rounded-md border border-white/10 bg-black/24 p-3 text-sm leading-6 text-white/78">
-          <div class="font-medium text-white">用量估算</div>
-          <div class="mt-1">{{ estimateText }}</div>
-        </div>
+      <Alert>
+        <AlertTitle>用量估算</AlertTitle>
+        <AlertDescription>{{ estimateText }}</AlertDescription>
+      </Alert>
 
-        <div class="mt-5 flex flex-wrap justify-end gap-3">
-          <Button variant="outline" :disabled="busy" type="button" @click="emit('cancel')">{{ cancelLabel }}</Button>
-          <Button :disabled="busy" type="button" @click="emit('confirm')">{{ busy ? "正在调用..." : confirmLabel }}</Button>
-        </div>
-      </div>
-    </div>
-  </Teleport>
+      <DialogFooter>
+        <Button variant="outline" :disabled="busy" type="button" @click="emit('cancel')">{{ cancelLabel }}</Button>
+        <Button :disabled="busy" type="button" @click="emit('confirm')">
+          <Spinner v-if="busy" data-icon="inline-start" />
+          {{ busy ? "正在调用..." : confirmLabel }}
+        </Button>
+      </DialogFooter>
+    </DialogContent>
+  </Dialog>
 </template>

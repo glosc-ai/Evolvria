@@ -62,12 +62,26 @@ Rust 端 `call_glosc` 构造：
     "companion_character_ids": ["char_001"],
     "nearby_locations": []
   },
+  "workspace_context": {
+    "workspace_format": "evolvria_workspace_v1",
+    "instructions_path": "AGENTS.md",
+    "instructions": "# Evolvria 世界工作区...",
+    "loaded_files": [
+      { "path": "AGENTS.md", "content": "..." },
+      { "path": "world/OVERVIEW.md", "content": "..." },
+      { "path": "memory/MEMORY.md", "content": "..." },
+      { "path": "locations/loc_start.md", "content": "..." },
+      { "path": "characters/char_hero.md", "content": "..." }
+    ],
+    "available_files": ["AGENTS.md", "state/payload.json"],
+    "loading_policy": "先遵循 AGENTS.md..."
+  },
   "memory_context": [],
   "recent_events": []
 }
 ```
 
-其中 `recent_events` 取最近 8 条，`memory_context` 默认最多 8 条。
+其中 `recent_events` 取最近 8 条，`memory_context` 默认最多 8 条。`workspace_context.loaded_files[0]` 必须是 `AGENTS.md`；后续文件只加载当前请求相关的世界摘要、规则、长期记忆、地图索引、当前地点、参与角色、开放线索和历史索引，避免长上下文导致模型遗忘关键规则。完整机器状态只在需要导入导出或一致性校验时读取 `state/payload.json`。
 
 ## PlayerActionResult
 
@@ -117,7 +131,7 @@ Rust 端 `call_glosc` 构造：
 
 ## world_expand
 
-当前 `generateWorld` 只要求远端返回可记录的 summary/content 和 usage。结构化初始世界由本地 `createInitialPayload(seed)` 生成。
+当前 `generateWorld` 只要求远端返回可记录的 summary/content 和 usage。请求 payload 会包装为 `{ seed, workspace_context }`，其中 `workspace_context` 包含新世界创建用的 `AGENTS.md` 和 `world/SEED.md`。结构化初始世界由本地 `createInitialPayload(seed)` 生成。
 
 远端成功返回：
 

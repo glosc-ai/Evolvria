@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
-import Select from "@/components/ui/Select.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import AppSelect from "@/components/AppSelect.vue";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();
@@ -19,15 +19,15 @@ const eventTypes = computed(() => Array.from(new Set(world.timeline.map((event) 
   <section v-if="world.hasWorld">
     <h1 class="text-2xl font-semibold">时间线</h1>
     <Card class="mt-5 grid gap-3 p-4 md:grid-cols-4">
-      <Select
+      <AppSelect
         v-model="typeFilter"
         :options="[{ label: '全部类型', value: '' }, ...(eventTypes.map(type => ({ label: type, value: type })) || [])]"
       />
-      <Select
+      <AppSelect
         v-model="characterFilter"
         :options="[{ label: '全部角色', value: '' }, ...(world.characters.map(c => ({ label: c.name, value: c.id })) || [])]"
       />
-      <Select
+      <AppSelect
         v-model="locationFilter"
         :options="[{ label: '全部地点', value: '' }, ...(world.locations.map(l => ({ label: l.name, value: l.id })) || [])]"
       />

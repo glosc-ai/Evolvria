@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { PlugZap, RotateCcw, Save } from "lucide-vue-next";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
-import Input from "@/components/ui/Input.vue";
-import Textarea from "@/components/ui/Textarea.vue";
-import Select from "@/components/ui/Select.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import AppSelect from "@/components/AppSelect.vue";
 import { useAppStore } from "@/stores/app";
 import { useSettingsStore } from "@/stores/settings";
 
@@ -71,7 +71,7 @@ async function reset() {
           <label class="flex items-center gap-3 text-sm"><input v-model="settings.settings.auto_retry" type="checkbox" />失败自动重试</label>
           <label class="block text-sm">
             日志级别
-            <Select
+            <AppSelect
               v-model="settings.settings.log_level"
               :options="[
                 { label: 'default', value: 'default' },
@@ -83,7 +83,7 @@ async function reset() {
           </label>
           <label class="block text-sm">
             字体大小
-            <Select
+            <AppSelect
               v-model="settings.settings.font_size"
               :options="[
                 { label: '小', value: 'small' },

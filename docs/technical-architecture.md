@@ -8,7 +8,7 @@ Evolvria 当前是本地优先客户端：
 - Pinia store 负责连接 UI、设置、平台能力、AI、存档和世界状态。
 - `src/domain/world.ts` 负责纯世界状态转换，不直接调用网络或文件系统。
 - `src/services/*` 负责 Tauri invoke 包装、AI、存档、设置和通用文本/ID 工具。
-- `src-tauri/src/lib.rs` 负责应用数据目录、原子写入、备份、zip 导出/导入、地图图片处理、平台能力和 Glosc One HTTP 调用。
+- `src-tauri/src/lib.rs` 负责应用数据目录、工作区存档写入、备份、zip 导出/导入、地图图片处理、平台能力和 Glosc One HTTP 调用。
 
 MVP 不依赖自建后端。配置 Glosc One 后可调用远端模型；未配置时使用本地 deterministic mock。
 
@@ -19,7 +19,8 @@ src/types/domain.ts       schema v1 类型定义
 src/domain/world.ts       世界创建、patch 校验、行动应用、地图标注、记忆检索、一致性检查
 src/domain/fixtures.ts    默认 seed、mock 地点/势力、mock 玩家行动
 src/services/ai.ts        用量估算、Glosc 配置判断、世界扩写、玩家行动解析
-src/services/save.ts      active 存档、备份、AI checkpoint、导入导出 browser fallback
+src/services/save.ts      active 工作区存档、备份、AI checkpoint、导入导出 browser fallback
+src/services/world-workspace.ts  AGENTS.md 和世界工作区 Markdown 生成、AI 按需上下文
 src/services/settings.ts  默认设置、本机 token 风险确认、设置读写
 src/services/tauri.ts     Tauri runtime 判断和 safeInvoke
 src/stores/world.ts       主世界 store，编排 AI、domain transition 和持久化
@@ -51,7 +52,7 @@ tests/                    Vitest 和 Playwright 测试
 
 1. `ExplorationView` 提交自由输入或推荐行动。
 2. `worldStore.submitPlayerAction` 在 AI 请求前调用 `saveAiCheckpoint`。
-3. `buildAiContext` 组装当前世界、当前地点、同行角色、附近地点、相关记忆和最近 8 个事件。
+3. `buildAiContext` 组装当前世界、当前地点、同行角色、附近地点、相关记忆和最近 8 个事件，并附加 `workspace_context`。`workspace_context` 总是先包含 `AGENTS.md`，再包含当前场景相关的工作区文档。
 4. `resolvePlayerAction` 调用 Glosc One；未配置或远端响应不可用时返回本地 mock。
 5. `applyPlayerAction` 创建时间线事件，推进世界时间，应用 state patch、关系变化和记忆写入。
 6. `recordAiLog` 写入用量与摘要。
@@ -96,19 +97,23 @@ tests/                    Vitest 和 Playwright 测试
 桌面 Tauri：
 
 - 设置：`app_data_dir/settings.json`
-- active 世界：`app_data_dir/saves/active_world.json`
-- 备份：`app_data_dir/saves/backups/active_world_*.json`
-- AI checkpoint：`app_data_dir/saves/backups/ai_before_request.json`
+- active 世界：`app_data_dir/saves/active_world/`
+- active payload：`app_data_dir/saves/active_world/state/payload.json`
+- 备份：`app_data_dir/saves/backups/active_world_*/`
+- AI checkpoint：`app_data_dir/saves/backups/ai_before_request/`
 - 导出：系统保存面板选择的 `*.zip`，默认目录为 `app_data_dir/exports/`
-- 地图图片：`app_data_dir/saves/maps/map_001.png`
+- 地图图片：`app_data_dir/saves/active_world/maps/map_001.png`
+- 兼容读取旧存档：`app_data_dir/saves/active_world.json`、`app_data_dir/saves/backups/*.json`
 
 浏览器开发环境：
 
 - 设置：`localStorage.evolvria.settings`
 - active 世界：`localStorage.evolvria.active_world`
+- active 工作区 bundle：`localStorage.evolvria.active_workspace`
 - 备份：`localStorage.evolvria.backups`
 - AI checkpoint：`localStorage.evolvria.ai_checkpoint`
-- 导出：浏览器保存面板写出 JSON；不支持时触发 JSON 下载
+- AI checkpoint 工作区 bundle：`localStorage.evolvria.ai_checkpoint_workspace`
+- 导出：浏览器保存面板写出工作区 JSON bundle；不支持时触发 JSON 下载
 
 ## 状态不变量
 

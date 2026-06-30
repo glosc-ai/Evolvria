@@ -21,7 +21,7 @@ Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前
 - [世界模拟系统](world-simulation.md)：时间推进、NPC tick、事件重要度和一致性约束。
 - [地图导入与标注](map-import-and-annotation.md)：当前地图 UI、结构化地点/路线和 native 图片命令边界。
 - [Glosc One API 集成](glosc-one-api-integration.md)：配置、调用、用量估算、错误降级和日志。
-- [存档与同步](save-load-and-sync.md)：当前单文件 SavePayload、备份、AI checkpoint、导出 zip 和未来同步。
+- [存档与同步](save-load-and-sync.md)：当前工作区文件夹存档、备份、AI checkpoint、导出 zip 和未来同步。
 - [UI/UX 流程](ui-ux-flows.md)：路由页面、主流程、响应式导航和设置入口。
 - [视觉设计方向](visual-direction.md)：当前 Vue/Tailwind 暗色界面、字体和组件 token。
 - [测试策略](testing-strategy.md)：Vitest、Playwright、Tauri Rust 测试和手动验收。
@@ -35,7 +35,7 @@ Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前
 - Pinia store 连接 UI、平台能力、设置、世界状态、AI 和存档。
 - `SavePayload` schema v1 统一保存世界、角色、地点、势力、时间线、记忆、线索、AI 日志和计数器。
 - Tauri 桌面端保存到应用数据目录；浏览器开发环境 fallback 到 `localStorage`。
-- 每次覆盖 active 存档前保留最近 5 个备份；AI 请求前保存 `ai_before_request.json` checkpoint。
+- 每次覆盖 active 工作区前保留最近 5 个备份；AI 请求前保存 `ai_before_request/` checkpoint。
 - 未配置 Glosc One 时完整使用本地 mock，不消耗远端额度。
 - 地图页支持 SVG 底图、缩放、地点显示、隐藏未知、移动、手动添加地点和添加路线。
 - Tauri native 已包含地图图片导入/生成命令，但当前 Vue 地图 UI 尚未接入文件选择入口。

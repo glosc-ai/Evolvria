@@ -78,7 +78,7 @@ Tauri native `generate_fantasy_map` 当前会生成一张 960 x 640 PNG，并返
 
 - 读取本地图片。
 - 缩略到最大 2048 x 2048。
-- 保存到 `saves/maps/map_001.png`。
+- 保存到 `saves/active_world/maps/map_001.png`。
 - 返回 `image_path`、`width`、`height`、`original_width`、`original_height`、`resized_for_device`。
 
 `generate_map_from_reference(source_path, seed, locations)`：

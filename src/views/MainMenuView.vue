@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { Play, Plus, Settings, Upload } from "lucide-vue-next";
-import { useRouter } from "vue-router";
+import { RouterLink, useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import { useWorldStore } from "@/stores/world";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 
 const router = useRouter();
 const app = useAppStore();
@@ -26,10 +26,10 @@ async function continueGame() {
       <h1 class="mt-4 max-w-3xl text-4xl font-semibold leading-tight sm:text-5xl">让角色、地点和时间线在本地持续演化</h1>
       <p class="mt-5 max-w-2xl text-base leading-7 text-white/64">创建主角与世界种子，AI 扩写世界并记录每一次行动、记忆、关系和地图变化。未配置 Glosc One 时自动使用本地模拟。</p>
       <div class="mt-8 flex flex-wrap gap-3">
-        <Button type="button" @click="continueGame"><Play :size="18" />继续游戏</Button>
-        <Button type="button" @click="router.push('/new-world')"><Plus :size="18" />新建世界</Button>
-        <Button variant="outline" type="button" @click="router.push('/saves')"><Upload :size="18" />存档列表</Button>
-        <Button variant="outline" type="button" @click="router.push('/settings')"><Settings :size="18" />设置</Button>
+        <Button type="button" :variant="world.hasWorld ? 'default' : 'outline'" :disabled="!world.hasWorld" @click="continueGame"><Play :size="18" />继续游戏</Button>
+        <Button :as="RouterLink" to="/new-world"><Plus :size="18" />新建世界</Button>
+        <Button :as="RouterLink" to="/saves" variant="outline"><Upload :size="18" />存档列表</Button>
+        <Button :as="RouterLink" to="/settings" variant="outline"><Settings :size="18" />设置</Button>
       </div>
     </div>
     <aside class="self-center">

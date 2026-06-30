@@ -24,6 +24,7 @@ import {
 import { estimateUsage, generateWorld, resolvePlayerAction } from "@/services/ai";
 import { deleteSaveEntry, exportWorld, listSaveEntries, loadActiveWorld, saveAiCheckpoint, saveWorld } from "@/services/save";
 import { nowIso } from "@/services/text";
+import { buildWorkspaceAiContext } from "@/services/world-workspace";
 import { useSettingsStore } from "@/stores/settings";
 import type { ExportWorldResult, SaveEntry } from "@/services/save";
 import type { Character, Location, SavePayload, TimelineEvent, World, WorldSeed } from "@/types/domain";
@@ -122,6 +123,11 @@ export const useWorldStore = defineStore("world", () => {
         companion_character_ids: participants.filter((id) => id !== "char_hero"),
         nearby_locations: location ? nearbyLocations(payload.value, location.id, 5) : [],
       },
+      workspace_context: buildWorkspaceAiContext(payload.value, {
+        currentLocationId: location?.id,
+        participantIds: participants,
+        recentEventCount: 8,
+      }),
       characters: payload.value.characters.map((character) => ({
         id: character.id,
         name: character.name,

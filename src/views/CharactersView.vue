@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import Button from "@/components/ui/Button.vue";
-import Card from "@/components/ui/Card.vue";
-import Textarea from "@/components/ui/Textarea.vue";
-import Select from "@/components/ui/Select.vue";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import AppSelect from "@/components/AppSelect.vue";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();
@@ -15,7 +15,7 @@ const notes = ref<Record<string, string>>({});
   <section v-if="world.hasWorld">
     <div class="mb-5 flex flex-wrap items-center justify-between gap-3">
       <h1 class="text-2xl font-semibold">人物名册</h1>
-      <Select
+      <AppSelect
         v-model="filter"
         :options="[
           { label: '全部', value: '全部' },

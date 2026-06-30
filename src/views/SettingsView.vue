@@ -1,10 +1,29 @@
 <script setup lang="ts">
-import { Save, RotateCcw } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { PlugZap, RotateCcw, Save } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
 import { useSettingsStore } from "@/stores/settings";
 
 const app = useAppStore();
 const settings = useSettingsStore();
+const checking = ref(false);
+const canSave = computed(() => !settings.settings.glosc_token.trim() || settings.settings.local_token_risk_acknowledged);
+
+async function testConnection() {
+  checking.value = true;
+  try {
+    const result = await settings.checkConnection();
+    if (result.ok) {
+      app.setNotice(result.message ?? "Glosc One 连接测试通过。");
+    } else {
+      app.setError(result.error ?? result.message ?? "Glosc One 连接测试失败。");
+    }
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "Glosc One 连接测试失败。");
+  } finally {
+    checking.value = false;
+  }
+}
 
 async function save() {
   try {
@@ -51,9 +70,11 @@ async function reset() {
         <label class="mt-4 block text-sm">内容偏好<textarea v-model="settings.settings.content_preferences" class="e-field mt-2 min-h-28" /></label>
       </div>
       <div class="flex gap-3">
-        <button class="e-btn e-btn-primary" type="button" @click="save"><Save :size="18" />保存设置</button>
+        <button class="e-btn" type="button" :disabled="checking || !settings.settings.glosc_token.trim()" @click="testConnection"><PlugZap :size="18" />{{ checking ? "正在测试..." : "测试连接" }}</button>
+        <button class="e-btn e-btn-primary" type="button" :disabled="!canSave" @click="save"><Save :size="18" />保存设置</button>
         <button class="e-btn e-btn-danger" type="button" @click="reset"><RotateCcw :size="18" />重置</button>
       </div>
+      <p v-if="!canSave" class="text-sm text-amber-100/80">保存访问 Key 前需要勾选本机存储风险确认。</p>
     </div>
   </section>
 </template>

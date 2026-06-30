@@ -7,6 +7,7 @@ use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
+use tauri_plugin_dialog::DialogExt;
 use zip::write::SimpleFileOptions;
 
 const SCHEMA_VERSION: i64 = 1;
@@ -31,6 +32,12 @@ struct SaveEntry {
     event_count: usize,
     schema_valid: bool,
     created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ExportWorldResult {
+    path: String,
+    cancelled: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -133,18 +140,47 @@ fn list_save_entries(app: AppHandle) -> Result<Vec<SaveEntry>, String> {
 }
 
 #[tauri::command]
-fn export_world(app: AppHandle, payload: Value) -> Result<String, String> {
+fn export_world(app: AppHandle, payload: Value) -> Result<ExportWorldResult, String> {
     validate_payload(&payload)?;
     let export_dir = export_dir(&app)?;
     fs::create_dir_all(&export_dir).map_err(to_string)?;
+    let Some(selected_path) = app
+        .dialog()
+        .file()
+        .set_title("导出当前世界")
+        .set_directory(&export_dir)
+        .set_file_name(default_export_file_name(&payload))
+        .add_filter("Evolvria 存档", &["zip"])
+        .blocking_save_file()
+    else {
+        return Ok(ExportWorldResult {
+            path: String::new(),
+            cancelled: true,
+        });
+    };
+    let mut export_path = selected_path.into_path().map_err(to_string)?;
+    if export_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map_or(true, |extension| !extension.eq_ignore_ascii_case("zip"))
+    {
+        export_path.set_extension("zip");
+    }
+    write_world_zip(&export_path, &payload)?;
+    Ok(ExportWorldResult {
+        path: path_to_string(export_path),
+        cancelled: false,
+    })
+}
+
+fn write_world_zip(export_path: &Path, payload: &Value) -> Result<(), String> {
+    ensure_parent(export_path)?;
     let world_id = payload
         .get("world")
         .and_then(|world| world.get("id"))
         .and_then(Value::as_str)
         .unwrap_or("world");
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    let export_path = export_dir.join(format!("{world_id}_{timestamp}.zip"));
-    let file = File::create(&export_path).map_err(to_string)?;
+    let file = File::create(export_path).map_err(to_string)?;
     let mut zip = zip::ZipWriter::new(file);
     let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
     let manifest = json!({
@@ -156,14 +192,23 @@ fn export_world(app: AppHandle, payload: Value) -> Result<String, String> {
             "payload": "payload.json"
         }
     });
-    zip.start_file("manifest.json", options).map_err(to_string)?;
-    zip.write_all(serde_json::to_string_pretty(&manifest).map_err(to_string)?.as_bytes())
+    zip.start_file("manifest.json", options)
         .map_err(to_string)?;
+    zip.write_all(
+        serde_json::to_string_pretty(&manifest)
+            .map_err(to_string)?
+            .as_bytes(),
+    )
+    .map_err(to_string)?;
     zip.start_file("payload.json", options).map_err(to_string)?;
-    zip.write_all(serde_json::to_string_pretty(&payload).map_err(to_string)?.as_bytes())
-        .map_err(to_string)?;
+    zip.write_all(
+        serde_json::to_string_pretty(&payload)
+            .map_err(to_string)?
+            .as_bytes(),
+    )
+    .map_err(to_string)?;
     zip.finish().map_err(to_string)?;
-    Ok(path_to_string(export_path))
+    Ok(())
 }
 
 #[tauri::command]
@@ -203,7 +248,11 @@ fn import_map_image(app: AppHandle, source_path: String) -> Result<Value, String
 }
 
 #[tauri::command]
-fn generate_fantasy_map(app: AppHandle, seed: Value, locations: Vec<Value>) -> Result<Value, String> {
+fn generate_fantasy_map(
+    app: AppHandle,
+    seed: Value,
+    locations: Vec<Value>,
+) -> Result<Value, String> {
     let map_dir = save_dir(&app)?.join("maps");
     fs::create_dir_all(&map_dir).map_err(to_string)?;
     let map_path = map_dir.join("map_001.png");
@@ -223,13 +272,21 @@ fn generate_fantasy_map(app: AppHandle, seed: Value, locations: Vec<Value>) -> R
 }
 
 #[tauri::command]
-fn generate_map_from_reference(app: AppHandle, source_path: String, seed: Value, locations: Vec<Value>) -> Result<Value, String> {
+fn generate_map_from_reference(
+    app: AppHandle,
+    source_path: String,
+    seed: Value,
+    locations: Vec<Value>,
+) -> Result<Value, String> {
     let map_dir = save_dir(&app)?.join("maps");
     fs::create_dir_all(&map_dir).map_err(to_string)?;
     let map_path = map_dir.join("map_001.png");
     if Path::new(&source_path).exists() {
         let image = image::open(&source_path).map_err(to_string)?;
-        image.thumbnail(960, 640).save(&map_path).map_err(to_string)?;
+        image
+            .thumbnail(960, 640)
+            .save(&map_path)
+            .map_err(to_string)?;
     } else {
         write_procedural_map(&map_path, &seed)?;
     }
@@ -256,7 +313,9 @@ fn generate_map_from_reference(app: AppHandle, source_path: String, seed: Value,
 async fn call_glosc(request: GloscRequest) -> Result<Value, String> {
     let endpoint = chat_endpoint(&request.base_url);
     let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(request.timeout_seconds.max(5)))
+        .timeout(std::time::Duration::from_secs(
+            request.timeout_seconds.max(5),
+        ))
         .build()
         .map_err(to_string)?;
     let body = json!({
@@ -289,7 +348,8 @@ async fn call_glosc(request: GloscRequest) -> Result<Value, String> {
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
         .unwrap_or("{}");
-    let parsed = serde_json::from_str::<Value>(content).unwrap_or_else(|_| json!({"narrative": content}));
+    let parsed =
+        serde_json::from_str::<Value>(content).unwrap_or_else(|_| json!({"narrative": content}));
     Ok(json!({
         "status": "ok",
         "content": content,
@@ -302,7 +362,11 @@ async fn call_glosc(request: GloscRequest) -> Result<Value, String> {
 }
 
 #[tauri::command]
-async fn check_glosc_connection(base_url: String, token: String, model: String) -> Result<Value, String> {
+async fn check_glosc_connection(
+    base_url: String,
+    token: String,
+    model: String,
+) -> Result<Value, String> {
     if token.trim().is_empty() {
         return Ok(json!({"ok": false, "status": "error", "error": "Glosc One 访问令牌为空。"}));
     }
@@ -355,6 +419,35 @@ fn export_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(app_data_dir(app)?.join("exports"))
 }
 
+fn default_export_file_name(payload: &Value) -> String {
+    let world_id = payload
+        .get("world")
+        .and_then(|world| world.get("id"))
+        .and_then(Value::as_str)
+        .unwrap_or("world");
+    let safe_world_id = sanitize_file_component(world_id);
+    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
+    format!("{safe_world_id}_{timestamp}.zip")
+}
+
+fn sanitize_file_component(value: &str) -> String {
+    let sanitized = value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if sanitized.trim_matches('_').is_empty() {
+        "world".to_string()
+    } else {
+        sanitized
+    }
+}
+
 fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(save_dir(app)?.join("backups"))
 }
@@ -388,7 +481,11 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
     ensure_parent(path)?;
     let temp = path.with_extension("tmp");
-    fs::write(&temp, serde_json::to_string_pretty(value).map_err(to_string)?).map_err(to_string)?;
+    fs::write(
+        &temp,
+        serde_json::to_string_pretty(value).map_err(to_string)?,
+    )
+    .map_err(to_string)?;
     if path.exists() {
         fs::remove_file(path).map_err(to_string)?;
     }
@@ -399,13 +496,20 @@ fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
 fn create_backup(app: &AppHandle, active: &Path) -> Result<(), String> {
     let backup_dir = backup_dir(app)?;
     fs::create_dir_all(&backup_dir).map_err(to_string)?;
-    let backup_path = backup_dir.join(format!("active_world_{}.json", Utc::now().format("%Y%m%d_%H%M%S%.3f")));
+    let backup_path = backup_dir.join(format!(
+        "active_world_{}.json",
+        Utc::now().format("%Y%m%d_%H%M%S%.3f")
+    ));
     fs::copy(active, backup_path).map_err(to_string)?;
     let mut backups = fs::read_dir(&backup_dir)
         .map_err(to_string)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.file_name().and_then(|name| name.to_str()).is_some_and(|name| name.starts_with("active_world_")))
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("active_world_"))
+        })
         .collect::<Vec<_>>();
     backups.sort();
     while backups.len() > MAX_BACKUPS {
@@ -426,8 +530,15 @@ fn save_entry(kind: &str, path: &Path) -> Result<SaveEntry, String> {
         .and_then(Value::as_str)
         .unwrap_or("未命名世界")
         .to_string();
-    let event_count = value.get("timeline").and_then(Value::as_array).map_or(0, Vec::len);
-    let created_at = value.get("updated_at").and_then(Value::as_str).unwrap_or("未知时间").to_string();
+    let event_count = value
+        .get("timeline")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let created_at = value
+        .get("updated_at")
+        .and_then(Value::as_str)
+        .unwrap_or("未知时间")
+        .to_string();
     Ok(SaveEntry {
         kind: kind.to_string(),
         path: path_to_string(path),
@@ -443,7 +554,17 @@ fn validate_payload(payload: &Value) -> Result<(), String> {
     if payload.get("schema_version").and_then(Value::as_i64) != Some(SCHEMA_VERSION) {
         return Err("schema_version 不受支持。".to_string());
     }
-    for key in ["world", "characters", "locations", "factions", "timeline", "memories", "ai_logs", "threads", "suggested_actions"] {
+    for key in [
+        "world",
+        "characters",
+        "locations",
+        "factions",
+        "timeline",
+        "memories",
+        "ai_logs",
+        "threads",
+        "suggested_actions",
+    ] {
         if payload.get(key).is_none() {
             return Err(format!("存档缺少字段：{key}"));
         }
@@ -526,8 +647,14 @@ mod tests {
 
     #[test]
     fn resolves_chat_endpoint() {
-        assert_eq!(chat_endpoint("https://one.gloscai.com"), "https://one.gloscai.com/v1/chat/completions");
-        assert_eq!(chat_endpoint("https://one.gloscai.com/v1"), "https://one.gloscai.com/v1/chat/completions");
+        assert_eq!(
+            chat_endpoint("https://one.gloscai.com"),
+            "https://one.gloscai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            chat_endpoint("https://one.gloscai.com/v1"),
+            "https://one.gloscai.com/v1/chat/completions"
+        );
     }
 
     #[test]

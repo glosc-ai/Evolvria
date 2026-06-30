@@ -16,6 +16,30 @@ export interface SaveEntry {
   created_at: string;
 }
 
+export interface ExportWorldResult {
+  path: string;
+  cancelled: boolean;
+}
+
+interface BrowserSaveFilePickerOptions {
+  suggestedName?: string;
+  types?: Array<{ description: string; accept: Record<string, string[]> }>;
+}
+
+interface BrowserWritableFileStream {
+  write(data: Blob | string): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface BrowserFileSystemFileHandle {
+  name: string;
+  createWritable(): Promise<BrowserWritableFileStream>;
+}
+
+interface BrowserWindowWithSavePicker extends Window {
+  showSaveFilePicker?: (options?: BrowserSaveFilePickerOptions) => Promise<BrowserFileSystemFileHandle>;
+}
+
 export async function loadActiveWorld(): Promise<SavePayload> {
   const native = await safeInvoke<SavePayload>("load_active_world");
   if (native && validatePayloadSchema(native)) return native;
@@ -65,11 +89,30 @@ export async function listSaveEntries(): Promise<SaveEntry[]> {
   return entries;
 }
 
-export async function exportWorld(payload: SavePayload): Promise<string> {
-  const native = await safeInvoke<string>("export_world", { payload });
+export async function exportWorld(payload: SavePayload): Promise<ExportWorldResult> {
+  if (!validatePayloadSchema(payload)) throw new Error("存档 schema 无效。");
+  const native = await safeInvoke<ExportWorldResult>("export_world", { payload });
   if (native) return native;
+  const fileName = defaultExportFileName(payload, "json");
   const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-  return URL.createObjectURL(blob);
+  const savePicker = (window as BrowserWindowWithSavePicker).showSaveFilePicker;
+  if (savePicker) {
+    try {
+      const handle = await savePicker({
+        suggestedName: fileName,
+        types: [{ description: "Evolvria JSON 存档", accept: { "application/json": [".json"] } }],
+      });
+      const writable = await handle.createWritable();
+      await writable.write(blob);
+      await writable.close();
+      return { path: handle.name, cancelled: false };
+    } catch (error) {
+      if (isAbortError(error)) return { path: "", cancelled: true };
+      throw error;
+    }
+  }
+  downloadBlob(blob, fileName);
+  return { path: fileName, cancelled: false };
 }
 
 export async function importWorldFromText(text: string): Promise<SavePayload> {
@@ -92,4 +135,32 @@ function entryFromJson(kind: SaveEntry["kind"], path: string, text: string): Sav
   } catch {
     return { kind, path, world_name: "损坏存档", event_count: 0, schema_valid: false, created_at: "未知时间" };
   }
+}
+
+function defaultExportFileName(payload: SavePayload, extension: "json" | "zip"): string {
+  const worldId = "id" in payload.world && typeof payload.world.id === "string" ? payload.world.id : "world";
+  const safeWorldId = sanitizeFileComponent(worldId);
+  const timestamp = new Date().toISOString().replace(/\D/g, "").slice(0, 14);
+  return `${safeWorldId}_${timestamp}.${extension}`;
+}
+
+function sanitizeFileComponent(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return sanitized.replace(/_/g, "").length > 0 ? sanitized : "world";
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function downloadBlob(blob: Blob, fileName: string): void {
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  anchor.style.display = "none";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
 }

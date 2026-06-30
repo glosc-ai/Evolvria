@@ -125,18 +125,19 @@ export function mockFactions(): Faction[] {
   ];
 }
 
-export function mockPlayerAction(action: string): PlayerActionResult {
+export function mockPlayerAction(action: string, context?: unknown): PlayerActionResult {
   const clue = action.includes("徽记") ? "徽记的笔画与白塔遗迹残墙上的符号吻合。" : "行动让周围角色重新评估了你的判断。";
+  const companion = readMockCompanion(context);
   return {
     status: "ok",
-    narrative: `你决定${action}。线索被重新串联起来：${clue} 璃安提醒你，下一步最好确认消息来源，而不是急着公开结论。`,
+    narrative: `你决定${action}。线索被重新串联起来：${clue} ${companion.name}提醒你，下一步最好确认消息来源，而不是急着公开结论。`,
     time_delta_minutes: 45,
     events: [
       {
         type: "player_action",
         title: "追查线索",
         description: `玩家行动：${action}。${clue}`,
-        participant_ids: ["char_hero", "char_001"],
+        participant_ids: ["char_hero", companion.id],
         location_id: "loc_start",
         importance: 0.72,
         visibility: "known_to_player",
@@ -158,26 +159,43 @@ export function mockPlayerAction(action: string): PlayerActionResult {
     ],
     relationship_updates: [
       {
-        source_id: "char_001",
+        source_id: companion.id,
         target_id: "char_hero",
         trust_delta: 0.04,
         affection_delta: 0.02,
-        note: "玩家谨慎处理线索，增加了璃安的信任。",
+        note: `玩家谨慎处理线索，增加了${companion.name}的信任。`,
       },
     ],
     memory_writes: [
       {
         scope: "character",
-        owner_id: "char_001",
-        text: `璃安记得主角曾选择${action}，并因此发现徽记线索。`,
+        owner_id: companion.id,
+        text: `${companion.name}记得主角曾选择${action}，并因此发现徽记线索。`,
         facts: [clue],
         importance: 0.7,
         confidence: 1,
         tags: ["relationship", "clue"],
       },
     ],
-    suggested_actions: ["前往白塔遗迹", "询问璃安旧档案", "在公告板旁等待张贴者"],
+    suggested_actions: ["前往白塔遗迹", `询问${companion.name}旧档案`, "在公告板旁等待张贴者"],
     warnings: [],
     usage: { input_tokens: 620, output_tokens: 420, total_tokens: 1040, cost_estimate: null },
   };
+}
+
+function readMockCompanion(context: unknown): { id: string; name: string } {
+  if (context && typeof context === "object") {
+    const characters = (context as { characters?: unknown }).characters;
+    if (Array.isArray(characters)) {
+      const companion = characters.find((character) => isMockCharacter(character) && character.companion) ?? characters.find(isMockCharacter);
+      if (isMockCharacter(companion)) {
+        return { id: companion.id, name: companion.name };
+      }
+    }
+  }
+  return { id: "char_001", name: "璃安" };
+}
+
+function isMockCharacter(value: unknown): value is { id: string; name: string; companion?: boolean } {
+  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string" && typeof (value as { name?: unknown }).name === "string");
 }

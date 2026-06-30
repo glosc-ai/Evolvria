@@ -1,6 +1,6 @@
 import { mockPlayerAction } from "@/domain/fixtures";
 import { safeInvoke } from "@/services/tauri";
-import type { PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
+import type { AIUsage, PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
 
 export interface UsageEstimate {
   purpose: string;
@@ -16,6 +16,24 @@ export interface UsageEstimate {
   retry_note: string;
 }
 
+export interface GloscCallResult {
+  status: "ok" | "error";
+  content?: string;
+  parsed?: unknown;
+  error?: string;
+  usage?: AIUsage;
+}
+
+export interface WorldExpansionResult {
+  status: "ok" | "error";
+  summary: string;
+  openingTitle?: string;
+  openingNarrative?: string;
+  suggestedActions?: string[];
+  usage: AIUsage;
+  raw?: string;
+}
+
 const PURPOSE_LABELS: Record<string, string> = {
   world_expand: "世界扩写",
   player_action: "玩家行动",
@@ -24,6 +42,15 @@ const PURPOSE_LABELS: Record<string, string> = {
   summary_update: "阶段摘要",
   consistency_check: "一致性检查",
 };
+
+function localWorldExpansion(seed: WorldSeed, reason = ""): WorldExpansionResult {
+  const prefix = reason ? `${reason}，已使用本地模拟。` : "";
+  return {
+    status: "ok",
+    summary: `${prefix}${seed.world_name} 已根据 ${seed.genre}/${seed.tone} 设定完成本地扩写。`,
+    usage: { input_tokens: 860, output_tokens: 1080 },
+  };
+}
 
 export function isGloscConfigured(settings: Settings): boolean {
   return Boolean(settings.glosc_base_url.trim() && settings.glosc_token.trim());
@@ -53,15 +80,11 @@ export function estimateUsageText(estimate: UsageEstimate): string {
   return `${estimate.purpose_label} · 预计 Token ${estimate.total_tokens}（输入 ${estimate.input_tokens} / 输出 ${estimate.output_tokens}）· 风险 ${estimate.risk_level} · ${estimate.billing_note}`;
 }
 
-export async function generateWorld(seed: WorldSeed, settings: Settings): Promise<{ status: "ok" | "error"; summary: string; usage: { input_tokens: number; output_tokens: number } }> {
+export async function generateWorld(seed: WorldSeed, settings: Settings): Promise<WorldExpansionResult> {
   if (!isGloscConfigured(settings)) {
-    return {
-      status: "ok",
-      summary: `${seed.world_name} 已根据 ${seed.genre}/${seed.tone} 设定完成本地扩写。`,
-      usage: { input_tokens: 860, output_tokens: 1080 },
-    };
+    return localWorldExpansion(seed);
   }
-  const result = await safeInvoke<{ status: "ok" | "error"; content?: string; error?: string; usage?: { input_tokens: number; output_tokens: number } }>("call_glosc", {
+  const result = await safeInvoke<GloscCallResult>("call_glosc", {
     request: {
       baseUrl: settings.glosc_base_url,
       token: settings.glosc_token,
@@ -72,16 +95,16 @@ export async function generateWorld(seed: WorldSeed, settings: Settings): Promis
     },
   });
   if (!result || result.status !== "ok") {
-    return { status: "error", summary: result?.error ?? "Glosc One 调用失败。", usage: { input_tokens: 0, output_tokens: 0 } };
+    return localWorldExpansion(seed, result?.error ? `Glosc One 调用失败：${result.error}` : "Glosc One 调用失败");
   }
-  return { status: "ok", summary: result.content ?? `${seed.world_name} 扩写完成。`, usage: result.usage ?? { input_tokens: 0, output_tokens: 0 } };
+  return normalizeGloscWorldExpansion(result, seed);
 }
 
 export async function resolvePlayerAction(action: string, context: unknown, settings: Settings): Promise<PlayerActionResult> {
   if (!isGloscConfigured(settings)) {
-    return mockPlayerAction(action);
+    return mockPlayerAction(action, context);
   }
-  const result = await safeInvoke<PlayerActionResult>("call_glosc", {
+  const result = await safeInvoke<GloscCallResult>("call_glosc", {
     request: {
       baseUrl: settings.glosc_base_url,
       token: settings.glosc_token,
@@ -91,6 +114,128 @@ export async function resolvePlayerAction(action: string, context: unknown, sett
       timeoutSeconds: settings.timeout_seconds,
     },
   });
-  if (result?.status === "ok" && "narrative" in result) return result;
-  return { ...mockPlayerAction(action), warnings: ["远端响应不可用，已使用本地模拟结果。"] };
+  const normalized = normalizeGloscPlayerAction(result);
+  if (normalized) return normalized;
+  return { ...mockPlayerAction(action, context), warnings: ["远端响应不可用，已使用本地模拟结果。"] };
+}
+
+export function normalizeGloscPlayerAction(result: GloscCallResult | null): PlayerActionResult | null {
+  if (!result || result.status !== "ok") return null;
+  const parsed = result.parsed;
+  if (!isPlayerActionResult(parsed)) return null;
+  return {
+    ...parsed,
+    usage: result.usage ?? parsed.usage,
+    warnings: parsed.warnings ?? [],
+  };
+}
+
+export function normalizeGloscWorldExpansion(result: GloscCallResult, seed: WorldSeed): WorldExpansionResult {
+  const contentValue = parseJsonish(result.content);
+  const source = isRecord(result.parsed) || typeof result.parsed === "string" ? parseJsonish(result.parsed) : contentValue;
+  const summary =
+    firstText(
+      pickText(source, ["summary", "world_summary", "worldSummary"]),
+      pickText(readRecord(source, "world"), ["summary", "world_summary", "worldSummary"]),
+      pickText(readRecord(source, "lore"), ["summary"]),
+      typeof contentValue === "string" ? contentValue : "",
+      `${seed.world_name} 扩写完成。`,
+    ) || `${seed.world_name} 扩写完成。`;
+  const openingSource = firstRecord(
+    readRecord(source, "opening"),
+    readRecord(source, "opening_event"),
+    readRecord(source, "openingEvent"),
+    readFirstRecord(source, "timeline"),
+    readFirstRecord(source, "events"),
+  );
+  const openingTitle = firstText(pickText(openingSource, ["title", "name"]), pickText(source, ["opening_title", "openingTitle"]));
+  const openingNarrative = firstText(
+    pickText(openingSource, ["description", "narrative", "text", "content", "summary"]),
+    pickText(source, ["opening_narrative", "openingNarrative", "last_narrative", "lastNarrative", "narrative"]),
+  );
+  return {
+    status: "ok",
+    summary,
+    ...(openingTitle ? { openingTitle } : {}),
+    ...(openingNarrative ? { openingNarrative } : {}),
+    suggestedActions: firstStringArray(
+      readUnknown(source, "suggested_actions"),
+      readUnknown(source, "suggestedActions"),
+      readUnknown(openingSource, "suggested_actions"),
+      readUnknown(openingSource, "suggestedActions"),
+    ),
+    usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+    raw: result.content,
+  };
+}
+
+function isPlayerActionResult(value: unknown): value is PlayerActionResult {
+  if (!value || typeof value !== "object") return false;
+  const source = value as Partial<PlayerActionResult>;
+  return (
+    source.status === "ok" &&
+    typeof source.narrative === "string" &&
+    typeof source.time_delta_minutes === "number" &&
+    Array.isArray(source.events) &&
+    Array.isArray(source.character_updates) &&
+    Array.isArray(source.location_updates) &&
+    Array.isArray(source.relationship_updates) &&
+    Array.isArray(source.memory_writes) &&
+    Array.isArray(source.suggested_actions)
+  );
+}
+
+function parseJsonish(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed;
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function readUnknown(source: unknown, key: string): unknown {
+  return isRecord(source) ? source[key] : undefined;
+}
+
+function readRecord(source: unknown, key: string): Record<string, unknown> | undefined {
+  const value = readUnknown(source, key);
+  return isRecord(value) ? value : undefined;
+}
+
+function readFirstRecord(source: unknown, key: string): Record<string, unknown> | undefined {
+  const value = readUnknown(source, key);
+  return Array.isArray(value) && isRecord(value[0]) ? value[0] : undefined;
+}
+
+function pickText(source: unknown, keys: string[]): string {
+  if (!isRecord(source)) return "";
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return "";
+}
+
+function firstText(...values: string[]): string {
+  return values.find((value) => value.trim())?.trim() ?? "";
+}
+
+function firstRecord(...values: Array<Record<string, unknown> | undefined>): Record<string, unknown> | undefined {
+  return values.find((value): value is Record<string, unknown> => Boolean(value));
+}
+
+function firstStringArray(...values: unknown[]): string[] | undefined {
+  for (const value of values) {
+    if (!Array.isArray(value)) continue;
+    const items = value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+    if (items.length > 0) return items;
+  }
+  return undefined;
 }

@@ -1,26 +1,69 @@
 <script setup lang="ts">
 import { Bot, Clock, MapPin, Send, Sparkles } from "lucide-vue-next";
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
+import AiCallConfirmDialog from "@/components/AiCallConfirmDialog.vue";
+import { estimateUsageText } from "@/services/ai";
 import { useAppStore } from "@/stores/app";
+import { useSettingsStore } from "@/stores/settings";
 import { useWorldStore } from "@/stores/world";
 
 const router = useRouter();
 const app = useAppStore();
+const settings = useSettingsStore();
 const world = useWorldStore();
 const action = ref("");
+const actionToConfirm = ref("");
+const confirmOpen = ref(false);
 
-async function submit(text = action.value) {
+const shouldConfirmAiCall = computed(() => settings.settings.confirm_ai_calls && settings.gloscConfigured);
+const visibleSuggestedActions = computed(() => {
+  const currentName = world.current?.name;
+  if (!currentName) return world.suggestedActions;
+  const currentTravel = `前往${currentName}`;
+  const currentTravelWithSpace = `前往 ${currentName}`;
+  return world.suggestedActions.filter((item) => item !== currentTravel && item !== currentTravelWithSpace);
+});
+const actionEstimate = computed(() => {
+  const text = actionToConfirm.value.trim();
+  if (!text || !world.hasWorld) return "";
+  return estimateUsageText(world.getUsageEstimate("player_action", { action: text, context: world.buildAiContext(text) }));
+});
+
+async function requestSubmit(text = action.value) {
   try {
+    if (world.busy) return;
     if (!world.hasWorld) {
       await router.push("/new-world");
       return;
     }
-    await world.submitPlayerAction(text);
-    action.value = "";
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    if (shouldConfirmAiCall.value) {
+      actionToConfirm.value = trimmed;
+      confirmOpen.value = true;
+      return;
+    }
+    await submit(trimmed);
   } catch (error) {
     app.setError(error instanceof Error ? error.message : "行动提交失败。");
   }
+}
+
+async function submit(text = actionToConfirm.value || action.value) {
+  confirmOpen.value = false;
+  try {
+    await world.submitPlayerAction(text);
+    action.value = "";
+    actionToConfirm.value = "";
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "行动提交失败。");
+  }
+}
+
+function cancelConfirmation() {
+  confirmOpen.value = false;
+  actionToConfirm.value = "";
 }
 </script>
 
@@ -41,11 +84,11 @@ async function submit(text = action.value) {
       <div class="e-panel p-5">
         <div class="mb-3 flex items-center gap-2 text-sm font-medium"><Sparkles :size="16" />推荐行动</div>
         <div class="flex flex-wrap gap-2">
-          <button v-for="item in world.suggestedActions" :key="item" class="e-btn" :disabled="world.busy" type="button" @click="submit(item)">{{ item }}</button>
+          <button v-for="item in visibleSuggestedActions" :key="item" class="e-btn" :disabled="world.busy" type="button" @click="requestSubmit(item)">{{ item }}</button>
         </div>
         <div class="mt-4 flex gap-2">
-          <textarea v-model="action" class="e-field min-h-24 flex-1" placeholder="输入你的行动..." @keydown.meta.enter.prevent="submit()" @keydown.ctrl.enter.prevent="submit()" />
-          <button class="e-btn e-btn-primary self-stretch px-4" :disabled="world.busy || !action.trim()" type="button" @click="submit()"><Send :size="18" /></button>
+          <textarea v-model="action" class="e-field min-h-24 flex-1" placeholder="输入你的行动..." @keydown.meta.enter.prevent="requestSubmit()" @keydown.ctrl.enter.prevent="requestSubmit()" />
+          <button class="e-btn e-btn-primary self-stretch px-4" :disabled="world.busy || !action.trim()" type="button" @click="requestSubmit()"><Send :size="18" /></button>
         </div>
       </div>
     </div>
@@ -74,6 +117,17 @@ async function submit(text = action.value) {
         </div>
       </div>
     </aside>
+
+    <AiCallConfirmDialog
+      :open="confirmOpen"
+      title="确认调用 Glosc One 解析行动"
+      :description="`将把当前场景、相关记忆和你的行动“${actionToConfirm}”发送到远端模型。`"
+      :estimate-text="actionEstimate"
+      confirm-label="确认并提交行动"
+      :busy="world.busy"
+      @confirm="submit"
+      @cancel="cancelConfirmation"
+    />
   </section>
   <section v-else class="mx-auto max-w-xl text-center">
     <h1 class="text-3xl font-semibold">还没有世界</h1>

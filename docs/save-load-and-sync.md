@@ -2,104 +2,128 @@
 
 ## 目标
 
-Evolvria 的世界会长期演化，存档必须可靠、可迁移、可备份。MVP 先做本地存档，后续再做云同步。
+存档必须可靠、可恢复、可导出，并在桌面、移动和平板共享同一 `SavePayload` schema v1。当前 MVP 只实现本地存档；云同步保留接口和文档规划。
 
-## 存档目录
+## 当前存档结构
 
-建议结构：
+Tauri 桌面端应用数据目录：
 
 ```text
-app_data://
+app_data_dir/
+  settings.json
   saves/
-    world_001/
-      manifest.json
-      world.json
-      characters.json
-      locations.json
-      timeline.jsonl
-      memories.jsonl
-      ai_logs.jsonl
-      maps/
-      backups/
+    active_world.json
+    backups/
+      active_world_YYYYMMDD_HHMMSSmmm.json
+      ai_before_request.json
+    maps/
+      map_001.png
+  exports/
+    world_id_YYYYMMDD_HHMMSS.zip
+```
+
+浏览器开发环境使用 `localStorage`：
+
+```text
+evolvria.settings
+evolvria.active_world
+evolvria.backups
+evolvria.ai_checkpoint
 ```
 
 ## 写入策略
 
-- 重要状态变更后自动保存。
-- AI 请求开始前保存一次当前状态。
-- AI 响应应用成功后保存一次新状态。
-- 写入时先写临时文件，再原子替换。
-- 每次版本迁移前创建备份。
+- `saveWorld` 会先校验 `schema_version = 1` 和必要数组字段。
+- Tauri 端保存 active 世界前，如果已有 active 文件，会创建最多 5 个滚动备份。
+- Tauri 端写入使用临时文件和原子替换。
+- 玩家行动调用 AI 前会保存一次 `ai_before_request.json`。
+- AI 响应应用成功后会保存新的 active 世界。
+- 浏览器 fallback 保存前也保留最近 5 个 JSON 备份。
+
+## 存档条目
+
+`listSaveEntries` 返回：
+
+```json
+{
+  "kind": "active",
+  "path": "app_data_dir/saves/active_world.json",
+  "absolute_path": "app_data_dir/saves/active_world.json",
+  "world_name": "苍星纪元",
+  "event_count": 2,
+  "schema_valid": true,
+  "created_at": "2026-06-30T00:00:00.000Z"
+}
+```
+
+`kind` 支持 `active`、`backup`、`ai_checkpoint`。
+
+## 导出
+
+Tauri `export_world` 会先打开系统保存面板，由用户选择保存位置，然后生成 zip：
+
+```text
+manifest.json
+payload.json
+```
+
+`manifest.json` 示例：
+
+```json
+{
+  "schema_version": 1,
+  "world_id": "world_001",
+  "display_name": "苍星纪元",
+  "exported_at": "2026-06-30T00:00:00Z",
+  "files": {
+    "payload": "payload.json"
+  }
+}
+```
+
+浏览器 fallback 优先使用浏览器保存面板写出 JSON；不支持时退回下载 JSON，不生成 zip。
+
+## 导入
+
+当前 UI 支持从 JSON 文本导入 `SavePayload`：
+
+1. 用户在存档页粘贴 JSON。
+2. `importWorldFromText` 解析 JSON。
+3. 校验 schema v1。
+4. 保存为 active 世界。
+
+Tauri native 已实现 `import_world(source_path)`，可读取 zip 中的 `payload.json` 并保存 active 世界；当前 Vue UI 尚未接入文件选择入口。
 
 ## 版本迁移
 
-每个存档必须带 `schema_version`。加载时：
+当前只支持 schema v1，没有迁移器。未来 schema 变更必须：
 
-1. 读取 manifest。
-2. 检查版本。
-3. 如版本旧，执行迁移。
-4. 迁移成功后保存新版本。
-5. 迁移失败时保留原文件并提示用户。
-
-## 导入导出
-
-MVP 可支持导出 zip：
-
-- manifest。
-- JSON/JSONL 数据。
-- 地图图片。
-- 调试日志可选。
-
-导入时必须校验：
-
-- 文件结构。
-- schema version。
-- 必要字段。
-- 图片路径。
-- 存档 ID 冲突。
+1. 新增 `SCHEMA_VERSION`。
+2. 在 TypeScript 和 Rust 两侧实现迁移或兼容加载。
+3. 在迁移前保留备份。
+4. 更新 `docs/data-model.md`、测试 fixture 和导入校验。
 
 ## 跨平台文件处理
 
-不同平台的文件访问方式不同，但导入导出结果必须保持一致。
+当前 `get_platform_capabilities` 返回：
 
-桌面端：
+- `os`
+- `mobile`
+- `can_reveal_directories`
+- `can_share_files`
+- `can_use_file_picker`
+- `app_data_dir`
 
-- 支持选择文件夹或 zip 文件。
-- 支持打开导出目录。
-- 支持批量备份多个世界。
-
-移动端：
-
-- 通过系统文件选择器或分享面板导入。
-- 导出时优先生成 zip 并交给系统分享。
-- 不要求玩家理解应用沙盒路径。
-
-平板端：
-
-- 同移动端使用系统文件能力。
-- 在支持分屏时，导入流程不能依赖全屏窗口。
-- 外接键盘鼠标不应改变存档格式或路径规则。
+桌面端可 reveal path；移动端后续应使用系统分享面板。无论平台文件 API 如何变化，`payload.json` 结构必须保持一致。
 
 ## 云同步预留
 
-未来云同步需要：
+未来云同步需要新增：
 
 - 用户账号。
-- 存档版本号。
+- 存档版本号或 revision。
 - 最后修改时间。
 - 设备 ID。
-- 冲突处理。
+- 冲突副本策略。
 
-冲突策略：
-
-- 默认保留两个副本。
-- 不自动合并时间线。
-- 允许玩家选择本地版或云端版。
-
-## 数据恢复
-
-保留最近备份：
-
-- 最近 5 次自动保存。
-- 最近 3 次版本迁移前备份。
-- 最近 1 次 AI 请求前状态。
+默认冲突策略应保留两个副本，不自动合并时间线。

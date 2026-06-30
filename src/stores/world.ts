@@ -1,11 +1,12 @@
 import { defineStore } from "pinia";
-import { computed, ref } from "vue";
+import { computed, ref, toRaw } from "vue";
 import {
   addCustomLocation,
   addEvent,
   addRoute,
   aiUsageSummary,
   applyPlayerAction,
+  applyWorldExpansion,
   createInitialPayload,
   currentLocation,
   emptyPayload,
@@ -24,6 +25,7 @@ import { estimateUsage, generateWorld, resolvePlayerAction } from "@/services/ai
 import { exportWorld, listSaveEntries, loadActiveWorld, saveAiCheckpoint, saveWorld } from "@/services/save";
 import { nowIso } from "@/services/text";
 import { useSettingsStore } from "@/stores/settings";
+import type { ExportWorldResult } from "@/services/save";
 import type { Character, Location, SavePayload, TimelineEvent, World, WorldSeed } from "@/types/domain";
 
 export const useWorldStore = defineStore("world", () => {
@@ -72,9 +74,10 @@ export const useWorldStore = defineStore("world", () => {
       const aiResult = await generateWorld(seed, settingsStore.settings);
       if (aiResult.status !== "ok") throw new Error(aiResult.summary);
       let next = createInitialPayload(seed);
-      next = recordAiLog(next, "world_expand", "ok", aiResult.summary, aiResult.usage);
+      next = applyWorldExpansion(next, aiResult);
+      next = recordAiLog(next, "world_expand", "ok", aiResult.summary, aiResult.usage, aiResult.raw);
       payload.value = next;
-      lastNarrative.value = next.timeline[0]?.description ?? aiResult.summary;
+      lastNarrative.value = aiResult.openingNarrative?.trim() || aiResult.summary || next.timeline[0]?.description || "";
       await persist();
     } finally {
       busy.value = false;
@@ -110,6 +113,13 @@ export const useWorldStore = defineStore("world", () => {
         companion_character_ids: participants.filter((id) => id !== "char_hero"),
         nearby_locations: location ? nearbyLocations(payload.value, location.id, 5) : [],
       },
+      characters: payload.value.characters.map((character) => ({
+        id: character.id,
+        name: character.name,
+        role: character.role,
+        companion: character.companion,
+        current_location_id: character.current_location_id,
+      })),
       memory_context: retrieveMemories(payload.value, action, location?.id ?? "", participants),
       recent_events: payload.value.timeline.slice(-8),
     };
@@ -146,7 +156,7 @@ export const useWorldStore = defineStore("world", () => {
   }
 
   async function resolveThread(threadId: string): Promise<void> {
-    const next = structuredClone(payload.value);
+    const next = JSON.parse(JSON.stringify(toRaw(payload.value))) as SavePayload;
     const thread = next.threads.find((item) => item.id === threadId);
     if (thread) thread.status = "resolved";
     next.updated_at = nowIso();
@@ -174,7 +184,7 @@ export const useWorldStore = defineStore("world", () => {
     await persist();
   }
 
-  async function exportCurrentWorld(): Promise<string> {
+  async function exportCurrentWorld(): Promise<ExportWorldResult> {
     return exportWorld(payload.value);
   }
 

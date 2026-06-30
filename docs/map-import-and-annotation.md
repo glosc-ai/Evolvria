@@ -2,119 +2,126 @@
 
 ## 目标
 
-玩家可以导入自定义地图图片，标记城镇、地点、区域和路径。地图不只是装饰，应参与位置、移动、NPC 行动和事件生成。
+地图用于连接地点、移动、路线、NPC 位置和事件生成。当前 UI 已支持结构化地点/路线标注；图片导入和程序化地图生成已有 Tauri native 命令，但尚未接入 Vue 地图页。
 
-## 支持格式
+## 当前已实现 UI
 
-MVP：
+地图页当前能力：
 
-- PNG。
-- JPG。
-- WebP。
+- 显示 960 x 640 的 SVG 地形底图。
+- 依据 `world.world.map_routes` 绘制路线。
+- 依据地点 `position.x/y` 绘制地点点位和名称。
+- 当前地点使用绿色标记。
+- 可缩放地图，范围 0.7 到 1.8。
+- 可显示/隐藏未知地点。
+- 点击地点查看描述。
+- 可移动到选中地点。
+- 可从当前位置到选中地点添加一条自定义路线。
+- 可手动添加地点，坐标限制在 0.05 到 0.95。
+
+当前没有实现：
+
+- 图片文件选择入口。
+- 拖拽上传。
+- 双指缩放。
+- 编辑或删除已有地点。
+- 显示 NPC 点位。
+- 地图图片作为底图渲染。
+
+## 当前数据结构
+
+地点坐标使用归一化坐标：
+
+```json
+{
+  "position": {
+    "x": 0.42,
+    "y": 0.58
+  }
+}
+```
+
+路线：
+
+```json
+{
+  "id": "route_001",
+  "from_location_id": "loc_start",
+  "to_location_id": "loc_forest",
+  "name": "雾林旧道",
+  "type": "road",
+  "danger": 0.28
+}
+```
+
+`MapImage` 可记录图片路径、尺寸、原始尺寸、缩放状态、比例尺、地点、路线和生成器元数据。
 
 ## 内置生成
 
-MVP 也支持基于当前世界数据本地生成一张幻想地图。生成器采用
-[Azgaar/Fantasy-Map-Generator](https://github.com/Azgaar/Fantasy-Map-Generator)
-的数据概念做 Tauri/Rust 适配：heightmap/cells、biome、burgs、states/factions 和 routes。
-它不会嵌入完整 FMG Web 应用，而是在客户端离线生成 PNG 底图、地点坐标、地点 biome/height
-元数据和初始路线，并在存档中记录源项目、MIT license、seed 和模型摘要。
-
-生成入口：
-
-- 新建世界后自动生成应用数据目录下的 `saves/maps/map_001.png`。
-- 地图页可点击“生成幻想地图”按当前世界状态重新生成。
-- 玩家手动导入图片时会覆盖底图，但保留已有地点和路线数据。
-- 玩家可把类似政区/大陆参考图填入图片路径，再点击“从参考图生成地图”。程序会按颜色识别海陆、
-  地形、海岸线和红色边界，生成新的可标注地图与 AI 可解析的 `map_state` 元数据。
-
-参考图生成的 MVP 约束：
-
-- 不做 OCR 地名识别；图中文字不会自动变成地点名称。
-- 当前世界已有地点会被投放到参考图推断出的陆地上，并保留玩家后续手动标注能力。
-- 红色线条会作为 `region_borders` 元数据进入 AI 上下文，不默认等同于可通行路线。
-
-平台入口：
-
-- 桌面端：文件选择器、拖拽导入。
-- 移动端：系统相册、文件选择器、分享导入。
-- 平板端：系统相册、文件选择器、拖拽或分屏导入。
-
-后续：
-
-- 多层地图。
-- 网格地图。
-- 瓦片地图。
-- 手绘地图识别。
-
-## 地图对象
+初始世界会写入一个 `generated://map_001` 的 map image 元数据，并记录：
 
 ```json
 {
-  "id": "map_001",
-  "name": "大陆地图",
-  "image_path": "app_data://worlds/world_001/maps/map_001.png",
-  "width": 2048,
-  "height": 1536,
-  "scale_label": "1 cm = 10 km",
-  "locations": [],
-  "routes": []
+  "source_project": "Azgaar/Fantasy-Map-Generator",
+  "source_license": "MIT",
+  "source_url": "https://github.com/Azgaar/Fantasy-Map-Generator",
+  "mode": "procedural",
+  "attribution_required": true
 }
 ```
 
-## 标注类型
+Tauri native `generate_fantasy_map` 当前会生成一张 960 x 640 PNG，并返回路径、尺寸、地点和生成器信息。它是轻量 procedural map，不嵌入完整 Azgaar Web 应用。
 
-- 点：城镇、建筑、洞穴、传送门。
-- 区域：森林、国家、危险区、势力范围。
-- 路线：道路、河流、航线、秘密通道。
-- 注释：玩家备注或 AI 生成描述。
+## 图片导入 native 能力
 
-## 位置坐标
+`import_map_image(source_path)`：
 
-保存归一化坐标，避免图片缩放后失效：
+- 读取本地图片。
+- 缩略到最大 2048 x 2048。
+- 保存到 `saves/maps/map_001.png`。
+- 返回 `image_path`、`width`、`height`、`original_width`、`original_height`、`resized_for_device`。
 
-```json
-{
-  "x": 0.42,
-  "y": 0.58
-}
-```
+`generate_map_from_reference(source_path, seed, locations)`：
 
-## 地点创建流程
+- 如果 source_path 存在，缩略到 960 x 640 保存为 `map_001.png`。
+- 如果 source_path 不存在，退回 procedural map。
+- 返回 reference_image 模式的生成器元数据。
 
-1. 玩家导入地图。
-2. 玩家点击地图添加标记。
-3. 输入地点名称、类型和简短描述。
-4. AI 可补充地点背景，但不得修改玩家坐标。
-5. 地点写入世界状态。
-
-## NPC 移动
-
-MVP 移动规则：
-
-- 没有路线时，按地点间直线距离估算。
-- 有路线时，优先沿路线移动。
-- 危险区域增加移动耗时或事件概率。
-- NPC 到达新地点时写入位置变化。
+这些命令仍需 UI 接入和路径选择。
 
 ## 地图与 AI
 
-调用 AI 时提供：
+AI 上下文不发送完整大图。当前玩家行动上下文发送：
 
-- 当前地点名称与描述。
+- 当前地点。
+- 同行角色。
 - 附近地点列表。
-- 可达路线。
+- 最近事件。
+- 相关记忆。
+
+后续可加入：
+
+- 可达路线列表。
+- 路线危险度。
 - 当前位置所属区域。
+- NPC 当前地点。
 
-不要把完整大图直接发给 AI，除非未来加入视觉模型能力。MVP 使用结构化地点数据描述地图。
+## NPC 移动
 
-## UI 要求
+当前玩家移动由 `movePlayerTo` 直接设置主角和 active companion 的 `current_location_id`，并将目标地点标记为已知。
 
-- 支持缩放和拖动。
-- 支持添加、编辑、删除标记。
-- 支持点击地点查看角色、事件和备注。
-- 支持显示 NPC 当前位置。
-- 支持隐藏未知地点。
-- 桌面端支持鼠标滚轮缩放和右键或工具栏编辑。
-- 移动端支持双指缩放、长按添加标记。
-- 平板端支持触控拖拽，并兼容外接鼠标。
+后续 NPC 移动规则：
+
+- 有路线时优先沿路线。
+- 无路线时按地点直线距离估算。
+- 危险度影响事件概率和耗时。
+- 重要移动写入 timeline 和 memory。
+
+## 后续 UI 优先级
+
+1. 在地图页接入文件选择并调用 `import_map_image`。
+2. 使用 `map_image.image_path` 作为底图，保留 SVG fallback。
+3. 支持地点编辑、删除和拖动坐标。
+4. 显示角色当前位置。
+5. 支持桌面滚轮缩放、移动端双指缩放和平板拖拽。
+6. 接入 `generate_fantasy_map` 和 `generate_map_from_reference`。

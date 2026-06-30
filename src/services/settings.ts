@@ -32,7 +32,16 @@ export function canStoreGloscToken(token: string, acknowledged: boolean): boolea
 }
 
 export function localTokenRiskText(): string {
-  return "当前版本会优先使用平台安全存储；若平台不可用，会把访问令牌保存在本机应用数据目录的 settings.json。请只在可信设备上保存，并避免上传或分享该文件。";
+  return "当前版本会把访问令牌保存在本机应用数据目录的 settings.json。请只在可信设备上保存，并避免上传或分享该文件。";
+}
+
+export interface GloscConnectionCheck {
+  ok: boolean;
+  status: "ok" | "error";
+  message?: string;
+  error?: string;
+  http_status?: number;
+  checked_at?: string;
 }
 
 export async function loadSettings(): Promise<Settings> {
@@ -51,4 +60,18 @@ export async function saveSettings(settings: Settings): Promise<void> {
   const saved = await safeInvoke<boolean>("save_settings", { settings });
   if (saved) return;
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings, null, 2));
+}
+
+export async function checkGloscConnection(settings: Settings): Promise<GloscConnectionCheck> {
+  const result = await safeInvoke<GloscConnectionCheck>("check_glosc_connection", {
+    baseUrl: settings.glosc_base_url,
+    token: settings.glosc_token,
+    model: settings.model,
+  });
+  if (result) return result;
+  return {
+    ok: false,
+    status: "error",
+    error: "当前不在 Tauri 环境，无法执行原生连接测试。",
+  };
 }

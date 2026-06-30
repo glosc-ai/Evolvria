@@ -2,7 +2,7 @@
     "$schema": "https://schema.tauri.app/config/2",
     "productName": "Evolvria",
     "version": "0.1.0",
-    "identifier": "com.evolvria.client",
+    "identifier": "com.gloscai.evolvria",
     "build": {
         "beforeDevCommand": "yarn dev:tauri",
         "beforeBuildCommand": "yarn build",

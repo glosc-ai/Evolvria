@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { Save, SkipForward } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { PlugZap, Save, SkipForward } from "lucide-vue-next";
 import { useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import { useSettingsStore } from "@/stores/settings";
@@ -7,6 +8,25 @@ import { useSettingsStore } from "@/stores/settings";
 const router = useRouter();
 const settings = useSettingsStore();
 const app = useAppStore();
+const checking = ref(false);
+const hasToken = computed(() => Boolean(settings.settings.glosc_token.trim()));
+const remoteSaveAllowed = computed(() => hasToken.value && settings.settings.local_token_risk_acknowledged);
+
+async function testConnection() {
+  checking.value = true;
+  try {
+    const result = await settings.checkConnection();
+    if (result.ok) {
+      app.setNotice(result.message ?? "Glosc One 连接测试通过。");
+    } else {
+      app.setError(result.error ?? result.message ?? "Glosc One 连接测试失败。");
+    }
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "Glosc One 连接测试失败。");
+  } finally {
+    checking.value = false;
+  }
+}
 
 async function finish(saveToken: boolean) {
   try {
@@ -24,7 +44,7 @@ async function finish(saveToken: boolean) {
 <template>
   <section class="mx-auto max-w-3xl">
     <h1 class="text-3xl font-semibold">初始配置</h1>
-    <p class="e-muted mt-2 text-sm leading-6">Evolvria 可以离线运行；填写 Glosc One 后才会消耗远端额度。访问令牌会优先使用平台安全存储，平台不可用时需要确认本机保存风险。</p>
+    <p class="e-muted mt-2 text-sm leading-6">Evolvria 可以离线运行；填写 Glosc One 后才会消耗远端额度。访问令牌会保存在本机应用数据目录，保存前需要确认本机存储风险。</p>
     <div class="e-panel mt-6 space-y-4 p-5">
       <label class="block text-sm">服务地址<input v-model="settings.settings.glosc_base_url" class="e-field mt-2" /></label>
       <label class="block text-sm">访问 Key<input v-model="settings.settings.glosc_token" class="e-field mt-2" type="password" placeholder="输入 Glosc AI Key" /></label>
@@ -34,9 +54,12 @@ async function finish(saveToken: boolean) {
         <span>{{ settings.localTokenRiskText() }}</span>
       </label>
       <div class="flex flex-wrap gap-3">
-        <button class="e-btn e-btn-primary" type="button" @click="finish(true)"><Save :size="18" />保存并开始</button>
+        <button class="e-btn" type="button" :disabled="checking || !hasToken" @click="testConnection"><PlugZap :size="18" />{{ checking ? "正在测试..." : "测试连接" }}</button>
+        <button class="e-btn e-btn-primary" type="button" :disabled="!remoteSaveAllowed" @click="finish(true)"><Save :size="18" />保存并开始</button>
         <button class="e-btn" type="button" @click="finish(false)"><SkipForward :size="18" />跳过，使用本地模拟</button>
       </div>
+      <p v-if="hasToken && !settings.settings.local_token_risk_acknowledged" class="text-sm text-amber-100/80">保存访问 Key 前需要勾选本机存储风险确认。</p>
+      <p v-else-if="!hasToken" class="text-sm text-white/54">不填写访问 Key 时，请使用本地模拟开始。</p>
     </div>
   </section>
 </template>

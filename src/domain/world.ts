@@ -56,6 +56,10 @@ export function validatePayloadSchema(payload: unknown): payload is SavePayload 
   );
 }
 
+function clonePayload(payload: SavePayload): SavePayload {
+  return JSON.parse(JSON.stringify(payload)) as SavePayload;
+}
+
 export function buildCharacters(seed: WorldSeed): Character[] {
   const hero: Character = {
     id: "char_hero",
@@ -221,13 +225,42 @@ export function createInitialPayload(seed: WorldSeed): SavePayload {
         progress: [],
       },
     ],
-    suggested_actions: ["调查公告板徽记", "询问璃安旧档案", "前往雾松林"],
+    suggested_actions: ["调查公告板徽记", `询问${seed.key_characters[0]?.name || "同行者"}旧档案`, "前往雾松林"],
     event_counter: 1,
     memory_counter: 1,
     location_counter: 100,
     thread_counter: 2,
     updated_at: now,
   };
+}
+
+export interface WorldExpansionApplication {
+  summary?: string;
+  openingTitle?: string;
+  openingNarrative?: string;
+  suggestedActions?: string[];
+}
+
+export function applyWorldExpansion(payload: SavePayload, expansion: WorldExpansionApplication): SavePayload {
+  const next = clonePayload(payload);
+  const world = next.world as World;
+  const summary = cleanText(expansion.summary);
+  const openingNarrative = cleanText(expansion.openingNarrative);
+  const openingTitle = cleanText(expansion.openingTitle);
+  const suggestedActions = cleanStringArray(expansion.suggestedActions);
+  if (summary) {
+    world.summary = summary;
+    const worldMemory = next.memories.find((memory) => memory.scope === "world" && memory.owner_id === world.id);
+    if (worldMemory) worldMemory.text = summary;
+  }
+  const opening = next.timeline[0];
+  if (opening) {
+    if (openingTitle) opening.title = openingTitle;
+    if (openingNarrative) opening.description = openingNarrative;
+  }
+  if (suggestedActions.length > 0) next.suggested_actions = suggestedActions;
+  next.updated_at = nowIso();
+  return next;
 }
 
 export function generatedMapImage(routes: MapRoute[]): MapImage {
@@ -250,6 +283,14 @@ export function generatedMapImage(routes: MapRoute[]): MapImage {
   };
 }
 
+function cleanText(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function cleanStringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
+}
+
 export function buildInitialRoutes(): MapRoute[] {
   return [
     { id: "route_001", from_location_id: "loc_start", to_location_id: "loc_forest", name: "雾林旧道", type: "road", danger: 0.28 },
@@ -260,7 +301,7 @@ export function buildInitialRoutes(): MapRoute[] {
 
 export function applyPlayerAction(payload: SavePayload, result: PlayerActionResult, action: string): SavePayload {
   if (result.status !== "ok") return payload;
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const world = next.world as World;
   saveAiCheckpointInvariant(next);
   const eventId = makeId("evt", next.event_counter + 1);
@@ -316,7 +357,7 @@ function saveAiCheckpointInvariant(_payload: SavePayload): void {
 }
 
 export function addEvent(payload: SavePayload, event: Omit<TimelineEvent, "id">): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   next.event_counter += 1;
   next.timeline.push({ ...event, id: makeId("evt", next.event_counter) });
   next.updated_at = nowIso();
@@ -422,7 +463,7 @@ export function retrieveMemories(payload: SavePayload, query: string, locationId
 }
 
 export function movePlayerTo(payload: SavePayload, locationId: string): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const target = next.locations.find((location) => location.id === locationId);
   if (!target) return payload;
   const hero = next.characters.find((character) => character.id === "char_hero");
@@ -435,7 +476,7 @@ export function movePlayerTo(payload: SavePayload, locationId: string): SavePayl
 }
 
 export function updateCharacterNote(payload: SavePayload, characterId: string, note: string): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const character = next.characters.find((item) => item.id === characterId);
   if (character) {
     character.player_notes = note;
@@ -446,7 +487,7 @@ export function updateCharacterNote(payload: SavePayload, characterId: string, n
 }
 
 export function updateLocationNote(payload: SavePayload, locationId: string, note: string): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const location = next.locations.find((item) => item.id === locationId);
   if (location) {
     location.player_notes = note;
@@ -457,7 +498,7 @@ export function updateLocationNote(payload: SavePayload, locationId: string, not
 }
 
 export function addCustomLocation(payload: SavePayload, name: string, type: string, description: string, position: { x: number; y: number }): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   next.location_counter += 1;
   const id = makeId("loc", next.location_counter);
   next.locations.push({
@@ -484,7 +525,7 @@ export function addCustomLocation(payload: SavePayload, name: string, type: stri
 
 export function addRoute(payload: SavePayload, from: string, to: string): SavePayload {
   if (from === to) return payload;
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const exists = next.world && (next.world as World).map_routes.some((route) => routePairKey(route.from_location_id, route.to_location_id) === routePairKey(from, to));
   if (exists) return payload;
   const route: MapRoute = {
@@ -502,7 +543,7 @@ export function addRoute(payload: SavePayload, from: string, to: string): SavePa
 }
 
 export function recordAiLog(payload: SavePayload, purpose: string, status: "ok" | "error", summary: string, usage = { input_tokens: 0, output_tokens: 0 }, raw = ""): SavePayload {
-  const next = structuredClone(payload);
+  const next = clonePayload(payload);
   const world = next.world as World;
   const started = nowIso();
   const log: AIRequestLog = {

@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { computed, ref } from "vue";
-import { canStoreGloscToken, DEFAULT_SETTINGS, loadSettings, localTokenRiskText, saveSettings as persistSettings } from "@/services/settings";
+import { canStoreGloscToken, checkGloscConnection, DEFAULT_SETTINGS, loadSettings, localTokenRiskText, saveSettings as persistSettings } from "@/services/settings";
 import type { Settings } from "@/types/domain";
 
 export const useSettingsStore = defineStore("settings", () => {
@@ -32,6 +32,10 @@ export const useSettingsStore = defineStore("settings", () => {
     await save();
   }
 
+  async function checkConnection() {
+    return checkGloscConnection(settings.value);
+  }
+
   return {
     settings,
     loaded,
@@ -42,5 +46,6 @@ export const useSettingsStore = defineStore("settings", () => {
     save,
     patch,
     reset,
+    checkConnection,
   };
 });

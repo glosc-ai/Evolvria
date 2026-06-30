@@ -1,42 +1,55 @@
 # Evolvria 开发文档索引
 
-Evolvria 是一个由 AI 驱动的开放世界叙事模拟游戏。玩家先创建主角、关键角色和基础世界观，AI 负责扩写世界、推动事件、维护长期记忆，并让 NPC 在玩家视野之外继续行动。
+Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前实现基于 **Tauri 2 + Vue 3 + Vue Router + Pinia + Tailwind CSS**：玩家创建世界种子，系统生成 schema v1 的结构化世界，并在探索中持续维护角色、地点、事件、记忆、线索、地图和 AI 日志。
 
-本文档目录用于支撑后续开发，所有实现前应优先阅读这里的规格。
+文档原则：
+
+- 文档描述必须以当前代码为准，规划能力需明确标注“后续”。
+- 数据结构以 `src/types/domain.ts` 和 `docs/data-model.md` 为准。
+- AI、存档、平台行为变化后必须同步更新相关文档。
+- 用户可见文案、错误和日志默认使用中文。
 
 ## 文档列表
 
-- [产品需求](product-requirements.md)：目标、玩家体验、核心玩法、范围边界。
-- [游戏设计规格](game-design.md)：核心循环、角色、地图、时间线、事件、结局方向。
-- [跨平台支持](platform-support.md)：桌面端、移动端、平板端的体验目标、输入方式和适配要求。
-- [技术架构](technical-architecture.md)：Tauri/Vue 客户端、AI 编排层、本地存档、可扩展后端的职责划分。
-- [AI 记忆系统](ai-memory-system.md)：长期记忆、摘要、检索、世界观更新、防遗忘策略。
-- [世界模拟系统](world-simulation.md)：时间推进、NPC 自主行动、事件生成和一致性约束。
-- [数据模型](data-model.md)：角色、地点、事件、记忆、时间线、存档的核心字段。
-- [Prompt 与响应契约](prompt-and-response-contracts.md)：AI 请求类型、JSON 输出格式和校验规则。
-- [地图导入与标注](map-import-and-annotation.md)：玩家导入地图、地点标记、路径和 NPC 移动。
-- [Glosc One API 集成](glosc-one-api-integration.md)：付费调用模型、请求封装、错误处理、用量展示。
-- [存档与同步](save-load-and-sync.md)：本地存档、版本迁移、备份和未来云同步。
-- [UI/UX 流程](ui-ux-flows.md)：主要页面、创建流程、探索界面、AI 等待态。
-- [测试策略](testing-strategy.md)：单元测试、模拟测试、叙事一致性测试和手动验收。
-- [安全、隐私与内容策略](security-privacy-content.md)：API Key、玩家输入、AI 输出和数据保护。
-- [开发工作流](development-workflow.md)：目录约定、提交前检查、版本和文档维护。
-- [开发路线图](development-roadmap.md)：MVP、Alpha、Beta、发布阶段。
+- [产品需求](product-requirements.md)：定位、MVP 范围、非目标和成功标准。
+- [游戏设计规格](game-design.md)：核心循环、探索、时间、角色、事件和失败判定。
+- [跨平台支持](platform-support.md)：桌面、移动、平板的当前实现和目标适配。
+- [技术架构](technical-architecture.md)：Vue/Tauri 模块职责、数据流和 native 命令。
+- [数据模型](data-model.md)：schema v1 的世界、角色、地点、事件、记忆、线索、地图和存档字段。
+- [Prompt 与响应契约](prompt-and-response-contracts.md)：AI 请求类型、远端/本地 fallback、JSON 输出和 patch 规则。
+- [AI 记忆系统](ai-memory-system.md)：当前关键词检索、记忆写入、摘要规划和冲突优先级。
+- [世界模拟系统](world-simulation.md)：时间推进、NPC tick、事件重要度和一致性约束。
+- [地图导入与标注](map-import-and-annotation.md)：当前地图 UI、结构化地点/路线和 native 图片命令边界。
+- [Glosc One API 集成](glosc-one-api-integration.md)：配置、调用、用量估算、错误降级和日志。
+- [存档与同步](save-load-and-sync.md)：当前单文件 SavePayload、备份、AI checkpoint、导出 zip 和未来同步。
+- [UI/UX 流程](ui-ux-flows.md)：路由页面、主流程、响应式导航和设置入口。
+- [视觉设计方向](visual-direction.md)：当前 Vue/Tailwind 暗色界面、字体和组件 token。
+- [测试策略](testing-strategy.md)：Vitest、Playwright、Tauri Rust 测试和手动验收。
+- [安全、隐私与内容策略](security-privacy-content.md)：Glosc Key、本地存储、日志脱敏、导出风险和内容边界。
+- [开发工作流](development-workflow.md)：命令、目录、提交前检查和文档维护。
+- [开发路线图](development-roadmap.md)：已完成能力和后续阶段。
 
-## 当前约束
+## 当前已实现主线
 
-- 项目目标改为跨平台客户端，覆盖桌面端、移动端和平板端。
-- 当前项目主线是 Tauri 2 + Vue 3 客户端，桌面端优先完整验证，移动端保留 Tauri mobile 配置边界。
-- README 只有产品想法，尚未包含具体实现。
-- 默认优先做单机可运行 MVP，AI 通过 Glosc One 远程调用。
-- 所有复杂后端能力先设计接口，不在 MVP 阶段强制实现。
+- 12 个 Vue Router 页面：首页、引导、新建世界、探索、地图、地点、人物、时间线、线索、世界观、存档、设置。
+- Pinia store 连接 UI、平台能力、设置、世界状态、AI 和存档。
+- `SavePayload` schema v1 统一保存世界、角色、地点、势力、时间线、记忆、线索、AI 日志和计数器。
+- Tauri 桌面端保存到应用数据目录；浏览器开发环境 fallback 到 `localStorage`。
+- 每次覆盖 active 存档前保留最近 5 个备份；AI 请求前保存 `ai_before_request.json` checkpoint。
+- 未配置 Glosc One 时完整使用本地 mock，不消耗远端额度。
+- 地图页支持 SVG 底图、缩放、地点显示、隐藏未知、移动、手动添加地点和添加路线。
+- Tauri native 已包含地图图片导入/生成命令，但当前 Vue 地图 UI 尚未接入文件选择入口。
 
-## 建议开发顺序
+## 常用命令
 
-1. 搭建 Tauri/Vue 基础页面、Pinia 状态层和存档结构。
-2. 完成角色与世界观创建流程。
-3. 实现本地世界状态、时间线和事件历史。
-4. 接入 Glosc One，完成 AI 世界观扩写与下一事件生成。
-5. 加入记忆摘要、检索和世界观更新。
-6. 加入地图导入、地点标记和 NPC 移动模拟。
-7. 扩展跨平台 UI、测试、内容安全和用量展示。
+```bash
+yarn install
+yarn dev
+yarn typecheck
+yarn test
+yarn test:ui
+yarn tauri:dev
+yarn tauri:build
+
+cd src-tauri && cargo test
+```

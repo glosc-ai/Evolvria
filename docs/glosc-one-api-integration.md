@@ -2,105 +2,108 @@
 
 ## 目标
 
-Evolvria 客户端免费，AI 能力通过 Glosc One 付费使用。客户端需要提供可靠、可解释、可恢复的 AI 调用体验。
+Evolvria 客户端本地优先运行；AI 能力可通过 Glosc One 远端模型增强。未配置 Glosc One 时，游戏仍可用本地 mock 完成创建世界和探索闭环，不消耗远端额度。
 
 ## 配置项
 
-设置页至少包含：
+设置页当前包含：
 
-- Glosc One 服务地址。
-- 用户凭据或访问令牌。
-- 默认模型。
-- 请求超时时间。
-- 是否允许自动重试。
-- 每次调用前是否确认。
+- 服务地址，默认 `https://one.gloscai.com`
+- 模型，默认 `deepseek/deepseek-v4-pro`
+- 访问 Key
+- 超时秒数，默认 45 秒
+- AI 调用前确认
+- 显示用量估算
+- 自动保存
+- 失败自动重试
+- 日志级别：`default`、`debug`、`deep`
+- 字体大小
+- 内容偏好
+- 本机保存 Key 风险确认
 
-敏感信息必须保存到平台安全存储；如果暂时只能保存在本地文件，需要明确标记风险并避免上传。
+保存非空 Key 前必须勾选风险确认。
 
-## 请求类型
+## 配置判断
 
-- `world_expand`：初始世界扩写。
-- `player_action`：玩家行动结果。
-- `npc_simulation`：NPC 自主事件。
-- `memory_extract`：从叙事中抽取事实和记忆。
-- `summary_update`：阶段摘要更新。
-- `consistency_check`：冲突检查。
+`isGloscConfigured(settings)` 要求：
 
-## 通用请求结构
+- `glosc_base_url.trim()` 非空。
+- `glosc_token.trim()` 非空。
 
-```json
-{
-  "request_id": "ai_req_001",
-  "purpose": "player_action",
-  "model": "deepseek/deepseek-v4-pro",
-  "messages": [],
-  "response_format": "json",
-  "metadata": {
-    "world_id": "world_001",
-    "schema_version": 1
-  }
-}
-```
+只配置 base URL 不会触发远端调用。
 
-## 通用响应结构
+## 调用入口
 
-```json
-{
-  "request_id": "ai_req_001",
-  "status": "ok",
-  "content": {},
-  "usage": {
-    "input_tokens": 0,
-    "output_tokens": 0,
-    "cost": null
-  }
-}
-```
+TypeScript：
 
-## 错误处理
+- `generateWorld(seed, settings)`
+- `resolvePlayerAction(action, context, settings)`
+- `estimateUsage(purpose, input, settings)`
 
-必须覆盖：
+Tauri：
 
-- 网络不可用。
-- 超时。
-- 认证失败。
-- 余额不足。
-- 限流。
-- 服务端错误。
-- 响应不是合法 JSON。
-- 内容安全拦截。
+- `call_glosc(request)`
+- `check_glosc_connection(base_url, token, model)`
 
-错误后策略：
+当前设置页尚未接入 `check_glosc_connection` 按钮。
 
-- 不修改世界状态。
-- 保存失败日志。
-- 允许玩家重试。
-- 对可能重复提交的请求使用 `request_id` 去重。
+## HTTP 形态
 
-## 用量展示
+`base_url` 会转换为聊天接口：
 
-每次 AI 调用后记录：
+- `https://one.gloscai.com` -> `https://one.gloscai.com/v1/chat/completions`
+- `https://one.gloscai.com/v1` -> `https://one.gloscai.com/v1/chat/completions`
+- 已以 `/v1/chat/completions` 结尾则保持不变。
 
-- 请求类型。
-- 时间。
-- 模型。
-- token 或计费单位。
-- 估算费用。
-- 是否成功。
+请求使用 bearer token 和 `User-Agent: Evolvria/0.1 Tauri/2`。
 
-UI 应提供最近调用记录和本次操作消耗提示。
+## 用量估算
 
-## 本地降级
+`estimateUsage` 当前按输入 JSON 字符长度粗估：
 
-AI 不可用时允许：
+- 输入 token：`max(120, ceil(json.length / 2.6))`
+- `world_expand` 输出 token：1200
+- `player_action` 输出 token：600
+- 其他类型输出 token：360
 
-- 查看历史。
-- 查看地图。
-- 编辑角色备注。
-- 管理存档。
+返回字段包括 purpose label、是否启用远端、输入/输出/总 token、费用占位、计费提示、风险等级、风险原因和重试说明。
 
-不允许：
+## 日志记录
 
-- 生成新剧情。
-- 推进需要 AI 判断的关键事件。
-- 覆盖世界观。
+每次世界扩写、玩家行动和本地 NPC tick 都会写入 `AIRequestLog`：
+
+- purpose
+- prompt hash
+- model
+- started/finished time
+- status
+- error
+- usage
+- summary
+- 可选 raw_response
+
+`glosc_token` 不得写入日志。`raw_response` 写入前必须经过脱敏。
+
+## 错误与降级
+
+当前策略：
+
+- 未配置 Glosc One：世界扩写和玩家行动都使用本地 mock。
+- 远端 `generateWorld` 失败：抛错并提示，世界不创建。
+- 远端 `resolvePlayerAction` 响应不可用：使用本地 mock，并附加 warning。
+- AI 请求前保存 checkpoint，降低半途失败导致状态丢失的风险。
+
+后续可补齐：
+
+- 自动重试实现。
+- 余额不足/限流的专门文案。
+- 连接测试 UI。
+- 请求取消。
+- 更细粒度的内容安全拦截。
+
+## 安全要求
+
+- 不在仓库或源码中硬编码用户 Key。
+- 不在日志记录 Authorization、token、cookie。
+- 只发送当前场景、近期事件和相关记忆，不发送完整历史。
+- 导出存档时提醒 payload 中可能包含玩家生成内容和 AI 日志。

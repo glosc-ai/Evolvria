@@ -4,45 +4,102 @@
 
 所有 AI 调用必须有明确目的、固定上下文结构和可校验响应。客户端不能依赖自由文本猜测状态变化。
 
-## 通用 Prompt 结构
+当前实现的远端调用由 Tauri `call_glosc` 发送到 OpenAI-compatible `/v1/chat/completions` 接口；未配置 Glosc One 或远端玩家行动响应不可用时使用本地 mock。
 
-```text
-SYSTEM
-- 你是 Evolvria 的叙事与世界模拟引擎。
-- 必须遵守已确认世界状态。
-- 不得覆盖玩家明确设定。
-- 必须返回合法 JSON。
-- 不要输出 JSON 以外的内容。
+## 请求类型
 
-WORLD_STATE
-- 世界摘要
-- 世界规则
-- 当前时间
+`AIPurpose` 当前包括：
 
-SCENE_STATE
-- 当前地点
-- 当前角色
-- 当前冲突
+- `world_expand`
+- `player_action`
+- `npc_simulation`
+- `memory_extract`
+- `summary_update`
+- `consistency_check`
 
-MEMORY_CONTEXT
-- 最近事件
-- 相关长期记忆
-- 相关角色摘要
-- 相关地点摘要
+当前实际调用远端的路径：
 
-USER_ACTION
-- 玩家输入或系统模拟目标
+- `world_expand`：新建世界时调用 `generateWorld`。
+- `player_action`：探索中提交玩家行动时调用 `resolvePlayerAction`。
 
-OUTPUT_SCHEMA
-- 本次请求必须返回的 JSON schema 说明
-```
+`npc_simulation` 当前由本地 `runNpcTick` 生成简短事件和 AI 日志；其他请求类型是 schema 和规划预留。
 
-## 通用响应字段
+## 通用远端请求
 
-所有响应至少包含：
+Rust 端 `call_glosc` 构造：
 
 ```json
 {
+  "model": "deepseek/deepseek-v4-pro",
+  "messages": [
+    {
+      "role": "system",
+      "content": "你是 Evolvria 的叙事与世界模拟引擎。只返回合法 JSON，不要输出 JSON 以外的内容。"
+    },
+    {
+      "role": "user",
+      "content": "{\"purpose\":\"player_action\",\"payload\":{}}"
+    }
+  ],
+  "response_format": {
+    "type": "json_object"
+  },
+  "temperature": 0.7
+}
+```
+
+`baseUrl` 会自动补齐为 `/v1/chat/completions`。
+
+## player_action 上下文
+
+`buildAiContext` 当前传入：
+
+```json
+{
+  "world": {},
+  "scene_state": {
+    "current_location": {},
+    "companion_character_ids": ["char_001"],
+    "nearby_locations": []
+  },
+  "memory_context": [],
+  "recent_events": []
+}
+```
+
+其中 `recent_events` 取最近 8 条，`memory_context` 默认最多 8 条。
+
+## PlayerActionResult
+
+玩家行动响应必须符合：
+
+```json
+{
+  "status": "ok",
+  "narrative": "",
+  "time_delta_minutes": 45,
+  "events": [],
+  "character_updates": [],
+  "location_updates": [],
+  "relationship_updates": [],
+  "memory_writes": [],
+  "suggested_actions": [],
+  "warnings": [],
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost_estimate": null
+  },
+  "request_id": "ai_req_001"
+}
+```
+
+错误响应：
+
+```json
+{
+  "status": "error",
   "narrative": "",
   "time_delta_minutes": 0,
   "events": [],
@@ -51,113 +108,37 @@ OUTPUT_SCHEMA
   "relationship_updates": [],
   "memory_writes": [],
   "suggested_actions": [],
-  "warnings": []
+  "warnings": [],
+  "error": "错误说明"
 }
 ```
+
+当前远端 `player_action` 如果不是 `status = ok` 且包含 `narrative` 的结构，会降级为本地 mock，并在 `warnings` 中提示。
 
 ## world_expand
 
-用途：根据玩家初始设定扩写世界。
+当前 `generateWorld` 只要求远端返回可记录的 summary/content 和 usage。结构化初始世界由本地 `createInitialPayload(seed)` 生成。
 
-必须返回：
-
-- 世界规则。
-- 势力。
-- 地点。
-- 关键角色补全。
-- 初始事件。
-- 开局地点。
-- 初始可选行动。
-
-禁止：
-
-- 改名或删除玩家已创建角色。
-- 改变玩家明确设定的性格、身份和关系。
-- 生成与内容偏好冲突的核心设定。
-
-## player_action
-
-用途：处理玩家行动。
-
-必须返回：
-
-- 行动结果叙事。
-- 时间推进。
-- 角色状态变化。
-- 地点状态变化。
-- 新事件。
-- 可选行动。
-
-如果玩家行动不合理，AI 应给出受阻结果，而不是假装成功。
-
-## npc_simulation
-
-用途：在玩家视野外推进 NPC 行动。
-
-必须返回：
-
-- 简短事件描述。
-- 参与角色。
-- 发生地点。
-- 是否玩家已知。
-- 重要度。
-- 对角色、关系、地点的影响。
-
-低重要度事件可以没有长叙事。
-
-## memory_extract
-
-用途：从叙事和状态变更中抽取记忆。
-
-必须返回：
+远端成功返回：
 
 ```json
 {
-  "facts": [],
-  "memories": [],
-  "unresolved_threads": [],
-  "contradictions": []
+  "status": "ok",
+  "summary": "世界扩写摘要",
+  "usage": {
+    "input_tokens": 860,
+    "output_tokens": 1080
+  }
 }
 ```
 
-记忆必须标注 owner、importance、confidence 和 tags。
+后续如果让远端直接返回结构化世界，必须同步更新：
 
-## summary_update
+- `WorldSeed` 输入说明。
+- `SavePayload` 生成/迁移逻辑。
+- 校验器和测试 fixture。
 
-用途：压缩长时间线。
-
-必须返回：
-
-- 世界阶段摘要。
-- 每个关键角色摘要。
-- 每个重要地点摘要。
-- 未解决悬念。
-- 后续应继续保持的一致性约束。
-
-摘要不能引入新事实，只能概括已有事件。
-
-## 校验规则
-
-客户端在应用响应前必须校验：
-
-- JSON 可解析。
-- 必要字段存在。
-- ID 引用有效。
-- 时间推进非负。
-- 角色位置不冲突。
-- 更新不覆盖玩家锁定字段。
-- 事件参与者和地点存在。
-
-校验失败时：
-
-- 不应用状态变更。
-- 保存原始响应到失败日志。
-- 提示玩家重试。
-- 可附加“修复 JSON”请求，但仍需再次校验。
-
-## 状态变更格式
-
-建议使用显式 patch：
+## StatePatch
 
 ```json
 {
@@ -165,12 +146,12 @@ OUTPUT_SCHEMA
   "target_id": "char_001",
   "op": "set",
   "path": "current_location_id",
-  "value": "loc_002",
-  "reason": "角色离开黑石镇前往旧矿道"
+  "value": "loc_ruin",
+  "reason": "角色前往白塔遗迹"
 }
 ```
 
-支持操作：
+schema 中声明的操作：
 
 - `set`
 - `append`
@@ -179,5 +160,33 @@ OUTPUT_SCHEMA
 - `link`
 - `unlink`
 
-MVP 可先只实现 `set` 和 `append`。
+当前 `applyStatePatch` 实际实现：
 
+- `set`
+- `append`
+- `increment`
+
+`remove`、`link`、`unlink` 尚未实现，AI 不应在当前版本依赖它们。
+
+## 校验规则
+
+应用 patch 前必须满足：
+
+- `target_type`、`target_id`、`path` 存在。
+- 目标对象存在。
+- 角色 `name` 不可修改。
+- 已知地点的 `description` 和 `position` 不可修改。
+- 世界 `current_time` 不可由 patch 修改。
+
+行动应用后可调用 `validateWorldConsistency` 检查：
+
+- timeline 的 `location_id` 是否存在。
+- timeline 的 `participant_ids` 是否存在。
+
+## 失败策略
+
+- AI 请求前先保存 checkpoint。
+- 远端不可用时优先本地 fallback。
+- `status = error` 的 PlayerActionResult 不修改世界状态。
+- 所有调用写入 AI 日志摘要和 usage。
+- 原始响应若写入日志，必须脱敏。

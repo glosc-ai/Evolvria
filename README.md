@@ -15,13 +15,13 @@ Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前
 ## 开发
 
 ```bash
-pnpm install
-pnpm dev
-pnpm typecheck
-pnpm test
-pnpm test:ui
-pnpm tauri:dev
-pnpm tauri:build
+yarn install
+yarn dev
+yarn typecheck
+yarn test
+yarn test:ui
+yarn tauri:dev
+yarn tauri:build
 cd src-tauri && cargo test
 ```
 

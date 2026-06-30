@@ -11,13 +11,13 @@ Most docs and all user-facing strings are in **Chinese**. Keep UI text, errors, 
 ## Commands
 
 ```bash
-pnpm install
-pnpm dev
-pnpm typecheck
-pnpm test
-pnpm test:ui
-pnpm tauri:dev
-pnpm tauri:build
+yarn install
+yarn dev
+yarn typecheck
+yarn test
+yarn test:ui
+yarn tauri:dev
+yarn tauri:build
 
 cd src-tauri && cargo test
 ```
@@ -25,8 +25,8 @@ cd src-tauri && cargo test
 Mobile scaffolding uses Tauri 2 mobile:
 
 ```bash
-pnpm tauri android init
-pnpm tauri ios init
+yarn tauri android init
+yarn tauri ios init
 ```
 
 Android/iOS signing and store distribution are outside the current MVP.

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Workspace Saves"
+  short_description: "Maintain folder-based Evolvria world saves"
+  default_prompt: "Use $workspace-save-format to update Evolvria save/workspace behavior without breaking AGENTS.md loading."

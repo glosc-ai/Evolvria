@@ -51,9 +51,9 @@ onUpdated(async () => {
 </script>
 
 <template>
-  <section :class="cn('relative flex min-h-0 flex-1 overflow-hidden', props.class)" role="log" aria-live="polite">
-    <div ref="viewport" class="min-h-0 flex-1 overflow-y-auto" @scroll="updateAtBottom">
-      <div :class="cn('flex min-h-full flex-col gap-8 p-4', props.contentClass)">
+  <section :class="cn('relative flex min-h-0 min-w-0 flex-1 overflow-hidden', props.class)" role="log" aria-live="polite">
+    <div ref="viewport" class="min-h-0 min-w-0 flex-1 overflow-y-auto" @scroll="updateAtBottom">
+      <div :class="cn('flex min-h-full min-w-0 flex-col gap-8 p-4', props.contentClass)">
         <slot />
       </div>
     </div>

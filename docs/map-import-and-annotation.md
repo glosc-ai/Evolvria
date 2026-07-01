@@ -2,7 +2,7 @@
 
 ## 目标
 
-地图用于连接地点、移动、路线、NPC 位置和事件生成。当前 UI 已支持结构化地点/路线标注；图片导入和程序化地图生成已有 Tauri native 命令，但尚未接入 Vue 地图页。
+地图用于连接地点、移动、路线、NPC 位置和事件生成。当前 UI 展示创世时生成并锁定的结构化地区、地点和路线；图片导入和程序化地图生成已有 Tauri native 命令，但尚未接入 Vue 地图页。
 
 ## 当前已实现 UI
 
@@ -16,8 +16,7 @@
 - 可显示/隐藏未知地点。
 - 点击地点查看描述。
 - 可移动到选中地点。
-- 可从当前位置到选中地点添加一条自定义路线。
-- 可手动添加地点，坐标限制在 0.05 到 0.95。
+- 显示创世地图锁定状态。
 
 当前没有实现：
 
@@ -65,12 +64,17 @@
   "source_project": "Azgaar/Fantasy-Map-Generator",
   "source_license": "MIT",
   "source_url": "https://github.com/Azgaar/Fantasy-Map-Generator",
-  "mode": "procedural",
+  "mode": "azgaar_adapter",
+  "pipeline": ["heightmap", "biomes", "regions", "burgs", "routes"],
+  "creation_only": true,
+  "locked_after_creation": true,
   "attribution_required": true
 }
 ```
 
-Tauri native `generate_fantasy_map` 当前会生成一张 960 x 640 PNG，并返回路径、尺寸、地点和生成器信息。它是轻量 procedural map，不嵌入完整 Azgaar Web 应用。
+`src/domain/azgaar-map.ts` 是项目内 Azgaar adapter：参考 Azgaar/Fantasy-Map-Generator 的 heightmap、biome、burg、route generator 分层，在创建世界时一次性生成地区、地点和路线。它不嵌入完整 Azgaar Web 编辑器，也不在创世后提供编辑入口。
+
+Tauri native `generate_fantasy_map` 当前会生成一张 960 x 640 PNG，并返回路径、尺寸、地点和生成器信息。它是轻量 procedural map，后续若接入 UI，也只能作为创建世界阶段的底图输入。
 
 ## 图片导入 native 能力
 
@@ -119,9 +123,9 @@ AI 上下文不发送完整大图。当前玩家行动上下文发送：
 
 ## 后续 UI 优先级
 
-1. 在地图页接入文件选择并调用 `import_map_image`。
+1. 在新建世界流程接入文件选择并调用 `import_map_image`。
 2. 使用 `map_image.image_path` 作为底图，保留 SVG fallback。
-3. 支持地点编辑、删除和拖动坐标。
+3. 增加地图查看层级和地区筛选。
 4. 显示角色当前位置。
 5. 支持桌面滚轮缩放、移动端双指缩放和平板拖拽。
-6. 接入 `generate_fantasy_map` 和 `generate_map_from_reference`。
+6. 在创建世界阶段接入 `generate_fantasy_map` 和 `generate_map_from_reference`。

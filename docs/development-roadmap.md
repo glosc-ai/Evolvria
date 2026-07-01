@@ -14,7 +14,7 @@
 - Glosc One 调用基础封装。
 - Tauri active 存档、备份、AI checkpoint、zip 导出。
 - 浏览器 localStorage fallback。
-- 地图结构化显示、手动地点和路线。
+- 地图结构化显示、创世地区/地点/路线和创建后锁定。
 - Vitest、Playwright 和 Rust 单测基础。
 
 ## Phase 1：MVP 收口
@@ -74,8 +74,7 @@
 - 接入 `generate_fantasy_map`。
 - 接入 `generate_map_from_reference`。
 - 使用 `map_image.image_path` 渲染底图。
-- 支持拖动地点坐标、编辑/删除标记。
-- 显示角色当前位置。
+- 支持地图查看层级、地区筛选和角色位置显示。
 - 将路线和附近地点加入 AI 上下文。
 
 验收：

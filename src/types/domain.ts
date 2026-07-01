@@ -17,6 +17,7 @@ export type RouteName =
 export type AIPurpose =
   | "world_expand"
   | "player_action"
+  | "character_image"
   | "npc_simulation"
   | "memory_extract"
   | "summary_update"
@@ -58,6 +59,10 @@ export interface Character {
   known_event_ids: string[];
   player_notes: string;
   player_notes_updated_at: string;
+  appearance_description?: string;
+  portrait_prompt?: string;
+  portrait_image_url?: string;
+  portrait_updated_at?: string;
   action_tendency?: string;
   companion?: boolean;
   visibility?: "met" | "heard" | "hidden";
@@ -69,6 +74,7 @@ export interface Location {
   type: string;
   description: string;
   map_id: string;
+  region_id?: string;
   position: MapPosition;
   connected_location_ids: string[];
   controlling_faction_id: string | null;
@@ -80,6 +86,18 @@ export interface Location {
   player_notes_updated_at: string;
   biome?: string;
   height?: number;
+}
+
+export interface MapRegion {
+  id: string;
+  name: string;
+  type: string;
+  description: string;
+  biome: string;
+  center: MapPosition;
+  color: string;
+  controlling_faction_id: string | null;
+  location_ids: string[];
 }
 
 export interface Faction {
@@ -174,6 +192,8 @@ export interface World {
   npc_autonomy_frequency: string;
   map_image: Partial<MapImage>;
   map_routes: MapRoute[];
+  map_regions?: MapRegion[];
+  map_locked: boolean;
   created_at: string;
   schema_version: number;
 }
@@ -254,6 +274,7 @@ export interface WorldSeed {
     goal: string;
     ability: string;
     weakness: string;
+    appearance_description?: string;
   };
   key_characters: Array<{
     name: string;
@@ -265,6 +286,7 @@ export interface WorldSeed {
     secret: string;
     action_tendency: string;
     description: string;
+    appearance_description?: string;
   }>;
 }
 

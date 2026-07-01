@@ -1,0 +1,11 @@
+{
+  "skills": [
+    { "name": "initialize-world", "path": "initialize-world/SKILL.md" },
+    { "name": "advance-world-progress", "path": "advance-world-progress/SKILL.md" },
+    { "name": "trigger-player-action", "path": "trigger-player-action/SKILL.md" },
+    { "name": "record-event", "path": "record-event/SKILL.md" },
+    { "name": "log-event", "path": "log-event/SKILL.md" },
+    { "name": "generate-character", "path": "generate-character/SKILL.md" },
+    { "name": "workspace-save-format", "path": "workspace-save-format/SKILL.md" }
+  ]
+}

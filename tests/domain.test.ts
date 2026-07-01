@@ -17,9 +17,11 @@ import {
 } from "@/domain/world";
 import { estimateUsage, normalizeGloscPlayerAction, normalizeGloscWorldExpansion } from "@/services/ai";
 import { normalizeOpenAiBaseUrl } from "@/services/ai-sdk";
+import { createEvolvriaBuiltInSkills, createEvolvriaSkillRuntime, parsePublicSkillMarkdown, skillManifest } from "@/services/ai-skills";
 import { importWorldFromText } from "@/services/save";
 import { DEFAULT_SETTINGS } from "@/services/settings";
 import { buildSeedWorkspaceAiContext, buildWorkspaceAiContext, buildWorldWorkspaceFiles } from "@/services/world-workspace";
+import type { Character, PlayerActionResult, SavePayload } from "@/types/domain";
 
 describe("world domain", () => {
   it("creates a schema-valid local-first world", () => {
@@ -28,9 +30,15 @@ describe("world domain", () => {
     expect(payload.characters.length).toBeGreaterThanOrEqual(3);
     expect(payload.characters.find((character) => character.id === "char_001")?.gender).toBe("女");
     expect(payload.locations.length).toBeGreaterThanOrEqual(4);
+    expect(payload.world.map_regions?.length).toBeGreaterThanOrEqual(4);
+    expect(payload.world.map_locked).toBe(true);
+    expect(payload.locations.every((location) => Boolean(location.region_id))).toBe(true);
+    expect(payload.locations.some((location) => location.connected_location_ids.length > 0)).toBe(true);
     expect(payload.factions.length).toBeGreaterThanOrEqual(3);
     expect(payload.threads.length).toBeGreaterThanOrEqual(2);
     expect(payload.world.map_image.generator?.source_project).toBe("Azgaar/Fantasy-Map-Generator");
+    expect(payload.world.map_image.generator?.mode).toBe("azgaar_adapter");
+    expect(payload.world.map_image.generator?.creation_only).toBe(true);
   });
 
   it("uses custom key character names in local guidance", () => {
@@ -96,12 +104,40 @@ describe("world domain", () => {
     expect(retrieveMemories(payload, "徽记", "loc_start", ["char_hero"], 4).length).toBeGreaterThan(0);
   });
 
-  it("edits map annotations and routes", () => {
+  it("locks map structure after world creation", () => {
     let payload = createInitialPayload(defaultSeed());
     payload = addCustomLocation(payload, "风铃渡口", "harbor", "新标注地点", { x: 0.7, y: 0.7 });
-    expect(payload.locations.some((location) => location.name === "风铃渡口")).toBe(true);
+    expect(payload.locations.some((location) => location.name === "风铃渡口")).toBe(false);
+    const routeCount = payload.world.map_routes.length;
     payload = addRoute(payload, currentLocation(payload)!.id, payload.locations.at(-1)!.id);
-    expect(payload.world.map_routes.length).toBeGreaterThan(3);
+    expect(payload.world.map_routes.length).toBe(routeCount);
+    expect(
+      applyStatePatch(payload, {
+        target_type: "world",
+        target_id: payload.world.id,
+        op: "set",
+        path: "map_regions",
+        value: [],
+      }),
+    ).toBe(false);
+    expect(
+      applyStatePatch(payload, {
+        target_type: "location",
+        target_id: "loc_start",
+        op: "set",
+        path: "type",
+        value: "city",
+      }),
+    ).toBe(false);
+    expect(
+      applyStatePatch(payload, {
+        target_type: "location",
+        target_id: "loc_harbor",
+        op: "set",
+        path: "visibility",
+        value: "known_to_player",
+      }),
+    ).toBe(true);
   });
 
   it("estimates AI usage and aggregates logs", () => {
@@ -206,6 +242,92 @@ describe("world domain", () => {
     expect(context.instructions).toContain("新世界创建请求");
   });
 
+  it("exposes runtime-bound AI SDK skills for world operations", async () => {
+    const seed = defaultSeed();
+    const payload = createInitialPayload(seed);
+    const runtime = createEvolvriaSkillRuntime("player_action", {
+      action: "调查徽记",
+      context: { characters: payload.characters },
+    });
+    const skills = createEvolvriaBuiltInSkills({ ...runtime, seed, payload });
+
+    const initialized = (await runTool(skills.initializeWorld.execute, {})) as SavePayload;
+    expect(validatePayloadSchema(initialized)).toBe(true);
+
+    const progressed = (await runTool(skills.advanceWorldProgress.execute, {
+      description: "远方势力推进了计划。",
+    })) as SavePayload;
+    expect(progressed.timeline.at(-1)?.type).toBe("world_progress");
+
+    const actionResult = (await runTool(skills.triggerPlayerAction.execute, {})) as PlayerActionResult;
+    expect(actionResult.narrative).toContain("调查徽记");
+
+    const recorded = (await runTool(skills.recordEvent.execute, {
+      event: {
+        title: "测试事件",
+        description: "记录事件 skill 被调用。",
+      },
+    })) as SavePayload;
+    expect(recorded.timeline.at(-1)?.title).toBe("测试事件");
+
+    const character = (await runTool(skills.generateCharacter.execute, {
+      name: "洛安",
+      gender: "男",
+      role: "档案员",
+      description: "在边境驿站整理旧档案的年轻学者。",
+    })) as Character;
+    expect(character.id).toMatch(/^char_/);
+    expect(character.appearance_description).toContain("洛安");
+
+    const saveFormat = (await runTool(skills.workspaceSaveFormat.execute, { topic: "ai-context" })) as string;
+    expect(saveFormat).toContain("AGENTS.md");
+    expect(saveFormat).toContain("state/payload.json");
+  });
+
+  it("parses public SKILL.md files for AI skill manifests", () => {
+    const parsed = parsePublicSkillMarkdown(
+      "initialize-world/SKILL.md",
+      [
+        "---",
+        "name: initialize-world",
+        "title: 初始化世界",
+        "description: 从 public skill 文件读取的初始化说明。",
+        "runtime_context: 可使用当前 seed",
+        "---",
+        "# 初始化世界",
+        "",
+        "根据 WorldSeed 生成世界。",
+      ].join("\n"),
+      "initialize-world",
+    );
+    const manifest = skillManifest(parsed ? [parsed] : []);
+    expect(manifest[0]?.name).toBe("initialize-world");
+    expect(manifest[0]?.tool_name).toBe("initializeWorld");
+    expect(manifest[0]?.description).toBe("从 public skill 文件读取的初始化说明。");
+    expect(manifest[0]?.content).toContain("根据 WorldSeed");
+
+    const workspaceParsed = parsePublicSkillMarkdown(
+      "workspace-save-format/SKILL.md",
+      [
+        "---",
+        "name: workspace-save-format",
+        "description: 文件夹式世界存档规则。",
+        "---",
+        "# Workspace Save Format",
+        "",
+        "AGENTS.md 是 AI 入口，state/payload.json 是权威状态。",
+      ].join("\n"),
+      "workspace-save-format",
+    );
+    const workspaceSkill = skillManifest(workspaceParsed ? [workspaceParsed] : []).find((skill) => skill.name === "workspace-save-format");
+    expect(workspaceSkill?.tool_name).toBe("workspaceSaveFormat");
+    expect(workspaceSkill?.title).toBe("工作区存档格式");
+    expect(workspaceSkill?.content).toContain("AGENTS.md");
+
+    expect(parsePublicSkillMarkdown("log-event/SKILL.md", "---\nname: logEvent\n---\n# 记录日志", "log-event")).toBeNull();
+    expect(parsePublicSkillMarkdown("log-event/SKILL.md", "---\nname: record-event\n---\n# 记录日志", "log-event")).toBeNull();
+  });
+
   it("imports browser workspace bundles through state/payload.json", async () => {
     const payload = createInitialPayload(defaultSeed());
     const imported = await importWorldFromText(
@@ -217,3 +339,9 @@ describe("world domain", () => {
     expect(imported.world.id).toBe(payload.world.id);
   });
 });
+
+async function runTool(execute: unknown, input: unknown): Promise<unknown> {
+  expect(typeof execute).toBe("function");
+  const fn = execute as (input: unknown, options: unknown) => unknown | PromiseLike<unknown>;
+  return await Promise.resolve(fn(input, { toolCallId: "test", messages: [] }));
+}

@@ -36,10 +36,10 @@ const draft = reactive<WorldSeed>({
   limits: "保持可读性，避免极端血腥和酷刑描写。",
   narrative_detail: "详细",
   npc_autonomy_frequency: "中频",
-  hero: { name: "测试者", gender: "未指定", description: "记录员", goal: "验证世界循环", ability: "观察,推理", weakness: "过度谨慎" },
+  hero: { name: "测试者", gender: "未指定", description: "记录员", goal: "验证世界循环", ability: "观察,推理", weakness: "过度谨慎", appearance_description: "" },
   key_characters: [
-    { name: "璃安", gender: "女", role: "旧友", relationship: "同行", personality: "温和,谨慎", goal: "查清徽记来源", secret: "知道徽记与旧档案有关", action_tendency: "保护主角并暗中确认线索", description: "提供线索的人" },
-    { name: "赛拉", gender: "女", role: "竞争者", relationship: "竞争", personality: "果断,好胜", goal: "抢先得到档案", secret: "曾为边境守望工作", action_tendency: "主动追踪遗迹并试探玩家", description: "推动冲突的人" },
+    { name: "璃安", gender: "女", role: "旧友", relationship: "同行", personality: "温和,谨慎", goal: "查清徽记来源", secret: "知道徽记与旧档案有关", action_tendency: "保护主角并暗中确认线索", description: "提供线索的人", appearance_description: "" },
+    { name: "赛拉", gender: "女", role: "竞争者", relationship: "竞争", personality: "果断,好胜", goal: "抢先得到档案", secret: "曾为边境守望工作", action_tendency: "主动追踪遗迹并试探玩家", description: "推动冲突的人", appearance_description: "" },
   ],
 });
 
@@ -56,6 +56,7 @@ function emptyCharacter(overrides: Partial<KeyCharacterDraft> = {}): KeyCharacte
     secret: "",
     action_tendency: "",
     description: "",
+    appearance_description: "",
     ...overrides,
   };
 }
@@ -106,12 +107,13 @@ function parseCharacterLine(line: string): KeyCharacterDraft {
     secret: parts[6] ?? "",
     action_tendency: parts[7] ?? "",
     description: parts[8] ?? "",
+    appearance_description: parts[9] ?? "",
   });
 }
 
 function parseKeyedCharacterLine(line: string): Partial<KeyCharacterDraft> | null {
   const result: Partial<KeyCharacterDraft> = {};
-  const keyPattern = "姓名|名字|name|性别|gender|身份|role|关系|relationship|性格|personality|目标|goal|秘密|secret|行动倾向|倾向|描述|简介|description";
+  const keyPattern = "姓名|名字|name|性别|gender|身份|role|关系|relationship|性格|personality|目标|goal|秘密|secret|行动倾向|倾向|描述|简介|description|外貌|形象|appearance";
   const matches = line.matchAll(new RegExp(`(${keyPattern})\\s*[:：]\\s*(.*?)(?=\\s+(?:${keyPattern})\\s*[:：]|[；;]|$)`, "gi"));
   for (const match of matches) {
     const key = normalizeCharacterKey(match[1]);
@@ -132,6 +134,7 @@ function normalizeCharacterKey(key: string): keyof KeyCharacterDraft | null {
   if (["秘密", "secret"].includes(normalized)) return "secret";
   if (["行动倾向", "倾向"].includes(normalized)) return "action_tendency";
   if (["描述", "简介", "description"].includes(normalized)) return "description";
+  if (["外貌", "形象", "appearance"].includes(normalized)) return "appearance_description";
   return null;
 }
 
@@ -199,6 +202,10 @@ async function create() {
             <Textarea id="hero-description" v-model="draft.hero.description" class="min-h-24" />
           </Field>
           <Field>
+            <FieldLabel for="hero-appearance">外貌描述</FieldLabel>
+            <Textarea id="hero-appearance" v-model="draft.hero.appearance_description" class="min-h-24" placeholder="可留空；生成形象时会根据身份、目标和世界观自动补全" />
+          </Field>
+          <Field>
             <FieldLabel for="hero-goal">目标</FieldLabel>
             <Input id="hero-goal" v-model="draft.hero.goal" />
           </Field>
@@ -222,7 +229,7 @@ async function create() {
                 id="bulk-characters"
                 v-model="bulkCharactersText"
                 class="min-h-28"
-                placeholder="璃安｜女｜旧友｜同行｜温和,谨慎｜查清徽记来源｜知道徽记与旧档案有关｜保护主角并暗中确认线索｜提供线索的人"
+                placeholder="璃安｜女｜旧友｜同行｜温和,谨慎｜查清徽记来源｜知道徽记与旧档案有关｜保护主角并暗中确认线索｜提供线索的人｜银灰短发，旧式斗篷"
               />
             </Field>
             <Button variant="outline" type="button" @click="addBulkCharacters">
@@ -268,6 +275,15 @@ async function create() {
             <Field>
               <FieldLabel :for="`character-${index}-description`">描述</FieldLabel>
               <Input :id="`character-${index}-description`" v-model="character.description" />
+            </Field>
+            <Field>
+              <FieldLabel :for="`character-${index}-appearance`">外貌描述</FieldLabel>
+              <Textarea
+                :id="`character-${index}-appearance`"
+                v-model="character.appearance_description"
+                class="min-h-20"
+                placeholder="可留空；生成形象时会根据角色卡自动补全"
+              />
             </Field>
             <Field>
               <FieldLabel :for="`character-${index}-tendency`">行动倾向</FieldLabel>
@@ -323,6 +339,7 @@ async function create() {
         <div class="flex flex-col gap-3 text-sm text-muted-foreground">
           <p>{{ draft.limits }}</p>
           <p>叙事：{{ draft.narrative_detail }} · NPC：{{ draft.npc_autonomy_frequency }}</p>
+          <p>地图、地区、地点和路线会在创建世界时一次性生成，创建后只能探索和记录，不能再修改地图结构。</p>
           <p>所有 AI 请求都会先校验 JSON 和状态 patch，失败不会修改世界。</p>
         </div>
         </CardContent>

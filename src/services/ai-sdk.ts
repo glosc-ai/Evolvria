@@ -1,10 +1,11 @@
 import { createOpenAI } from "@ai-sdk/openai";
-import { generateText, Output, type LanguageModelUsage } from "ai";
+import { isStepCount, Output, ToolLoopAgent, type LanguageModelUsage } from "ai";
 import { z } from "zod";
+import { createEvolvriaBuiltInSkills, createEvolvriaSkillRuntime, loadPublicSkillDefinitions, skillManifest } from "@/services/ai-skills";
 import type { AIPurpose, AIUsage, Settings } from "@/types/domain";
 
 const SYSTEM_PROMPT =
-  "你是 Evolvria 的叙事与世界模拟引擎。只返回合法 JSON，不要输出 JSON 以外的内容。若 payload 中包含 workspace_context，必须先遵循其中 AGENTS.md 的加载顺序和规则，再使用其他已加载文件。";
+  "你是 Evolvria 的叙事与世界模拟引擎。只返回合法 JSON，不要输出 JSON 以外的内容。若 payload 中包含 workspace_context，必须先遵循其中 AGENTS.md 的加载顺序和规则，再使用其他已加载文件。你可以调用内置 skills 来初始化世界、推进世界进度、触发玩家行为、记录事件、记录日志、生成角色和查询工作区存档格式；这些 skills 已绑定当前请求的 seed/action/context/payload（如适用），调用时传入最小必要参数，不要复制完整 payload。调用后仍必须按 output_contract 汇总为最终 JSON。";
 
 export const aiSdkJsonObjectSchema = z.record(z.string(), z.unknown());
 
@@ -71,18 +72,25 @@ export async function callAiSdkJson<T>(options: AiSdkCallOptions<T>): Promise<Ai
   const timeout = createTimeoutSignal(options.settings.timeout_seconds);
 
   try {
-    const result = await generateText({
+    const publicSkills = await loadPublicSkillDefinitions();
+    const skills = createEvolvriaBuiltInSkills(createEvolvriaSkillRuntime(options.purpose, options.payload), publicSkills);
+    const agent = new ToolLoopAgent({
       model,
-      system: SYSTEM_PROMPT,
-      prompt: JSON.stringify({
-        purpose: options.purpose,
-        payload: options.payload,
-        output_contract: outputContractFor(options.purpose),
-      }),
+      instructions: SYSTEM_PROMPT,
+      tools: skills,
       output: Output.json(),
       maxOutputTokens: options.maxOutputTokens,
       temperature: options.temperature ?? 0.7,
       maxRetries: options.settings.auto_retry ? 1 : 0,
+      stopWhen: isStepCount(6),
+    });
+    const result = await agent.generate({
+      prompt: JSON.stringify({
+        purpose: options.purpose,
+        payload: options.payload,
+        available_skills: skillManifest(publicSkills),
+        output_contract: outputContractFor(options.purpose),
+      }),
       abortSignal: timeout.signal,
     });
     const parsed = options.schema.safeParse(result.output);
@@ -136,6 +144,9 @@ function outputContractFor(purpose: AIPurpose): string {
   }
   if (purpose === "player_action") {
     return "返回 PlayerActionResult JSON：status、narrative、time_delta_minutes、events、character_updates、location_updates、relationship_updates、memory_writes、suggested_actions、warnings。";
+  }
+  if (purpose === "character_image") {
+    return "返回内部角色形象卡 JSON：appearance_description（80-180 字中文具体形象描写）、portrait_prompt（可直接用于 gpt-image-2 的中文出图提示词）、card_notes（字符串数组）、warnings（字符串数组）。即便用户提供外貌，也必须保留明确约束并丰富细节。";
   }
   return "返回与 purpose 匹配的合法 JSON 对象。";
 }

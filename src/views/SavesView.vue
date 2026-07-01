@@ -36,7 +36,9 @@ const app = useAppStore();
 const platform = usePlatformStore();
 const world = useWorldStore();
 const importText = ref("");
+const deleteDialogOpen = ref(false);
 const entryToDelete = ref<SaveEntry | null>(null);
+const deletingEntry = ref(false);
 
 onMounted(() => world.refreshSaveEntries());
 
@@ -76,14 +78,33 @@ async function openDirectory() {
   }
 }
 
+function requestDelete(entry: SaveEntry): void {
+  entryToDelete.value = entry;
+  deleteDialogOpen.value = true;
+}
+
+function updateDeleteDialogOpen(open: boolean): void {
+  deleteDialogOpen.value = open;
+  if (open || deletingEntry.value) return;
+  window.setTimeout(() => {
+    if (!deleteDialogOpen.value && !deletingEntry.value) entryToDelete.value = null;
+  }, 0);
+}
+
 async function confirmDelete() {
-  if (!entryToDelete.value) return;
+  const entry = entryToDelete.value;
+  if (!entry || deletingEntry.value) return;
+  deletingEntry.value = true;
   try {
-    await world.deleteEntry(entryToDelete.value);
+    await world.deleteEntry(entry);
     entryToDelete.value = null;
+    deleteDialogOpen.value = false;
     app.setNotice("存档已删除。");
   } catch (error) {
+    deleteDialogOpen.value = true;
     app.setError(error instanceof Error ? error.message : "删除失败。");
+  } finally {
+    deletingEntry.value = false;
   }
 }
 
@@ -159,7 +180,7 @@ async function importFromText() {
               <Badge :variant="entry.schema_valid ? 'secondary' : 'destructive'">{{ entry.schema_valid ? "schema OK" : "schema 异常" }}</Badge>
             </TableCell>
             <TableCell class="text-right">
-            <Button variant="destructive" size="sm" type="button" title="删除存档" @click="entryToDelete = entry">
+            <Button variant="destructive" size="sm" type="button" title="删除存档" @click="requestDelete(entry)">
               <Trash2 data-icon="inline-start" />
             </Button>
             </TableCell>
@@ -182,7 +203,7 @@ async function importFromText() {
         <Button type="button" @click="importFromText">导入</Button>
       </CardFooter>
     </Card>
-    <AlertDialog :open="Boolean(entryToDelete)" @update:open="(open) => { if (!open) entryToDelete = null }">
+    <AlertDialog :open="deleteDialogOpen" @update:open="updateDeleteDialogOpen">
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>删除存档</AlertDialogTitle>
@@ -192,7 +213,9 @@ async function importFromText() {
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction @click="confirmDelete">确认删除</AlertDialogAction>
+          <AlertDialogAction :disabled="deletingEntry" @click.prevent="confirmDelete">
+            {{ deletingEntry ? "删除中..." : "确认删除" }}
+          </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>

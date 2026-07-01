@@ -37,7 +37,7 @@ Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前
 - Tauri 桌面端保存到应用数据目录；浏览器开发环境 fallback 到 `localStorage`。
 - 每次覆盖 active 工作区前保留最近 5 个备份；AI 请求前保存 `ai_before_request/` checkpoint。
 - 未配置 Glosc One 时完整使用本地 mock，不消耗远端额度。
-- 地图页支持 SVG 底图、缩放、地点显示、隐藏未知、移动、手动添加地点和添加路线。
+- 地图页支持 SVG 底图、缩放、创世地区/地点/路线显示、隐藏未知和移动；地图结构创建后锁定。
 - Tauri native 已包含地图图片导入/生成命令，但当前 Vue 地图 UI 尚未接入文件选择入口。
 
 ## 常用命令

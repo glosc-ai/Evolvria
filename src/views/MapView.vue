@@ -1,26 +1,20 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
-import { Plus, Route, ZoomIn, ZoomOut } from "@lucide/vue";
+import { computed, ref } from "vue";
+import { LockKeyhole, ZoomIn, ZoomOut } from "@lucide/vue";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Switch } from "@/components/ui/switch";
-import { Textarea } from "@/components/ui/textarea";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();
 const zoom = ref(1);
 const revealUnknown = ref(false);
 const selectedId = ref("");
-const draft = reactive({ name: "新地点", type: "town", description: "玩家手动标注的新地点。", x: 0.5, y: 0.5 });
 const selectedLocation = computed(() => world.locations.find((location) => location.id === selectedId.value) ?? world.current);
 const mapLocations = computed(() => world.visibleMapLocations(revealUnknown.value));
-
-async function addLocation() {
-  await world.createLocation(draft.name, draft.type, draft.description, { x: Number(draft.x), y: Number(draft.y) });
-  draft.name = "新地点";
-}
+const selectedRegion = computed(() => world.world.map_regions?.find((region) => region.id === selectedLocation.value?.region_id));
 </script>
 
 <template>
@@ -50,8 +44,11 @@ async function addLocation() {
             </linearGradient>
           </defs>
           <rect width="960" height="640" fill="url(#terrain)" />
+          <g v-for="region in world.world.map_regions ?? []" :key="region.id" opacity="0.28">
+            <ellipse :cx="region.center.x * 960" :cy="region.center.y * 640" rx="150" ry="92" :fill="region.color" />
+          </g>
           <path d="M120 530 C220 420 330 500 430 390 C560 250 690 320 810 160" fill="none" stroke="var(--map-river)" stroke-width="8" opacity="0.42" />
-          <g v-for="route in world.world.map_routes" :key="route.id">
+          <g v-for="route in world.world.map_routes ?? []" :key="route.id">
             <line
               :x1="(world.locations.find((l) => l.id === route.from_location_id)?.position.x ?? 0.5) * 960"
               :y1="(world.locations.find((l) => l.id === route.from_location_id)?.position.y ?? 0.5) * 640"
@@ -76,46 +73,25 @@ async function addLocation() {
           <CardTitle>{{ selectedLocation?.name }}</CardTitle>
         </CardHeader>
         <CardContent>
+        <div class="mb-3 flex flex-wrap gap-2">
+          <Badge variant="secondary">{{ selectedRegion?.name ?? "未知地区" }}</Badge>
+          <Badge variant="outline">{{ selectedLocation?.type }}</Badge>
+        </div>
         <p class="text-muted-foreground text-sm leading-6">{{ selectedLocation?.description }}</p>
+        <p v-if="selectedRegion" class="mt-3 text-muted-foreground text-sm leading-6">{{ selectedRegion.description }}</p>
         <div class="mt-4 flex gap-2">
           <Button v-if="selectedLocation" type="button" @click="world.goToLocation(selectedLocation.id)">移动到此处</Button>
-          <Button v-if="selectedLocation && world.current" variant="outline" type="button" @click="world.createRoute(world.current.id, selectedLocation.id)">
-            <Route data-icon="inline-start" />
-            添加路线
-          </Button>
         </div>
         </CardContent>
       </Card>
       <Card>
         <CardHeader>
-          <CardTitle class="flex items-center gap-2"><Plus class="size-4" />添加标记</CardTitle>
+          <CardTitle class="flex items-center gap-2"><LockKeyhole class="size-4" />创世结构已锁定</CardTitle>
         </CardHeader>
         <CardContent>
-        <FieldGroup class="gap-3">
-          <Field>
-            <FieldLabel for="map-location-name">地点名称</FieldLabel>
-            <Input id="map-location-name" v-model="draft.name" placeholder="地点名称" />
-          </Field>
-          <Field>
-            <FieldLabel for="map-location-type">类型</FieldLabel>
-            <Input id="map-location-type" v-model="draft.type" placeholder="类型" />
-          </Field>
-          <Field>
-            <FieldLabel for="map-location-description">描述</FieldLabel>
-            <Textarea id="map-location-description" v-model="draft.description" class="min-h-20" placeholder="描述" />
-          </Field>
-          <FieldGroup class="grid grid-cols-2 gap-2">
-            <Field>
-              <FieldLabel for="map-location-x">X</FieldLabel>
-              <Input id="map-location-x" v-model.number="draft.x" type="number" min="0.05" max="0.95" step="0.01" />
-            </Field>
-            <Field>
-              <FieldLabel for="map-location-y">Y</FieldLabel>
-              <Input id="map-location-y" v-model.number="draft.y" type="number" min="0.05" max="0.95" step="0.01" />
-            </Field>
-          </FieldGroup>
-          <Button class="w-full" type="button" @click="addLocation">保存标记</Button>
-        </FieldGroup>
+        <p class="text-muted-foreground text-sm leading-6">
+          地区、地点和路线只在创建世界时由 Azgaar/Fantasy-Map-Generator 风格程序生成。后续探索可以改变地点状态、笔记和可见性，但不能新增或重绘地图结构。
+        </p>
         </CardContent>
       </Card>
     </aside>

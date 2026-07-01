@@ -1,12 +1,11 @@
-import { mockFactions, mockLocations } from "@/domain/fixtures";
+import { generatedMapImage, generateAzgaarWorldMap } from "@/domain/azgaar-map";
+import { mockFactions } from "@/domain/fixtures";
 import { makeId, stableHash } from "@/services/ids";
 import { clamp, nowIso, redactSensitive, splitTags } from "@/services/text";
 import type {
   AIRequestLog,
   Character,
-  Faction,
   Location,
-  MapImage,
   MapRoute,
   Memory,
   PlayerActionResult,
@@ -78,6 +77,7 @@ export function buildCharacters(seed: WorldSeed): Character[] {
     known_event_ids: [],
     player_notes: "",
     player_notes_updated_at: "",
+    appearance_description: seed.hero.appearance_description || buildDefaultAppearance(seed.hero.name || "主角", seed.hero.gender, "player", seed.hero.description, seed.hero.ability),
     companion: false,
     visibility: "met",
   };
@@ -102,6 +102,8 @@ export function buildCharacters(seed: WorldSeed): Character[] {
       known_event_ids: [],
       player_notes: "",
       player_notes_updated_at: "",
+      appearance_description:
+        character.appearance_description || buildDefaultAppearance(character.name || `关键角色 ${index + 1}`, character.gender, character.role, character.description, character.personality),
       action_tendency: character.action_tendency,
       companion: character.relationship.includes("同行"),
       visibility: character.relationship.includes("同行") ? "met" : "heard",
@@ -109,6 +111,11 @@ export function buildCharacters(seed: WorldSeed): Character[] {
   });
   ensureRelationships(characters, seed);
   return characters;
+}
+
+function buildDefaultAppearance(name: string, gender = "未指定", role = "", description = "", traits = ""): string {
+  const parts = [`${name}（${gender || "未指定"}）`, role, description, traits].filter((part) => part.trim());
+  return `${parts.join("，")}。根据人物身份与性格设计清晰可辨的半身角色形象。`;
 }
 
 export function ensureRelationships(characters: Character[], seed?: WorldSeed): void {
@@ -144,9 +151,10 @@ function relationshipProfile(label: string): { type: string; trust: number; affe
 export function createInitialPayload(seed: WorldSeed): SavePayload {
   const now = nowIso();
   const worldId = `world_${Date.now()}`;
-  const locations = mockLocations();
   const factions = mockFactions();
-  const mapRoutes = buildInitialRoutes();
+  const generatedMap = generateAzgaarWorldMap(seed, factions);
+  const locations = generatedMap.locations;
+  const mapRoutes = generatedMap.routes;
   const world: World = {
     id: worldId,
     name: seed.world_name || "未命名世界",
@@ -161,8 +169,10 @@ export function createInitialPayload(seed: WorldSeed): SavePayload {
     content_limits: splitTags(seed.limits),
     narrative_detail: seed.narrative_detail || "适中",
     npc_autonomy_frequency: seed.npc_autonomy_frequency || "中频",
-    map_image: generatedMapImage(mapRoutes),
+    map_image: generatedMapImage(mapRoutes, locations, seed),
     map_routes: mapRoutes,
+    map_regions: generatedMap.regions,
+    map_locked: true,
     created_at: now,
     schema_version: SCHEMA_VERSION,
   };
@@ -263,26 +273,6 @@ export function applyWorldExpansion(payload: SavePayload, expansion: WorldExpans
   if (suggestedActions.length > 0) next.suggested_actions = suggestedActions;
   next.updated_at = nowIso();
   return next;
-}
-
-export function generatedMapImage(routes: MapRoute[]): MapImage {
-  return {
-    id: "map_001",
-    name: "Azgaar 风格大陆地图",
-    image_path: "generated://map_001",
-    width: 960,
-    height: 640,
-    scale_label: "未设置比例尺",
-    locations: ["loc_start", "loc_forest", "loc_ruin", "loc_harbor"],
-    routes,
-    generator: {
-      source_project: "Azgaar/Fantasy-Map-Generator",
-      source_license: "MIT",
-      source_url: "https://github.com/Azgaar/Fantasy-Map-Generator",
-      mode: "procedural",
-      attribution_required: true,
-    },
-  };
 }
 
 function cleanText(value: unknown): string {
@@ -390,12 +380,28 @@ export function applyStatePatch(payload: SavePayload, patch: StatePatch): boolea
 export function validatePatch(payload: SavePayload, patch: StatePatch): boolean {
   if (!patch.target_type || !patch.target_id || !patch.path) return false;
   if (patch.target_type === "character" && patch.path === "name") return false;
+  if (isMapLocked(payload) && patch.target_type === "world" && isLockedWorldMapPath(patch.path)) return false;
+  if (isMapLocked(payload) && patch.target_type === "location" && isLockedLocationPath(patch.path)) return false;
   if (patch.target_type === "location" && ["description", "position"].includes(patch.path)) {
     const location = payload.locations.find((item) => item.id === patch.target_id);
     if (location?.known_to_player) return false;
   }
   if (patch.target_type === "world" && patch.path === "current_time") return false;
   return Boolean(patchTarget(payload, patch.target_type, patch.target_id));
+}
+
+function isLockedWorldMapPath(path: string): boolean {
+  return ["map_image", "map_routes", "map_regions", "map_locked"].some((field) => path === field || path.startsWith(`${field}.`));
+}
+
+function isLockedLocationPath(path: string): boolean {
+  return ["name", "type", "description", "map_id", "region_id", "position", "connected_location_ids", "controlling_faction_id", "biome", "height"].some(
+    (field) => path === field || path.startsWith(`${field}.`),
+  );
+}
+
+function isMapLocked(payload: SavePayload): boolean {
+  return (payload.world as Partial<World>).map_locked !== false;
 }
 
 function patchTarget(payload: SavePayload, type: StatePatch["target_type"], id: string): Record<string, unknown> | null {
@@ -488,6 +494,26 @@ export function updateCharacterNote(payload: SavePayload, characterId: string, n
   return next;
 }
 
+export function updateCharacterProfile(
+  payload: SavePayload,
+  characterId: string,
+  updates: { description?: string; appearance_description?: string; portrait_prompt?: string; portrait_image_url?: string },
+): SavePayload {
+  const next = clonePayload(payload);
+  const character = next.characters.find((item) => item.id === characterId);
+  if (character) {
+    if (updates.description !== undefined) character.description = updates.description.trim();
+    if (updates.appearance_description !== undefined) character.appearance_description = updates.appearance_description.trim();
+    if (updates.portrait_prompt !== undefined) character.portrait_prompt = updates.portrait_prompt.trim();
+    if (updates.portrait_image_url !== undefined) {
+      character.portrait_image_url = updates.portrait_image_url;
+      character.portrait_updated_at = nowIso();
+    }
+  }
+  next.updated_at = nowIso();
+  return next;
+}
+
 export function updateLocationNote(payload: SavePayload, locationId: string, note: string): SavePayload {
   const next = clonePayload(payload);
   const location = next.locations.find((item) => item.id === locationId);
@@ -500,6 +526,7 @@ export function updateLocationNote(payload: SavePayload, locationId: string, not
 }
 
 export function addCustomLocation(payload: SavePayload, name: string, type: string, description: string, position: { x: number; y: number }): SavePayload {
+  if (isMapLocked(payload)) return payload;
   const next = clonePayload(payload);
   next.location_counter += 1;
   const id = makeId("loc", next.location_counter);
@@ -527,6 +554,7 @@ export function addCustomLocation(payload: SavePayload, name: string, type: stri
 
 export function addRoute(payload: SavePayload, from: string, to: string): SavePayload {
   if (from === to) return payload;
+  if (isMapLocked(payload)) return payload;
   const next = clonePayload(payload);
   const exists = next.world && (next.world as World).map_routes.some((route) => routePairKey(route.from_location_id, route.to_location_id) === routePairKey(from, to));
   if (exists) return payload;

@@ -42,7 +42,7 @@ const notes = ref<Record<string, string>>({});
     <Empty v-if="world.locations.length === 0" class="mt-6">
       <EmptyHeader>
         <EmptyTitle>还没有地点</EmptyTitle>
-        <EmptyDescription>世界扩写或手动标记后会出现在这里。</EmptyDescription>
+        <EmptyDescription>创建世界时生成的地点会出现在这里。</EmptyDescription>
       </EmptyHeader>
     </Empty>
   </section>

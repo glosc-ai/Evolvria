@@ -65,7 +65,7 @@ async function continueGame() {
         <Empty v-else>
           <EmptyHeader>
             <EmptyTitle>还没有世界</EmptyTitle>
-            <EmptyDescription>先创建一个世界，或从存档页导入已有存档。</EmptyDescription>
+            <EmptyDescription>还没有世界。先创建一个世界，或从存档页导入已有存档。</EmptyDescription>
           </EmptyHeader>
         </Empty>
         </CardContent>

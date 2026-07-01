@@ -147,6 +147,11 @@ onMounted(async () => {
       <header class="safe-top sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur">
         <SidebarTrigger />
         <div class="font-serif text-sm font-medium">Evolvria</div>
+        <nav v-if="world.hasWorld" class="ml-auto flex items-center gap-3 text-sm sm:hidden">
+          <RouterLink to="/map">地图</RouterLink>
+          <RouterLink to="/characters">人物</RouterLink>
+          <RouterLink to="/timeline">时间线</RouterLink>
+        </nav>
       </header>
 
       <main class="mobile-bottom-offset min-h-[calc(100dvh-3.5rem)] px-4 py-5 sm:px-6 lg:px-8">

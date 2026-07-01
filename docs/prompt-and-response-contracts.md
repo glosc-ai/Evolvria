@@ -12,6 +12,7 @@
 
 - `world_expand`
 - `player_action`
+- `character_image`
 - `npc_simulation`
 - `memory_extract`
 - `summary_update`
@@ -37,6 +38,17 @@ TypeScript 端 `callAiSdkJson` 构造：
 ```
 
 AI SDK 使用 `Output.json()`，由 provider 发送 JSON 响应格式，并在客户端用 Zod 校验关键结构。`baseUrl` 会标准化为 OpenAI-compatible base URL，例如 `https://one.gloscai.com` 会变成 `https://one.gloscai.com/v1`。
+
+`callAiSdkJson` 使用 AI SDK `ToolLoopAgent`，并向模型暴露程序内置 skills。可执行 tool 仍由 TypeScript 提供，模型可读的 skill 指令从 `public/skills/*/SKILL.md` 加载；浏览器端通过 `public/skills/manifest.json` 枚举目录。skills 会在每次请求创建时绑定当前运行时上下文：`world_expand` 绑定 seed，`player_action` 绑定 action/context，若调用方传入完整 `SavePayload` 也会绑定 payload。模型调用 skill 时应传入最小必要参数，不应复制整份 payload。最终响应仍必须符合 `output_contract`，客户端只按最终 JSON 写入游戏状态。
+
+当前 public skill 包名称使用小写字母、数字和连字符，并与目录名一致；`tool_name` 是代码里的 AI SDK tool key：
+
+- `initialize-world` / `initializeWorld`：根据 `WorldSeed` 初始化完整 `SavePayload`。
+- `advance-world-progress` / `advanceWorldProgress`：推进世界时间并写入世界进度事件。
+- `trigger-player-action` / `triggerPlayerAction`：根据玩家行动和上下文生成 `PlayerActionResult`，可用于本地确定性模拟。
+- `record-event` / `recordEvent`：写入时间线事件。
+- `log-event` / `logEvent`：写入 AI/skill 调用日志，只保存摘要和脱敏 raw。
+- `generate-character` / `generateCharacter`：生成符合 schema 的角色对象。
 
 Tauri `call_glosc` fallback 仍直接构造 `/v1/chat/completions` 请求，并使用 `response_format: {"type":"json_object"}`。
 

@@ -96,7 +96,10 @@ export async function listSaveEntries(): Promise<SaveEntry[]> {
 
 export async function deleteSaveEntry(entry: SaveEntry): Promise<void> {
   const native = await safeInvoke<boolean>("delete_save_entry", { path: entry.absolute_path ?? entry.path });
-  if (native !== null) return;
+  if (native !== null) {
+    if (!native) throw new Error("存档不存在，可能已被移动或删除。");
+    return;
+  }
   if (entry.kind === "active") {
     localStorage.removeItem(ACTIVE_KEY);
     localStorage.removeItem(WORKSPACE_KEY);

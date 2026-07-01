@@ -16,12 +16,13 @@ import {
   retrieveMemories,
   timelineFiltered,
   updateCharacterNote,
+  updateCharacterProfile,
   updateLocationNote,
   validatePayloadSchema,
   validateWorldConsistency,
   visibleLocations,
 } from "@/domain/world";
-import { estimateUsage, generateWorld, resolvePlayerAction } from "@/services/ai";
+import { estimateUsage, generateCharacterImage, generateWorld, resolvePlayerAction } from "@/services/ai";
 import { deleteSaveEntry, exportWorld, listSaveEntries, loadActiveWorld, saveAiCheckpoint, saveWorld } from "@/services/save";
 import { nowIso } from "@/services/text";
 import { buildWorkspaceAiContext } from "@/services/world-workspace";
@@ -33,6 +34,7 @@ export const useWorldStore = defineStore("world", () => {
   const payload = ref<SavePayload>(emptyPayload());
   const busy = ref(false);
   const pendingAction = ref("");
+  const streamingNarrative = ref("");
   const lastNarrative = ref("");
   const saveEntries = ref<Awaited<ReturnType<typeof listSaveEntries>>>([]);
 
@@ -99,9 +101,13 @@ export const useWorldStore = defineStore("world", () => {
     const settingsStore = useSettingsStore();
     busy.value = true;
     pendingAction.value = action;
+    streamingNarrative.value = "";
     try {
       await saveAiCheckpoint(payload.value);
       const result = await resolvePlayerAction(action, buildAiContext(action), settingsStore.settings);
+      if (result.narrative) {
+        await streamNarrative(result.narrative);
+      }
       let next = applyPlayerAction(payload.value, result, action);
       next = recordAiLog(next, "player_action", result.status === "ok" ? "ok" : "error", result.narrative || result.error || action, result.usage);
       payload.value = next;
@@ -110,6 +116,16 @@ export const useWorldStore = defineStore("world", () => {
     } finally {
       busy.value = false;
       pendingAction.value = "";
+      streamingNarrative.value = "";
+    }
+  }
+
+  async function streamNarrative(text: string): Promise<void> {
+    streamingNarrative.value = "";
+    const chunkSize = text.length > 900 ? 6 : text.length > 420 ? 4 : 2;
+    for (let index = 0; index < text.length; index += chunkSize) {
+      streamingNarrative.value = text.slice(0, index + chunkSize);
+      await new Promise((resolve) => window.setTimeout(resolve, 18));
     }
   }
 
@@ -154,6 +170,57 @@ export const useWorldStore = defineStore("world", () => {
   async function editCharacterNote(characterId: string, note: string): Promise<void> {
     payload.value = updateCharacterNote(payload.value, characterId, note);
     await persist();
+  }
+
+  async function editCharacterProfile(characterId: string, description: string, appearanceDescription: string): Promise<void> {
+    payload.value = updateCharacterProfile(payload.value, characterId, {
+      description,
+      appearance_description: appearanceDescription,
+    });
+    await persist();
+  }
+
+  async function regenerateCharacterImage(characterId: string, appearanceDescription?: string): Promise<void> {
+    if (!hasWorld.value) return;
+    const settingsStore = useSettingsStore();
+    const character = payload.value.characters.find((item) => item.id === characterId);
+    if (!character) return;
+    busy.value = true;
+    try {
+      const sourceAppearance = appearanceDescription?.trim() || character.appearance_description || character.description;
+      const result = await generateCharacterImage(
+        {
+          name: character.name,
+          gender: character.gender,
+          role: character.role,
+          description: character.description,
+          appearance_description: sourceAppearance,
+          personality: character.personality,
+          traits: character.traits,
+          world_name: world.value.name,
+          genre: world.value.genre,
+          tone: world.value.tone,
+        },
+        settingsStore.settings,
+      );
+      payload.value = updateCharacterProfile(payload.value, characterId, {
+        appearance_description: result.appearance_description,
+        portrait_prompt: result.prompt,
+        portrait_image_url: result.image_url,
+      });
+      payload.value = recordAiLog(
+        payload.value,
+        "character_image",
+        result.status,
+        result.status === "ok"
+          ? `${character.name} 形象已生成，角色卡已保存扩写后的形象描写。`
+          : `角色形象生成失败，已使用本地占位图：${[result.error, ...result.warnings].filter(Boolean).join("；") || "未知错误"}`,
+        result.usage,
+      );
+      await persist();
+    } finally {
+      busy.value = false;
+    }
   }
 
   async function editLocationNote(locationId: string, note: string): Promise<void> {
@@ -223,6 +290,7 @@ export const useWorldStore = defineStore("world", () => {
     payload,
     busy,
     pendingAction,
+    streamingNarrative,
     lastNarrative,
     saveEntries,
     hasWorld,
@@ -249,6 +317,8 @@ export const useWorldStore = defineStore("world", () => {
     getUsageEstimate,
     goToLocation,
     editCharacterNote,
+    editCharacterProfile,
+    regenerateCharacterImage,
     editLocationNote,
     createLocation,
     createRoute,

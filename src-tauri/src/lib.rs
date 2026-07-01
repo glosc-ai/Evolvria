@@ -169,7 +169,7 @@ fn list_save_entries(app: AppHandle) -> Result<Vec<SaveEntry>, String> {
 fn delete_save_entry(app: AppHandle, path: String) -> Result<bool, String> {
     let target = deletable_save_path(&app, &path)?;
     if !target.exists() {
-        return Ok(false);
+        return Err("存档不存在，可能已被移动或删除。".to_string());
     }
     if target.is_dir() {
         fs::remove_dir_all(target).map_err(to_string)?;
@@ -567,16 +567,20 @@ fn legacy_ai_checkpoint_path(app: &AppHandle) -> Result<PathBuf, String> {
 }
 
 fn deletable_save_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
-    let target = PathBuf::from(path);
-    if target == active_workspace_path(app)?
-        || target == legacy_active_save_path(app)?
-        || target == ai_checkpoint_workspace_path(app)?
-        || target == legacy_ai_checkpoint_path(app)?
+    let target = resolve_save_entry_path(app, path)?;
+    let active_workspace = active_workspace_path(app)?;
+    let legacy_active = legacy_active_save_path(app)?;
+    let ai_checkpoint = ai_checkpoint_workspace_path(app)?;
+    let legacy_ai_checkpoint = legacy_ai_checkpoint_path(app)?;
+    if same_path(&target, &active_workspace)
+        || same_path(&target, &legacy_active)
+        || same_path(&target, &ai_checkpoint)
+        || same_path(&target, &legacy_ai_checkpoint)
     {
         return Ok(target);
     }
     let backup_dir = backup_dir(app)?;
-    let is_backup = target.parent() == Some(backup_dir.as_path())
+    let is_backup = same_path(target.parent().unwrap_or_else(|| Path::new("")), &backup_dir)
         && target
             .file_name()
             .and_then(|name| name.to_str())
@@ -585,6 +589,51 @@ fn deletable_save_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
         return Ok(target);
     }
     Err("只能删除 Evolvria 存档目录中的存档。".to_string())
+}
+
+fn resolve_save_entry_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
+    let target = PathBuf::from(path);
+    if target.is_absolute() {
+        return Ok(target);
+    }
+
+    let normalized = path.replace('\\', "/");
+    if let Some(file_name) = normalized.strip_prefix("backups/") {
+        if file_name.contains('/') || file_name.is_empty() {
+            return Err("只能删除 Evolvria 存档目录中的存档。".to_string());
+        }
+        return Ok(backup_dir(app)?.join(file_name));
+    }
+    if let Some(file_name) = normalized.strip_prefix("saves/") {
+        if file_name.contains('/') || file_name.is_empty() {
+            return Err("只能删除 Evolvria 存档目录中的存档。".to_string());
+        }
+        return Ok(save_dir(app)?.join(file_name));
+    }
+    if normalized == "active_world" {
+        return active_workspace_path(app);
+    }
+    if normalized == "active_world.json" {
+        return legacy_active_save_path(app);
+    }
+    if normalized == "ai_before_request" {
+        return ai_checkpoint_workspace_path(app);
+    }
+    if normalized == "ai_before_request.json" {
+        return legacy_ai_checkpoint_path(app);
+    }
+
+    Ok(target)
+}
+
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (left.canonicalize(), right.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {

@@ -11,7 +11,7 @@ const props = defineProps<{
 
 const rootClass = computed(() =>
   cn(
-    "group flex w-full max-w-[95%] flex-col gap-2",
+    "group flex min-w-0 max-w-[95%] flex-col gap-2",
     props.from === "user" ? "ml-auto items-end justify-end" : "items-start",
     props.class,
   ),

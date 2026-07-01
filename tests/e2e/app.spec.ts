@@ -97,6 +97,38 @@ test("AI calls proceed without confirmation dialogs", async ({ page }) => {
   await expect(page.locator('[role="dialog"]')).toBeHidden();
 });
 
+test("save deletion confirmation removes the selected entry", async ({ page }) => {
+  await page.goto("/");
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem(
+      "evolvria.active_world",
+      JSON.stringify({
+        schema_version: 1,
+        world: { id: "world_delete_test", name: "测试删除世界" },
+        characters: [],
+        locations: [],
+        factions: [],
+        timeline: [],
+        memories: [],
+        ai_logs: [],
+        threads: [],
+        suggested_actions: [],
+        updated_at: "2026-07-01T00:00:00.000Z",
+      }),
+    );
+  });
+  await page.goto("/#/saves");
+
+  await expect(page.getByText("测试删除世界")).toBeVisible();
+  await page.getByRole("button", { name: "删除存档" }).click();
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await page.getByRole("button", { name: "确认删除" }).click();
+
+  await expect(page.getByText("测试删除世界")).toBeHidden();
+  expect(await page.evaluate(() => localStorage.getItem("evolvria.active_world"))).toBeNull();
+});
+
 test("onboarding only enables remote start after key and risk acknowledgement", async ({ page }) => {
   await page.goto("/#/onboarding");
   await expect(page.getByRole("heading", { name: "初始配置" })).toBeVisible();

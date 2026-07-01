@@ -6,13 +6,14 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::DialogExt;
 use zip::write::SimpleFileOptions;
 
 const SCHEMA_VERSION: i64 = 1;
 const MAX_BACKUPS: usize = 5;
 const WORKSPACE_FORMAT: &str = "evolvria_workspace_v1";
+const MAIN_WINDOW_LABEL: &str = "main";
 
 #[derive(Debug, Serialize, Deserialize)]
 struct PlatformCapabilities {
@@ -1203,6 +1204,45 @@ fn to_string<E: std::fmt::Display>(error: E) -> String {
     error.to_string()
 }
 
+fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
+    if let Some(config) = app
+        .config()
+        .app
+        .windows
+        .iter()
+        .find(|config| config.label == MAIN_WINDOW_LABEL)
+        .or_else(|| app.config().app.windows.first())
+    {
+        WebviewWindowBuilder::from_config(app, config)?.build()
+    } else {
+        WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::default())
+            .title("Evolvria")
+            .inner_size(1440.0, 900.0)
+            .min_inner_size(390.0, 640.0)
+            .resizable(true)
+            .build()
+    }
+}
+
+fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
+    #[cfg(target_os = "macos")]
+    {
+        app.set_activation_policy(tauri::ActivationPolicy::Regular)?;
+        let _ = app.show();
+    }
+
+    let window = if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
+        window
+    } else {
+        build_main_window(app)?
+    };
+
+    let _ = window.unminimize();
+    window.show()?;
+    let _ = window.set_focus();
+    Ok(())
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -1227,8 +1267,29 @@ pub fn run() {
             reveal_or_share_path,
             open_save_directory
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Evolvria");
+        .setup(|app| {
+            show_main_window(app.handle())?;
+            Ok(())
+        })
+        .build(tauri::generate_context!())
+        .expect("failed to build Evolvria")
+        .run(|app, event| match event {
+            tauri::RunEvent::Ready => {
+                if let Err(error) = show_main_window(app) {
+                    eprintln!("failed to show Evolvria main window: {error}");
+                }
+            }
+            #[cfg(target_os = "macos")]
+            tauri::RunEvent::Reopen {
+                has_visible_windows: false,
+                ..
+            } => {
+                if let Err(error) = show_main_window(app) {
+                    eprintln!("failed to reopen Evolvria main window: {error}");
+                }
+            }
+            _ => {}
+        });
 }
 
 #[cfg(test)]

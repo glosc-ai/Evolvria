@@ -84,6 +84,22 @@ describe("world domain", () => {
     expect(result.relationship_updates[0]?.source_id).toBe("char_001");
   });
 
+  it("keeps local fallback clues specific to the current story beat", () => {
+    const payload = createInitialPayload(defaultSeed());
+    const result = mockPlayerAction("询问璃安旧档案", {
+      scene_state: { current_location: payload.locations.find((location) => location.id === "loc_ruin") },
+      characters: payload.characters.map((character) => ({
+        id: character.id,
+        name: character.name,
+        companion: character.companion,
+      })),
+    });
+
+    expect(result.narrative).toContain("白塔坍塌前的巡检页");
+    expect(result.narrative).toContain("银潮港转运簿");
+    expect(result.events[0]?.location_id).toBe("loc_ruin");
+  });
+
   it("rejects patches that overwrite confirmed player facts", () => {
     const payload = createInitialPayload(defaultSeed());
     expect(
@@ -113,6 +129,19 @@ describe("world domain", () => {
     expect(next.memories.length).toBeGreaterThan(payload.memories.length);
     expect(next.threads.some((thread) => thread.progress.length > 0)).toBe(true);
     expect(validateWorldConsistency(next)).toEqual([]);
+  });
+
+  it("completes the main story when the final goal action resolves the core", () => {
+    let payload = createInitialPayload(defaultSeed());
+    payload = applyPlayerAction(payload, mockPlayerAction("调查公告板徽记"), "调查公告板徽记");
+    payload = applyPlayerAction(payload, mockPlayerAction("调查白塔残墙徽记"), "调查白塔残墙徽记");
+    payload = applyPlayerAction(payload, mockPlayerAction("在银潮港找到镜潮核心并打破轮回"), "在银潮港找到镜潮核心并打破轮回");
+
+    expect(payload.world.ending?.title).toBe("镜潮核心结局");
+    expect(payload.timeline.at(-1)?.type).toBe("story_ending");
+    expect(payload.threads.every((thread) => thread.status === "resolved")).toBe(true);
+    expect(payload.suggested_actions).toContain("回顾结局");
+    expect(validateWorldConsistency(payload)).toEqual([]);
   });
 
   it("accepts Vue reactive payloads from runtime stores", () => {

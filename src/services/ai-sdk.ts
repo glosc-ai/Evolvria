@@ -45,6 +45,7 @@ export interface AiSdkCallOptions<T> {
   schema: z.ZodType<T>;
   maxOutputTokens: number;
   temperature?: number;
+  timeoutSeconds?: number;
 }
 
 export interface AiSdkCallResult<T> {
@@ -71,7 +72,7 @@ export async function callAiSdkJson<T>(options: AiSdkCallOptions<T>): Promise<Ai
     baseURL: normalizeOpenAiBaseUrl(options.settings.glosc_base_url),
     name: options.settings.glosc_provider || "Glosc One",
   }).chat(options.settings.model);
-  const timeout = createTimeoutSignal(options.settings.timeout_seconds);
+  const timeout = createTimeoutSignal(options.timeoutSeconds ?? options.settings.timeout_seconds);
 
   try {
     const publicSkills = await withHardTimeout(loadPublicSkillDefinitions(), timeout);

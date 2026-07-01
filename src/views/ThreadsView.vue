@@ -1,17 +1,39 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
+import { Progress } from "@/components/ui/progress";
 import { cn } from "@/lib/utils";
 import { useWorldStore } from "@/stores/world";
 
 const world = useWorldStore();
+const mainThread = computed(() => world.threads.find((thread) => thread.kind === "main") ?? world.threads[0]);
+const goalProgress = computed(() => Math.min((mainThread.value?.progress.length ?? 0) * 34, 100));
 </script>
 
 <template>
   <section v-if="world.hasWorld">
-    <h1 class="font-serif text-2xl font-semibold">线索与目标</h1>
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div>
+        <h1 class="font-serif text-2xl font-semibold">线索与目标</h1>
+        <p v-if="mainThread" class="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+          首要目标：{{ mainThread.title }}。{{ mainThread.description }}
+        </p>
+      </div>
+      <Badge v-if="mainThread" :variant="mainThread.progress.length > 0 ? 'default' : 'secondary'">
+        {{ mainThread.progress.length > 0 ? `已推进 ${mainThread.progress.length} 步` : "尚未推进" }}
+      </Badge>
+    </div>
+    <div v-if="mainThread" class="mt-4 rounded-md border bg-card/60 p-4">
+      <div class="flex items-center justify-between gap-3 text-sm">
+        <span class="font-medium">首要目标进度</span>
+        <span class="text-muted-foreground">{{ mainThread.status === "resolved" ? "已解决" : `${Math.round(goalProgress)}%` }}</span>
+      </div>
+      <Progress :model-value="mainThread.status === 'resolved' ? 100 : goalProgress" class="mt-3" />
+      <p v-if="mainThread.progress[0]" class="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">{{ mainThread.progress.at(-1)?.text }}</p>
+    </div>
     <div class="mt-5 grid gap-4 lg:grid-cols-2">
       <Card v-for="thread in world.threads" :key="thread.id" :class="cn(thread.status === 'resolved' && 'opacity-60')">
         <CardHeader>

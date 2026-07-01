@@ -102,6 +102,10 @@ const PURPOSE_LABELS: Record<string, string> = {
   character_image: "角色形象",
 };
 
+const DEFAULT_REMOTE_TIMEOUT_SECONDS = 45;
+const MIN_REMOTE_TIMEOUT_SECONDS = 5;
+const PLAYER_ACTION_REMOTE_TIMEOUT_SECONDS = 20;
+
 function localWorldExpansion(seed: WorldSeed, reason = ""): WorldExpansionResult {
   const warning = reason ? `${cleanRemoteReason(reason)}，已降级为本地模拟扩写。` : "未配置远端 AI，已使用本地模拟扩写。";
   return {
@@ -476,16 +480,22 @@ async function callGlosc(
   maxOutputTokens: number,
   options: { nativeFallback?: boolean } = {},
 ): Promise<GloscCallResult | null> {
+  const timeoutSeconds = remoteTimeoutSecondsForPurpose(purpose, settings.timeout_seconds);
   let sdkResult: GloscCallResult;
   try {
     sdkResult = sanitizeGloscResult(
-      await callAiSdkJson({
-        settings,
-        purpose,
-        payload,
-        schema: purpose === "player_action" ? playerActionAiSchema : aiSdkJsonObjectSchema,
-        maxOutputTokens,
-      }),
+      await withRemoteTimeout(
+        callAiSdkJson({
+          settings,
+          purpose,
+          payload,
+          schema: purpose === "player_action" ? playerActionAiSchema : aiSdkJsonObjectSchema,
+          maxOutputTokens,
+          timeoutSeconds,
+        }),
+        timeoutSeconds,
+        "AI SDK 调用",
+      ),
     );
   } catch (error) {
     sdkResult = { status: "error", error: remoteErrorMessage(error) };
@@ -502,10 +512,10 @@ async function callGlosc(
           model: settings.model,
           purpose,
           payload,
-          timeoutSeconds: settings.timeout_seconds,
+          timeoutSeconds,
         },
       }),
-      settings.timeout_seconds,
+      timeoutSeconds,
       "原生 Glosc 调用",
     );
     return sanitizeGloscResult(nativeResult) ?? sdkResult;
@@ -517,6 +527,15 @@ async function callGlosc(
       toolCalls: sdkResult.toolCalls,
     };
   }
+}
+
+export function remoteTimeoutSecondsForPurpose(purpose: AIPurpose, configuredTimeoutSeconds: number): number {
+  const normalizedTimeoutSeconds = normalizeRemoteTimeoutSeconds(configuredTimeoutSeconds);
+  return purpose === "player_action" ? Math.min(normalizedTimeoutSeconds, PLAYER_ACTION_REMOTE_TIMEOUT_SECONDS) : normalizedTimeoutSeconds;
+}
+
+function normalizeRemoteTimeoutSeconds(timeoutSeconds: number): number {
+  return Math.max(MIN_REMOTE_TIMEOUT_SECONDS, Number.isFinite(timeoutSeconds) ? Math.floor(timeoutSeconds) : DEFAULT_REMOTE_TIMEOUT_SECONDS);
 }
 
 function isAiTimeoutError(error: string | undefined): boolean {
@@ -533,7 +552,7 @@ function sanitizeGloscResult<T extends GloscCallResult | null>(result: T): T {
 }
 
 function withRemoteTimeout<T>(promise: Promise<T>, timeoutSeconds: number, label: string): Promise<T> {
-  const normalizedTimeoutSeconds = Math.max(5, Number.isFinite(timeoutSeconds) ? Math.floor(timeoutSeconds) : 45);
+  const normalizedTimeoutSeconds = normalizeRemoteTimeoutSeconds(timeoutSeconds);
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
       reject(new Error(`${label}超过设置的 ${normalizedTimeoutSeconds} 秒，已停止等待。`));

@@ -151,6 +151,16 @@ export interface Thread {
   progress: Array<{ event_id: string; text: string; created_at: string }>;
 }
 
+export interface StoryEnding {
+  id: string;
+  title: string;
+  summary: string;
+  achieved_goal: string;
+  world_time: WorldTime;
+  event_id: string;
+  created_at: string;
+}
+
 export interface MapRoute {
   id: string;
   from_location_id: string;
@@ -195,6 +205,7 @@ export interface World {
   map_routes: MapRoute[];
   map_regions?: MapRegion[];
   map_locked: boolean;
+  ending?: StoryEnding;
   created_at: string;
   schema_version: number;
 }

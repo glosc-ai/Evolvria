@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Bot, Clock, Copy, History, Info, MapPin, MessageSquare, Users } from "@lucide/vue";
+import { Bot, Clock, Copy, History, Info, MapPin, MessageSquare, Trophy, Users } from "@lucide/vue";
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
 import { Conversation, Message, MessageActions, PromptInput, Suggestion, Suggestions } from "@/components/ai-elements";
@@ -136,6 +136,15 @@ function timeLabel(event: TimelineEvent): string {
 <template>
   <section v-if="world.hasWorld" class="min-h-0 min-w-0">
     <div class="flex min-h-0 min-w-0 flex-col gap-4">
+      <Card v-if="world.world.ending" class="border-primary/40 bg-primary/5">
+        <CardHeader>
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle class="flex items-center gap-2"><Trophy />{{ world.world.ending.title }}</CardTitle>
+            <Badge>结局已达成</Badge>
+          </div>
+          <CardDescription>{{ world.world.ending.summary }}</CardDescription>
+        </CardHeader>
+      </Card>
       <Card class="h-[min(74vh,760px)] min-h-[560px] min-w-0 gap-0 overflow-hidden py-0">
         <CardHeader class="border-b py-4">
           <div class="flex flex-wrap items-center justify-between gap-3">

@@ -355,9 +355,102 @@ export function applyPlayerAction(payload: SavePayload, result: PlayerActionResu
     });
   }
   progressOpenThreads(next.threads, eventId, result.narrative);
-  next.suggested_actions = result.suggested_actions;
+  const ending = maybeCompleteStory(next, eventId, action, result.narrative);
+  next.suggested_actions = ending ? ["回顾结局", "导出当前世界"] : storyAwareSuggestedActions(next, result.suggested_actions);
   next.updated_at = nowIso();
   return next;
+}
+
+function maybeCompleteStory(payload: SavePayload, causeEventId: string, action: string, narrative: string): boolean {
+  const world = payload.world as World;
+  if (world.ending) return false;
+  const mainThread = payload.threads.find((thread) => thread.kind === "main") ?? payload.threads[0];
+  if (!mainThread || mainThread.progress.length < 3 || !isEndingAction(`${action}\n${narrative}`)) return false;
+
+  const hero = payload.characters.find((character) => character.id === "char_hero");
+  const achievedGoal = hero?.goals.join("、") || mainThread.description;
+  const endingTime = { ...(world.current_time ?? { day: 1, hour: 8 }) };
+  const summary = `${hero?.name ?? "主角"}循着公告板、白塔旧档案与银潮港转运簿的线索，抵达镜潮核心前，证明城市轮回并非命定。核心被重新校准，反复重启的街区第一次迎来连续的清晨。`;
+
+  payload.event_counter += 1;
+  const endingEventId = makeId("evt", payload.event_counter);
+  payload.timeline.push({
+    id: endingEventId,
+    type: "story_ending",
+    title: "镜潮核心结局",
+    description: `结局：${summary}`,
+    world_time: endingTime,
+    location_id: currentLocation(payload)?.id ?? "loc_harbor",
+    participant_ids: payload.characters.filter((character) => character.visibility !== "hidden").map((character) => character.id),
+    cause_event_ids: [causeEventId],
+    effects: ["主线目标完成。", "城市轮回被打破。"],
+    importance: 1,
+    visibility: "known_to_player",
+    outcome: "resolved",
+    outcome_reason: "玩家完成了主线调查并在最终行动中处理镜潮核心。",
+    consequence: "故事进入结局回顾。",
+  });
+
+  const createdAt = nowIso();
+  world.ending = {
+    id: "ending_main",
+    title: "镜潮核心结局",
+    summary,
+    achieved_goal: achievedGoal,
+    world_time: endingTime,
+    event_id: endingEventId,
+    created_at: createdAt,
+  };
+
+  for (const thread of payload.threads) {
+    if (thread.status === "open") {
+      thread.status = "resolved";
+      thread.progress.push({
+        event_id: endingEventId,
+        text: `结局达成：${summary.slice(0, 96)}`,
+        created_at: createdAt,
+      });
+    }
+  }
+
+  payload.memory_counter += 1;
+  payload.memories.push({
+    id: makeId("mem", payload.memory_counter),
+    scope: "world",
+    owner_id: world.id,
+    text: summary,
+    facts: ["镜潮核心被处理", "城市轮回被打破", "主线目标完成"],
+    event_id: endingEventId,
+    importance: 1,
+    confidence: 1,
+    tags: ["ending", "main"],
+    created_world_time: endingTime,
+  });
+  return true;
+}
+
+function isEndingAction(text: string): boolean {
+  return ["镜潮核心", "打破轮回", "证明城市轮回", "最终", "结局", "通关", "完成目标"].some((keyword) => text.includes(keyword));
+}
+
+function storyAwareSuggestedActions(payload: SavePayload, suggestions: string[]): string[] {
+  const mainThread = payload.threads.find((thread) => thread.kind === "main") ?? payload.threads[0];
+  const progress = mainThread?.progress.length ?? 0;
+  if (progress >= 2) {
+    return ["前往银潮港", "在银潮港找到镜潮核心并打破轮回", "让同行者一起核对最终档案"];
+  }
+  if (progress >= 1) {
+    return mergeSuggestedActions(suggestions, ["前往白塔遗迹", "调查白塔残墙徽记", "追查银潮港转运簿"]);
+  }
+  return suggestions;
+}
+
+function mergeSuggestedActions(primary: string[], fallback: string[]): string[] {
+  const merged: string[] = [];
+  for (const item of [...primary, ...fallback]) {
+    if (item.trim() && !merged.includes(item)) merged.push(item);
+  }
+  return merged.slice(0, 4);
 }
 
 function saveAiCheckpointInvariant(_payload: SavePayload): void {

@@ -129,8 +129,9 @@ export function mockFactions(): Faction[] {
 }
 
 export function mockPlayerAction(action: string, context?: unknown): PlayerActionResult {
-  const clue = action.includes("徽记") ? "徽记的笔画与白塔遗迹残墙上的符号吻合。" : "行动让周围角色重新评估了你的判断。";
   const companion = readMockCompanion(context);
+  const currentLocationId = readMockCurrentLocationId(context);
+  const clue = mockActionClue(action, companion.name);
   return {
     status: "ok",
     narrative: `你决定${action}。线索被重新串联起来：${clue} ${companion.name}提醒你，下一步最好确认消息来源，而不是急着公开结论。`,
@@ -141,7 +142,7 @@ export function mockPlayerAction(action: string, context?: unknown): PlayerActio
         title: "追查线索",
         description: `玩家行动：${action}。${clue}`,
         participant_ids: ["char_hero", companion.id],
-        location_id: "loc_start",
+        location_id: currentLocationId || "loc_start",
         importance: 0.72,
         visibility: "known_to_player",
         outcome: "success",
@@ -186,6 +187,28 @@ export function mockPlayerAction(action: string, context?: unknown): PlayerActio
   };
 }
 
+function mockActionClue(action: string, companionName: string): string {
+  if (action.includes("镜潮核心") || action.includes("打破轮回")) {
+    return `${companionName}把旧档案、白塔残墙与银潮港转运簿的编号合在一起，确认镜潮核心就在港口地下潮汐机房，轮回可以被重新校准。`;
+  }
+  if (action.includes("银潮港") || action.includes("转运簿")) {
+    return "银潮港转运簿把徽记编号指向地下潮汐机房，那里记录着城市轮回第一次启动的时间。";
+  }
+  if (action.includes("旧档案")) {
+    return `${companionName}指出旧档案把同一枚徽记记在白塔坍塌前的巡检页边，编号还指向一份银潮港转运簿。`;
+  }
+  if (action.includes("等待") || action.includes("张贴者")) {
+    return "你守到换班前，一名披灰斗篷的人补贴了相同徽记，纸角压着白塔旧档案的借阅签。";
+  }
+  if (action.includes("白塔") || action.includes("遗迹")) {
+    return "白塔残墙上的徽记与公告板拓印一致，石缝里还留着旧档案封蜡的碎痕。";
+  }
+  if (action.includes("徽记")) {
+    return "徽记的笔画与白塔遗迹残墙上的符号吻合，末尾还缺着一段旧档案编号。";
+  }
+  return "行动让公告板、白塔遗迹和旧档案之间的关系更清晰了一步。";
+}
+
 function readMockCompanion(context: unknown): { id: string; name: string } {
   if (context && typeof context === "object") {
     const characters = (context as { characters?: unknown }).characters;
@@ -197,6 +220,16 @@ function readMockCompanion(context: unknown): { id: string; name: string } {
     }
   }
   return { id: "char_001", name: "璃安" };
+}
+
+function readMockCurrentLocationId(context: unknown): string {
+  if (!context || typeof context !== "object") return "";
+  const sceneState = (context as { scene_state?: unknown }).scene_state;
+  if (!sceneState || typeof sceneState !== "object") return "";
+  const currentLocation = (sceneState as { current_location?: unknown }).current_location;
+  if (!currentLocation || typeof currentLocation !== "object") return "";
+  const id = (currentLocation as { id?: unknown }).id;
+  return typeof id === "string" ? id : "";
 }
 
 function isMockCharacter(value: unknown): value is { id: string; name: string; companion?: boolean } {

@@ -62,6 +62,12 @@ evolvria.ai_checkpoint_workspace
 
 浏览器 fallback 不能直接写文件夹，因此 `evolvria.active_workspace` 保存 `{ workspace_format, files: [{ path, content }] }` 的虚拟工作区包，同时保留 `evolvria.active_world` 作为快速加载兼容。
 
+## 本地 MCP 权限
+
+外部 AI 客户端可通过 `yarn mcp:game` 启动 `scripts/evolvria-mcp.mjs`，在受控范围内读取或写入 active world 工作区、创建 `saves/backups/mcp_*` 备份、创建新世界、修改角色数据和校验 payload。默认路径来自 Tauri app data；可用 `EVOLVRIA_APP_DATA_DIR` 或 `EVOLVRIA_SAVE_DIR` 覆盖。
+
+MCP 不允许访问 `settings.json`、Glosc token、`.env`、secrets 目录或工作区外路径。写入 `state/payload.json` 必须通过 schema v1 校验；覆盖已有 active world 前必须备份。
+
 ## 写入策略
 
 - `saveWorld` 会先校验 `schema_version = 1` 和必要数组字段。

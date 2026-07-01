@@ -1,0 +1,4 @@
+interface:
+  display_name: "生成角色"
+  short_description: "生成符合 Evolvria schema v1 的角色对象"
+  default_prompt: "Use $generate-character to create a schema v1 Character object for a new NPC or companion."

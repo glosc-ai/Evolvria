@@ -1,11 +1,60 @@
 {
   "skills": [
-    { "name": "initialize-world", "path": "initialize-world/SKILL.md" },
-    { "name": "advance-world-progress", "path": "advance-world-progress/SKILL.md" },
-    { "name": "trigger-player-action", "path": "trigger-player-action/SKILL.md" },
-    { "name": "record-event", "path": "record-event/SKILL.md" },
-    { "name": "log-event", "path": "log-event/SKILL.md" },
-    { "name": "generate-character", "path": "generate-character/SKILL.md" },
-    { "name": "workspace-save-format", "path": "workspace-save-format/SKILL.md" }
+    {
+      "name": "advance-world-progress",
+      "path": "advance-world-progress/SKILL.md"
+    },
+    {
+      "name": "backup-save",
+      "path": "backup-save/SKILL.md"
+    },
+    {
+      "name": "create-character-card",
+      "path": "create-character-card/SKILL.md"
+    },
+    {
+      "name": "create-world",
+      "path": "create-world/SKILL.md"
+    },
+    {
+      "name": "edit-workspace-file",
+      "path": "edit-workspace-file/SKILL.md"
+    },
+    {
+      "name": "evolvria-game-mcp",
+      "path": "evolvria-game-mcp/SKILL.md"
+    },
+    {
+      "name": "generate-character",
+      "path": "generate-character/SKILL.md"
+    },
+    {
+      "name": "initialize-world",
+      "path": "initialize-world/SKILL.md"
+    },
+    {
+      "name": "log-event",
+      "path": "log-event/SKILL.md"
+    },
+    {
+      "name": "modify-character-data",
+      "path": "modify-character-data/SKILL.md"
+    },
+    {
+      "name": "read-workspace-file",
+      "path": "read-workspace-file/SKILL.md"
+    },
+    {
+      "name": "record-event",
+      "path": "record-event/SKILL.md"
+    },
+    {
+      "name": "trigger-player-action",
+      "path": "trigger-player-action/SKILL.md"
+    },
+    {
+      "name": "workspace-save-format",
+      "path": "workspace-save-format/SKILL.md"
+    }
   ]
 }

@@ -1,0 +1,4 @@
+interface:
+  display_name: "读取工作区文件"
+  short_description: "读取或列出当前 Evolvria 世界工作区文件和索引"
+  default_prompt: "Use $read-workspace-file to inspect available Evolvria workspace files before editing."

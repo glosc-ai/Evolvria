@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { reactive } from "vue";
+import { createPinia, setActivePinia } from "pinia";
+import { asSchema, type FlexibleSchema } from "ai";
 import { defaultSeed, mockPlayerAction } from "@/domain/fixtures";
 import {
   addCustomLocation,
@@ -10,17 +12,19 @@ import {
   applyWorldExpansion,
   createInitialPayload,
   currentLocation,
+  findTravelActionTarget,
   retrieveMemories,
   timelineFiltered,
   validatePayloadSchema,
   validateWorldConsistency,
 } from "@/domain/world";
-import { estimateUsage, normalizeGloscPlayerAction, normalizeGloscWorldExpansion } from "@/services/ai";
-import { normalizeOpenAiBaseUrl } from "@/services/ai-sdk";
-import { createEvolvriaBuiltInSkills, createEvolvriaSkillRuntime, parsePublicSkillMarkdown, skillManifest } from "@/services/ai-skills";
+import { completeSeedCharacter, estimateUsage, generateWorld, normalizeGloscPlayerAction, normalizeGloscWorldExpansion, normalizeSeedCharacterCompletion } from "@/services/ai";
+import { normalizeOpenAiBaseUrl, parseAiJsonish } from "@/services/ai-sdk";
+import { createEvolvriaBuiltInSkills, createEvolvriaSkillRuntime, loadPublicSkillDefinitions, parsePublicSkillMarkdown, skillManifest } from "@/services/ai-skills";
 import { importWorldFromText } from "@/services/save";
 import { DEFAULT_SETTINGS } from "@/services/settings";
 import { buildSeedWorkspaceAiContext, buildWorkspaceAiContext, buildWorldWorkspaceFiles } from "@/services/world-workspace";
+import { useWorldStore } from "@/stores/world";
 import type { Character, PlayerActionResult, SavePayload } from "@/types/domain";
 
 describe("world domain", () => {
@@ -39,6 +43,27 @@ describe("world domain", () => {
     expect(payload.world.map_image.generator?.source_project).toBe("Azgaar/Fantasy-Map-Generator");
     expect(payload.world.map_image.generator?.mode).toBe("azgaar_adapter");
     expect(payload.world.map_image.generator?.creation_only).toBe(true);
+  });
+
+  it("matches exact travel action text to location targets", () => {
+    const payload = createInitialPayload(defaultSeed());
+    expect(findTravelActionTarget("前往白塔遗迹", payload.locations)?.id).toBe("loc_ruin");
+    expect(findTravelActionTarget("前往 白塔遗迹。", payload.locations)?.id).toBe("loc_ruin");
+    expect(findTravelActionTarget("前往白塔遗迹调查墙面", payload.locations)).toBeUndefined();
+  });
+
+  it("routes explicit travel actions through movement instead of AI resolution", async () => {
+    localStorage.clear();
+    setActivePinia(createPinia());
+    const store = useWorldStore();
+    store.payload = createInitialPayload(defaultSeed());
+    const timelineLength = store.timeline.length;
+
+    await store.submitPlayerAction("前往白塔遗迹");
+
+    expect(store.current?.id).toBe("loc_ruin");
+    expect(store.timeline).toHaveLength(timelineLength);
+    expect(store.aiLogs).toHaveLength(0);
   });
 
   it("uses custom key character names in local guidance", () => {
@@ -148,10 +173,34 @@ describe("world domain", () => {
     expect(aiUsageSummary(payload.ai_logs).calls).toBe(0);
   });
 
+  it("falls back to local world expansion with a user-facing warning", async () => {
+    const result = await generateWorld(defaultSeed(), DEFAULT_SETTINGS);
+    expect(result.status).toBe("ok");
+    expect(result.fallback).toBe(true);
+    expect(result.warnings?.[0]).toContain("未配置远端 AI");
+    expect(result.summary).toContain("本地扩写");
+  });
+
   it("normalizes OpenAI-compatible base URLs for AI SDK", () => {
     expect(normalizeOpenAiBaseUrl("https://one.gloscai.com")).toBe("https://one.gloscai.com/v1");
     expect(normalizeOpenAiBaseUrl("https://one.gloscai.com/v1")).toBe("https://one.gloscai.com/v1");
     expect(normalizeOpenAiBaseUrl("https://one.gloscai.com/v1/chat/completions")).toBe("https://one.gloscai.com/v1");
+  });
+
+  it("parses fenced JSON from OpenAI-compatible response envelopes", () => {
+    const parsed = parseAiJsonish({
+      choices: [
+        {
+          message: {
+            content: '```json\n{"status":"OK","character":{"name":"测试者"},"used_skills":["generateCharacter","createCharacterCard"]}\n```',
+            reasoning_content: "模型的思考内容不会被当作最终 JSON。",
+          },
+        },
+      ],
+    }) as { status?: string; character?: { name?: string }; used_skills?: string[] };
+    expect(parsed.status).toBe("OK");
+    expect(parsed.character?.name).toBe("测试者");
+    expect(parsed.used_skills).toEqual(["generateCharacter", "createCharacterCard"]);
   });
 
   it("normalizes wrapped Glosc player-action responses", () => {
@@ -254,6 +303,9 @@ describe("world domain", () => {
     const initialized = (await runTool(skills.initializeWorld.execute, {})) as SavePayload;
     expect(validatePayloadSchema(initialized)).toBe(true);
 
+    const created = (await runTool(skills.createWorld.execute, {})) as SavePayload;
+    expect(validatePayloadSchema(created)).toBe(true);
+
     const progressed = (await runTool(skills.advanceWorldProgress.execute, {
       description: "远方势力推进了计划。",
     })) as SavePayload;
@@ -279,9 +331,121 @@ describe("world domain", () => {
     expect(character.id).toMatch(/^char_/);
     expect(character.appearance_description).toContain("洛安");
 
+    const card = (await runTool(skills.createCharacterCard.execute, {
+      name: "洛安",
+      gender: "男",
+      role: "档案员",
+      description: "在边境驿站整理旧档案的年轻学者。",
+      world_name: seed.world_name,
+      genre: seed.genre,
+      tone: seed.tone,
+    })) as { appearance_description: string; portrait_prompt: string };
+    expect(card.appearance_description).toContain("洛安");
+    expect(card.portrait_prompt).toContain("洛安");
+
+    const mcpInfo = (await runTool(skills.evolvriaGameMcp.execute, {})) as { server_script?: string };
+    expect(mcpInfo.server_script).toBe("scripts/evolvria-mcp.mjs");
+
+    const fileList = (await runTool(skills.readWorkspaceFile.execute, {})) as { files?: string[] };
+    expect(fileList.files).toContain("AGENTS.md");
+
+    const agentsFile = (await runTool(skills.readWorkspaceFile.execute, { path: "AGENTS.md" })) as { content?: string };
+    expect(agentsFile.content).toContain("Evolvria 世界工作区");
+
+    const editedPayload = (await runTool(skills.editWorkspaceFile.execute, {
+      path: "state/payload.json",
+      content: JSON.stringify(payload),
+    })) as { payload?: SavePayload };
+    expect(validatePayloadSchema(editedPayload.payload)).toBe(true);
+
+    const characterUpdated = (await runTool(skills.modifyCharacterData.execute, {
+      character_id: "char_001",
+      updates: {
+        player_notes: "MCP 工具写入的角色备注。",
+        visibility: "met",
+      },
+    })) as SavePayload;
+    expect(characterUpdated.characters.find((item) => item.id === "char_001")?.player_notes).toContain("MCP 工具");
+
+    const backup = (await runTool(skills.backupSave.execute, { reason: "单元测试备份" })) as { status?: string };
+    expect(backup.status).toBe("ok");
+
     const saveFormat = (await runTool(skills.workspaceSaveFormat.execute, { topic: "ai-context" })) as string;
     expect(saveFormat).toContain("AGENTS.md");
     expect(saveFormat).toContain("state/payload.json");
+  });
+
+  it("keeps AI SDK tool input schemas JSON Schema compatible", async () => {
+    const skills = createEvolvriaBuiltInSkills();
+    for (const [name, skill] of Object.entries(skills)) {
+      const schema = (skill as { inputSchema?: FlexibleSchema }).inputSchema;
+      await expect(Promise.resolve(asSchema(schema).jsonSchema), name).resolves.toEqual(expect.any(Object));
+    }
+  });
+
+  it("requires configured remote AI for seed character smart generation", async () => {
+    const seed = defaultSeed();
+    const result = await completeSeedCharacter(
+      {
+        kind: "key_character",
+        seed,
+        character: { ...seed.key_characters[0], description: "" },
+      },
+      DEFAULT_SETTINGS,
+    );
+    expect(result.status).toBe("error");
+    expect(result.fields).toEqual({});
+    expect(result.error).toContain("AI 大模型");
+    expect(result.used_skills).toEqual([]);
+  });
+
+  it("writes seed character completion fields from wrapped AI JSON", () => {
+    const seed = defaultSeed();
+    const rawResponse = {
+      choices: [
+        {
+          message: {
+            content: [
+              "```json",
+              JSON.stringify({
+                status: "OK",
+                character: {
+                  name: "测试者",
+                  gender: "其他",
+                  description: "一位穿行在世界裂隙之间的记录员，以冷静目光审视万物运行的法则。",
+                  goal: "验证世界循环",
+                  ability: "观察,推理",
+                  weakness: "过度谨慎",
+                  appearance_description: "身形清瘦，中短发利落束于耳后，常穿深灰旅行长袍并随身携带厚重皮质记录本。",
+                },
+                used_skills: ["generateCharacter"],
+                warnings: [],
+              }),
+              "```",
+            ].join("\n"),
+          },
+        },
+      ],
+    };
+    const result = normalizeSeedCharacterCompletion(
+      {
+        kind: "hero",
+        seed,
+        character: { ...seed.hero },
+      },
+      {
+        parsed: rawResponse,
+        content: JSON.stringify(rawResponse),
+        toolCalls: ["createCharacterCard"],
+        usage: { input_tokens: 10, output_tokens: 20 },
+      },
+    );
+    expect(result.status).toBe("ok");
+    expect(result.fields.name).toBe(seed.hero.name);
+    expect(result.fields.gender).toBe("其他");
+    expect(result.fields.description).toContain("世界裂隙");
+    expect(result.fields.appearance_description).toContain("深灰旅行长袍");
+    expect(result.used_skills).toEqual(["generateCharacter", "createCharacterCard"]);
   });
 
   it("parses public SKILL.md files for AI skill manifests", () => {
@@ -301,10 +465,10 @@ describe("world domain", () => {
       "initialize-world",
     );
     const manifest = skillManifest(parsed ? [parsed] : []);
-    expect(manifest[0]?.name).toBe("initialize-world");
-    expect(manifest[0]?.tool_name).toBe("initializeWorld");
-    expect(manifest[0]?.description).toBe("从 public skill 文件读取的初始化说明。");
-    expect(manifest[0]?.content).toContain("根据 WorldSeed");
+    const initializeSkill = manifest.find((skill) => skill.name === "initialize-world");
+    expect(initializeSkill?.tool_name).toBe("initializeWorld");
+    expect(initializeSkill?.description).toBe("从 public skill 文件读取的初始化说明。");
+    expect(initializeSkill?.content).toContain("根据 WorldSeed");
 
     const workspaceParsed = parsePublicSkillMarkdown(
       "workspace-save-format/SKILL.md",
@@ -326,6 +490,43 @@ describe("world domain", () => {
 
     expect(parsePublicSkillMarkdown("log-event/SKILL.md", "---\nname: logEvent\n---\n# 记录日志", "log-event")).toBeNull();
     expect(parsePublicSkillMarkdown("log-event/SKILL.md", "---\nname: record-event\n---\n# 记录日志", "log-event")).toBeNull();
+  });
+
+  it("loads skills from the public skills manifest without a fixed whitelist", async () => {
+    const files = new Map<string, string>([
+      [
+        "/skills/manifest.json",
+        JSON.stringify({
+          skills: [{ name: "custom-lore", path: "custom-lore/SKILL.md" }],
+        }),
+      ],
+      [
+        "/skills/custom-lore/SKILL.md",
+        [
+          "---",
+          "name: custom-lore",
+          "description: 动态目录中的世界设定 skill。",
+          "---",
+          "# Custom Lore",
+          "",
+          "读取项目自定义世界设定规则。",
+        ].join("\n"),
+      ],
+    ]);
+    const fetcher = async (input: string) => {
+      const pathname = new URL(input, "http://localhost").pathname;
+      const body = files.get(pathname);
+      return new Response(body ?? "", { status: body ? 200 : 404 });
+    };
+
+    const publicSkills = await loadPublicSkillDefinitions(fetcher);
+    const customSkill = skillManifest(publicSkills).find((skill) => skill.name === "custom-lore");
+    expect(customSkill?.tool_name).toBe("customLore");
+    expect(customSkill?.description).toBe("动态目录中的世界设定 skill。");
+
+    const tools = createEvolvriaBuiltInSkills({}, publicSkills) as Record<string, { execute?: unknown }>;
+    const loaded = (await runTool(tools.customLore.execute, {})) as { content?: string };
+    expect(loaded.content).toContain("自定义世界设定规则");
   });
 
   it("imports browser workspace bundles through state/payload.json", async () => {

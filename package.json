@@ -13,7 +13,8 @@
     "test": "vitest run",
     "test:ui": "playwright test",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "mcp:game": "node scripts/evolvria-mcp.mjs"
   },
   "dependencies": {
     "@ai-sdk/openai": "^4.0.4",

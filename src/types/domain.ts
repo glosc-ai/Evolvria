@@ -17,6 +17,7 @@ export type RouteName =
 export type AIPurpose =
   | "world_expand"
   | "player_action"
+  | "character_complete"
   | "character_image"
   | "npc_simulation"
   | "memory_extract"

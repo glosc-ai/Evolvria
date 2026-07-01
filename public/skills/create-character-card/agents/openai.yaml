@@ -1,0 +1,4 @@
+interface:
+  display_name: "创建角色形象卡"
+  short_description: "生成内部角色形象卡和 gpt-image-2 画像提示词"
+  default_prompt: "Use $create-character-card to enrich a character profile before generating a portrait."

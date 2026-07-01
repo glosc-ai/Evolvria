@@ -74,6 +74,24 @@ Rules:
 - The remote model system prompt should say to follow `AGENTS.md` before other loaded files.
 - The public skill `workspace-save-format` exposes these rules through `available_skills` and the deterministic `workspaceSaveFormat` tool.
 
+## Bundled Validation Scripts
+
+Use `scripts/validate_workspace.mjs` to check a folder workspace or browser-exported workspace bundle:
+
+```bash
+node public/skills/workspace-save-format/scripts/validate_workspace.mjs app_data_dir/saves/active_world
+node public/skills/workspace-save-format/scripts/validate_workspace.mjs exported-workspace-bundle.json
+```
+
+The script checks:
+
+- required files: `AGENTS.md`, `manifest.json`, `state/payload.json`
+- `manifest.files.instructions === "AGENTS.md"`
+- `manifest.files.payload === "state/payload.json"`
+- `payload.schema_version === 1`
+- required array fields in `SavePayload`
+- derived character/location Markdown files for payload entries
+
 ## Documentation To Update
 
 Update these when changing the format:

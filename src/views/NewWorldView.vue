@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { Plus, Trash2, UsersRound } from "lucide-vue-next";
-import { computed, reactive, ref } from "vue";
+import { Plus, Sparkles, Trash2, UsersRound } from "lucide-vue-next";
+import { computed, onUnmounted, reactive, ref } from "vue";
 import { useRouter } from "vue-router";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -12,23 +12,30 @@ import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
 import { Textarea } from "@/components/ui/textarea";
 import AppSelect from "@/components/AppSelect.vue";
+import { cn } from "@/lib/utils";
+import { completeSeedCharacter } from "@/services/ai";
 import { useAppStore } from "@/stores/app";
+import { useSettingsStore } from "@/stores/settings";
 import { useWorldStore } from "@/stores/world";
 import type { WorldSeed } from "@/types/domain";
 
 const router = useRouter();
 const app = useAppStore();
+const settings = useSettingsStore();
 const world = useWorldStore();
 const step = ref(1);
 const bulkCharactersText = ref("");
+const smartCompletionTarget = ref("");
+const smartCompletionPulseTarget = ref("");
+let smartCompletionPulseTimer: ReturnType<typeof setTimeout> | null = null;
 type KeyCharacterDraft = WorldSeed["key_characters"][number];
+const defaultGender = "其他";
 const genderOptions = [
-  { label: "未指定", value: "未指定" },
-  { label: "女", value: "女" },
   { label: "男", value: "男" },
-  { label: "非二元", value: "非二元" },
+  { label: "女", value: "女" },
   { label: "其他", value: "其他" },
 ];
+const genderOptionValues = new Set(genderOptions.map((option) => option.value));
 const draft = reactive<WorldSeed>({
   world_name: "烟测世界",
   genre: "奇幻",
@@ -36,7 +43,7 @@ const draft = reactive<WorldSeed>({
   limits: "保持可读性，避免极端血腥和酷刑描写。",
   narrative_detail: "详细",
   npc_autonomy_frequency: "中频",
-  hero: { name: "测试者", gender: "未指定", description: "记录员", goal: "验证世界循环", ability: "观察,推理", weakness: "过度谨慎", appearance_description: "" },
+  hero: { name: "测试者", gender: defaultGender, description: "记录员", goal: "验证世界循环", ability: "观察,推理", weakness: "过度谨慎", appearance_description: "" },
   key_characters: [
     { name: "璃安", gender: "女", role: "旧友", relationship: "同行", personality: "温和,谨慎", goal: "查清徽记来源", secret: "知道徽记与旧档案有关", action_tendency: "保护主角并暗中确认线索", description: "提供线索的人", appearance_description: "" },
     { name: "赛拉", gender: "女", role: "竞争者", relationship: "竞争", personality: "果断,好胜", goal: "抢先得到档案", secret: "曾为边境守望工作", action_tendency: "主动追踪遗迹并试探玩家", description: "推动冲突的人", appearance_description: "" },
@@ -44,11 +51,17 @@ const draft = reactive<WorldSeed>({
 });
 
 const stepTitle = computed(() => ["世界设定", "主角", "关键角色", "偏好", "确认"][step.value - 1] ?? "新建世界");
+const completionRunning = computed(() => Boolean(smartCompletionTarget.value));
+const formBusy = computed(() => world.busy || completionRunning.value);
+
+function normalizeGender(value?: string): string {
+  const gender = value?.trim();
+  return gender && genderOptionValues.has(gender) ? gender : defaultGender;
+}
 
 function emptyCharacter(overrides: Partial<KeyCharacterDraft> = {}): KeyCharacterDraft {
   return {
     name: "",
-    gender: "未指定",
     role: "",
     relationship: "",
     personality: "",
@@ -58,6 +71,7 @@ function emptyCharacter(overrides: Partial<KeyCharacterDraft> = {}): KeyCharacte
     description: "",
     appearance_description: "",
     ...overrides,
+    gender: normalizeGender(overrides.gender),
   };
 }
 
@@ -99,7 +113,7 @@ function parseCharacterLine(line: string): KeyCharacterDraft {
     .filter(Boolean);
   return emptyCharacter({
     name: parts[0] ?? "",
-    gender: parts[1] ?? "未指定",
+    gender: parts[1],
     role: parts[2] ?? "",
     relationship: parts[3] ?? "",
     personality: parts[4] ?? "",
@@ -138,15 +152,110 @@ function normalizeCharacterKey(key: string): keyof KeyCharacterDraft | null {
   return null;
 }
 
+function snapshotSeed(): WorldSeed {
+  return JSON.parse(JSON.stringify(draft)) as WorldSeed;
+}
+
+function completionTarget(id: string): boolean {
+  return smartCompletionTarget.value === id;
+}
+
+function triggerCompletionFeedback(id: string): void {
+  smartCompletionPulseTarget.value = id;
+  if (smartCompletionPulseTimer) clearTimeout(smartCompletionPulseTimer);
+  smartCompletionPulseTimer = setTimeout(() => {
+    if (smartCompletionPulseTarget.value === id) smartCompletionPulseTarget.value = "";
+  }, 900);
+}
+
+function smartGenerateButtonClass(id: string): string {
+  return cn(
+    "min-w-28 transition-all duration-200 active:scale-95",
+    smartCompletionPulseTarget.value === id && "scale-[1.03] ring-2 ring-ring/60",
+    completionTarget(id) && "animate-pulse shadow-md",
+  );
+}
+
+function smartGenerateButtonLabel(id: string): string {
+  return completionTarget(id) ? "生成中..." : "智能生成";
+}
+
+onUnmounted(() => {
+  if (smartCompletionPulseTimer) clearTimeout(smartCompletionPulseTimer);
+});
+
+async function smartCompleteHero(): Promise<void> {
+  if (completionRunning.value) return;
+  triggerCompletionFeedback("hero");
+  smartCompletionTarget.value = "hero";
+  try {
+    if (!settings.loaded) await settings.load();
+    const result = await completeSeedCharacter(
+      {
+        kind: "hero",
+        seed: snapshotSeed(),
+        character: { ...draft.hero },
+      },
+      settings.settings,
+    );
+    if (result.status !== "ok") {
+      throw new Error(result.error || result.warnings.join("；") || "主角智能生成失败。");
+    }
+    assignCompletionFields(draft.hero as Record<string, string | undefined>, result.fields, heroCompletionKeys);
+    app.setNotice(result.warnings.length > 0 ? `主角已智能生成：${result.warnings.join("；")}` : "主角已智能生成。");
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "主角智能生成失败。");
+  } finally {
+    smartCompletionTarget.value = "";
+  }
+}
+
+async function smartCompleteCharacter(character: KeyCharacterDraft, index: number): Promise<void> {
+  if (completionRunning.value) return;
+  const target = `character-${index}`;
+  triggerCompletionFeedback(target);
+  smartCompletionTarget.value = target;
+  try {
+    if (!settings.loaded) await settings.load();
+    const result = await completeSeedCharacter(
+      {
+        kind: "key_character",
+        seed: snapshotSeed(),
+        character: { ...character },
+      },
+      settings.settings,
+    );
+    if (result.status !== "ok") {
+      throw new Error(result.error || result.warnings.join("；") || "关键角色智能生成失败。");
+    }
+    assignCompletionFields(character as Record<string, string | undefined>, result.fields, keyCharacterCompletionKeys);
+    app.setNotice(result.warnings.length > 0 ? `关键角色已智能生成：${result.warnings.join("；")}` : "关键角色已智能生成。");
+  } catch (error) {
+    app.setError(error instanceof Error ? error.message : "关键角色智能生成失败。");
+  } finally {
+    smartCompletionTarget.value = "";
+  }
+}
+
+const heroCompletionKeys = ["name", "gender", "description", "goal", "ability", "weakness", "appearance_description"];
+const keyCharacterCompletionKeys = ["name", "gender", "role", "relationship", "personality", "goal", "secret", "action_tendency", "description", "appearance_description"];
+
+function assignCompletionFields(target: Record<string, string | undefined>, fields: Record<string, string>, keys: string[]): void {
+  for (const key of keys) {
+    const value = fields[key]?.trim();
+    if (value) target[key] = key === "gender" ? normalizeGender(value) : value;
+  }
+}
+
 async function requestCreate() {
-  if (world.busy) return;
+  if (formBusy.value) return;
   await create();
 }
 
 async function create() {
   try {
-    await world.createWorld(JSON.parse(JSON.stringify(draft)));
-    app.setNotice("世界已创建。");
+    const result = await world.createWorld(JSON.parse(JSON.stringify(draft)));
+    app.setNotice(result.message);
     await router.push("/exploration");
   } catch (error) {
     app.setError(error instanceof Error ? error.message : "世界创建失败。");
@@ -187,6 +296,21 @@ async function create() {
           </Field>
         </FieldGroup>
         <FieldGroup v-else-if="step === 2" class="gap-4">
+          <div class="flex justify-end">
+            <Button
+              variant="outline"
+              size="sm"
+              type="button"
+              :class="smartGenerateButtonClass('hero')"
+              :aria-busy="completionTarget('hero')"
+              :disabled="formBusy"
+              @click="smartCompleteHero"
+            >
+              <Spinner v-if="completionTarget('hero')" data-icon="inline-start" />
+              <Sparkles v-else data-icon="inline-start" />
+              {{ smartGenerateButtonLabel('hero') }}
+            </Button>
+          </div>
           <FieldGroup class="grid gap-3 sm:grid-cols-2">
             <Field>
               <FieldLabel for="hero-name">主角姓名</FieldLabel>
@@ -232,16 +356,31 @@ async function create() {
                 placeholder="璃安｜女｜旧友｜同行｜温和,谨慎｜查清徽记来源｜知道徽记与旧档案有关｜保护主角并暗中确认线索｜提供线索的人｜银灰短发，旧式斗篷"
               />
             </Field>
-            <Button variant="outline" type="button" @click="addBulkCharacters">
+            <Button variant="outline" type="button" :disabled="formBusy" @click="addBulkCharacters">
               <UsersRound data-icon="inline-start" />
               批量添加
             </Button>
           </FieldSet>
-          <FieldSet v-for="(character, index) in draft.key_characters" :key="index" class="relative rounded-md border p-4 pr-16">
+          <FieldSet v-for="(character, index) in draft.key_characters" :key="index" class="rounded-md border p-4">
             <FieldLegend>关键角色 {{ index + 1 }}</FieldLegend>
-            <Button class="absolute right-4 top-4" variant="ghost" size="icon" type="button" title="删除角色" @click="removeCharacter(index)">
-              <Trash2 />
-            </Button>
+            <div class="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                type="button"
+                :class="smartGenerateButtonClass(`character-${index}`)"
+                :aria-busy="completionTarget(`character-${index}`)"
+                :disabled="formBusy"
+                @click="smartCompleteCharacter(character, index)"
+              >
+                <Spinner v-if="completionTarget(`character-${index}`)" data-icon="inline-start" />
+                <Sparkles v-else data-icon="inline-start" />
+                {{ smartGenerateButtonLabel(`character-${index}`) }}
+              </Button>
+              <Button variant="ghost" size="icon" type="button" title="删除角色" :disabled="formBusy" @click="removeCharacter(index)">
+                <Trash2 />
+              </Button>
+            </div>
             <FieldGroup class="grid gap-3 sm:grid-cols-2">
               <Field>
                 <FieldLabel :for="`character-${index}-name`">姓名</FieldLabel>
@@ -290,7 +429,7 @@ async function create() {
               <Textarea :id="`character-${index}-tendency`" v-model="character.action_tendency" class="min-h-20" />
             </Field>
           </FieldSet>
-          <Button variant="outline" type="button" @click="addCharacter">
+          <Button variant="outline" type="button" :disabled="formBusy" @click="addCharacter">
             <Plus data-icon="inline-start" />
             添加角色
           </Button>
@@ -314,16 +453,16 @@ async function create() {
             <AlertTitle>{{ draft.world_name }} · {{ draft.genre }} · {{ draft.tone }}</AlertTitle>
             <AlertDescription>
               主角：{{ draft.hero.name }}，目标：{{ draft.hero.goal }}<br />
-              关键角色：{{ draft.key_characters.map((c) => c.name ? `${c.name}（${c.gender || "未指定"}）` : "").filter(Boolean).join("、") }}
+              关键角色：{{ draft.key_characters.map((c) => c.name ? `${c.name}（${c.gender || defaultGender}）` : "").filter(Boolean).join("、") }}
             </AlertDescription>
           </Alert>
         </div>
         </CardContent>
 
         <CardFooter class="flex justify-between">
-          <Button variant="outline" :disabled="step === 1 || world.busy" type="button" @click="step -= 1">上一步</Button>
-          <Button v-if="step < 5" :disabled="world.busy" type="button" @click="step += 1">下一步</Button>
-          <Button v-else :disabled="world.busy" type="button" @click="requestCreate">
+          <Button variant="outline" :disabled="step === 1 || formBusy" type="button" @click="step -= 1">上一步</Button>
+          <Button v-if="step < 5" :disabled="formBusy" type="button" @click="step += 1">下一步</Button>
+          <Button v-else :disabled="formBusy" type="button" @click="requestCreate">
             <Spinner v-if="world.busy" data-icon="inline-start" />
             {{ world.busy ? "正在扩写..." : "创建并扩写世界" }}
           </Button>

@@ -25,12 +25,10 @@ const app = useAppStore();
 const world = useWorldStore();
 const action = ref("");
 
+const travelTargets = computed(() => world.explorationTravelTargets);
+const duplicateTravelSuggestionTargets = computed(() => (world.current ? [world.current, ...travelTargets.value] : travelTargets.value));
 const visibleSuggestedActions = computed(() => {
-  const currentName = world.current?.name;
-  if (!currentName) return world.suggestedActions;
-  const currentTravel = `前往${currentName}`;
-  const currentTravelWithSpace = `前往 ${currentName}`;
-  return world.suggestedActions.filter((item) => item !== currentTravel && item !== currentTravelWithSpace);
+  return world.suggestedActions.filter((item) => !world.travelActionTarget(item, duplicateTravelSuggestionTargets.value));
 });
 
 const conversationMessages = computed<ConversationMessage[]>(() => {
@@ -72,7 +70,6 @@ const conversationMessages = computed<ConversationMessage[]>(() => {
 });
 
 const latestAssistantMessage = computed(() => [...conversationMessages.value].reverse().find((message) => message.from === "assistant"));
-const travelTargets = computed(() => world.locations.filter((location) => location.id !== world.current?.id).slice(0, 4));
 
 async function requestSubmit(text = action.value) {
   try {

@@ -283,6 +283,22 @@ function cleanStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim()) : [];
 }
 
+export function findTravelActionTarget<T extends Pick<Location, "name">>(action: string, candidates: readonly T[]): T | undefined {
+  const targetName = travelActionTargetName(action);
+  if (!targetName) return undefined;
+  const normalizedTarget = normalizeTravelName(targetName);
+  return candidates.find((location) => normalizeTravelName(location.name) === normalizedTarget);
+}
+
+function travelActionTargetName(action: string): string {
+  const match = action.trim().match(/^前往\s*(.+?)\s*[。.!！?？]*$/u);
+  return match?.[1]?.trim() ?? "";
+}
+
+function normalizeTravelName(value: string): string {
+  return value.replace(/\s+/g, "");
+}
+
 export function buildInitialRoutes(): MapRoute[] {
   return [
     { id: "route_001", from_location_id: "loc_start", to_location_id: "loc_forest", name: "雾林旧道", type: "road", danger: 0.28 },

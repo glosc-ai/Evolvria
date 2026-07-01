@@ -1,23 +1,22 @@
-import { tool } from "ai";
+import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { mockPlayerAction } from "@/domain/fixtures";
 import { addEvent, createInitialPayload, recordAiLog, validatePayloadSchema } from "@/domain/world";
+import {
+  backupSaveViaGameMcp,
+  createWorldViaGameMcp,
+  editWorkspaceFileViaGameMcp,
+  gameMcpCapabilityManifest,
+  listWorkspaceFilesViaGameMcp,
+  modifyCharacterDataViaGameMcp,
+  readWorkspaceFileViaGameMcp,
+} from "@/services/game-mcp";
 import { makeId } from "@/services/ids";
 import { splitTags } from "@/services/text";
 import type { AIUsage, AIPurpose, Character, PlayerActionResult, SavePayload, World, WorldSeed, WorldTime } from "@/types/domain";
 
-export const publicSkillEntries = [
-  { name: "initialize-world", tool_name: "initializeWorld", path: "initialize-world/SKILL.md" },
-  { name: "advance-world-progress", tool_name: "advanceWorldProgress", path: "advance-world-progress/SKILL.md" },
-  { name: "trigger-player-action", tool_name: "triggerPlayerAction", path: "trigger-player-action/SKILL.md" },
-  { name: "record-event", tool_name: "recordEvent", path: "record-event/SKILL.md" },
-  { name: "log-event", tool_name: "logEvent", path: "log-event/SKILL.md" },
-  { name: "generate-character", tool_name: "generateCharacter", path: "generate-character/SKILL.md" },
-  { name: "workspace-save-format", tool_name: "workspaceSaveFormat", path: "workspace-save-format/SKILL.md" },
-] as const;
-
-export type EvolvriaSkillName = (typeof publicSkillEntries)[number]["name"];
-type EvolvriaSkillToolName = (typeof publicSkillEntries)[number]["tool_name"];
+export type EvolvriaSkillName = string;
+type EvolvriaSkillToolName = string;
 
 const worldSeedSchema: z.ZodType<WorldSeed> = z.object({
   world_name: z.string(),
@@ -51,7 +50,9 @@ const worldSeedSchema: z.ZodType<WorldSeed> = z.object({
   ),
 });
 
-const payloadSchema = z.custom<SavePayload>(validatePayloadSchema, "必须是 Evolvria schema v1 SavePayload");
+// Tool input schemas must be representable as JSON Schema for the AI SDK.
+// The actual SavePayload check still happens at execution time in requirePayload().
+const payloadSchema = z.unknown();
 const worldTimeSchema: z.ZodType<WorldTime> = z.object({
   day: z.number(),
   hour: z.number(),
@@ -93,12 +94,65 @@ const generateCharacterInputSchema = z.object({
   visibility: z.enum(["met", "heard", "hidden"]).default("heard"),
   companion: z.boolean().default(false),
 });
+const textListSchema = z.union([z.string(), z.array(z.string())]).optional();
+const createCharacterCardInputSchema = z.object({
+  name: z.string().default("未命名角色"),
+  gender: z.string().default("其他"),
+  role: z.string().default("角色"),
+  description: z.string().default(""),
+  appearance_description: z.string().default(""),
+  personality: textListSchema,
+  traits: textListSchema,
+  goals: textListSchema,
+  world_name: z.string().default("未命名世界"),
+  genre: z.string().default("奇幻"),
+  tone: textListSchema,
+  content_limits: z.string().default(""),
+});
 const workspaceSaveFormatInputSchema = z.object({
   topic: z.enum(["overview", "paths", "ai-context", "browser", "native", "export-import", "tests", "all"]).default("overview"),
+});
+const backupSaveInputSchema = z.object({
+  payload: payloadSchema.optional(),
+  reason: z.string().default("AI MCP 操作前备份"),
+});
+const readWorkspaceFileInputSchema = z.object({
+  payload: payloadSchema.optional(),
+  path: z.string().optional(),
+});
+const editWorkspaceFileInputSchema = z.object({
+  payload: payloadSchema.optional(),
+  path: z.string(),
+  content: z.string(),
+});
+const characterDataUpdatesSchema = z
+  .object({
+    description: z.string().optional(),
+    personality: z.array(z.string()).optional(),
+    goals: z.array(z.string()).optional(),
+    secrets: z.array(z.string()).optional(),
+    current_location_id: z.string().optional(),
+    status: z.string().optional(),
+    traits: z.array(z.string()).optional(),
+    memory_summary: z.string().optional(),
+    player_notes: z.string().optional(),
+    appearance_description: z.string().optional(),
+    portrait_prompt: z.string().optional(),
+    portrait_image_url: z.string().optional(),
+    action_tendency: z.string().optional(),
+    companion: z.boolean().optional(),
+    visibility: z.enum(["met", "heard", "hidden"]).optional(),
+  })
+  .strict();
+const modifyCharacterDataInputSchema = z.object({
+  payload: payloadSchema.optional(),
+  character_id: z.string(),
+  updates: characterDataUpdatesSchema,
 });
 
 type RecordEventInput = z.infer<typeof eventInputSchema>;
 type GenerateCharacterInput = z.infer<typeof generateCharacterInputSchema>;
+type CreateCharacterCardInput = z.infer<typeof createCharacterCardInputSchema>;
 type WorkspaceSaveFormatInput = z.infer<typeof workspaceSaveFormatInputSchema>;
 
 export interface AdvanceWorldProgressInput {
@@ -116,6 +170,13 @@ export interface LogEventInput {
   summary: string;
   usage?: AIUsage;
   raw?: string;
+}
+
+export interface CreateCharacterCardResult {
+  appearance_description: string;
+  portrait_prompt: string;
+  card_notes: string[];
+  warnings: string[];
 }
 
 export interface EvolvriaSkillRuntimeContext {
@@ -138,7 +199,7 @@ export interface PublicSkillDefinition {
 
 interface PublicSkillManifestEntry {
   name: EvolvriaSkillName;
-  tool_name: EvolvriaSkillToolName;
+  tool_name?: EvolvriaSkillToolName;
   path: string;
 }
 
@@ -241,6 +302,28 @@ export function generateCharacterSkill(input: GenerateCharacterInput): Character
   };
 }
 
+export function createCharacterCardSkill(input: CreateCharacterCardInput): CreateCharacterCardResult {
+  const name = cleanText(input.name) || "未命名角色";
+  const gender = cleanText(input.gender) || "其他";
+  const role = cleanText(input.role) || "角色";
+  const description = cleanText(input.description) || "身份尚未完全公开。";
+  const appearance = buildSkillAppearanceDescription({ ...input, name, gender, role, description });
+  const tone = listText(input.tone) || "冒险";
+  return {
+    appearance_description: appearance,
+    portrait_prompt: [
+      "叙事游戏角色半身像，正面或三分之二视角。",
+      `角色：${name}，性别：${gender}，身份：${role}。`,
+      `世界：${input.world_name || "未命名世界"}，题材：${input.genre || "奇幻"}，基调：${tone}。`,
+      `外貌：${appearance}`,
+      "清晰面部、完整发型和上半身服装，背景简洁，情绪贴合人物目标。",
+      "不要文字、水印、logo、边框、UI、额外人物、畸形手部或畸形面部。",
+    ].join("\n"),
+    card_notes: ["通过游戏内 create-character-card skill 生成。"],
+    warnings: [],
+  };
+}
+
 export function workspaceSaveFormatSkill(input: WorkspaceSaveFormatInput = { topic: "overview" }): string {
   const sections: Record<WorkspaceSaveFormatInput["topic"], string> = {
     overview:
@@ -268,26 +351,39 @@ export function workspaceSaveFormatSkill(input: WorkspaceSaveFormatInput = { top
   return sections[input.topic];
 }
 
-export async function loadPublicSkillDefinitions(fetcher: FetchLike | undefined = globalThis.fetch?.bind(globalThis)): Promise<PublicSkillDefinition[]> {
-  if (publicSkillCache) return publicSkillCache;
-  if (!fetcher) return fallbackPublicSkillDefinitions();
+export async function loadPublicSkillDefinitions(fetcher?: FetchLike): Promise<PublicSkillDefinition[]> {
+  const useCache = !fetcher;
+  const activeFetcher = fetcher ?? globalThis.fetch?.bind(globalThis);
+  if (useCache && publicSkillCache) return publicSkillCache;
+  if (!activeFetcher) return fallbackPublicSkillDefinitions();
 
   try {
-    const manifest = await loadPublicSkillManifest(fetcher);
+    const manifest = await loadPublicSkillManifest(activeFetcher);
     const loaded = await Promise.all(
       manifest.map(async (entry) => {
-        const content = await fetchSkillText(fetcher, entry.path);
-        return parsePublicSkillMarkdown(entry.path, content, entry.name);
+        try {
+          const content = await fetchSkillText(activeFetcher, entry.path);
+          return parsePublicSkillMarkdown(entry.path, content, entry.name, entry.tool_name);
+        } catch {
+          return fallbackSkillDefinition(entry.name);
+        }
       }),
     );
-    publicSkillCache = mergeWithFallbackSkills(loaded.filter((skill): skill is PublicSkillDefinition => Boolean(skill)));
-    return publicSkillCache;
+    const publicSkills = mergeWithFallbackSkills(loaded.filter((skill): skill is PublicSkillDefinition => Boolean(skill)));
+    const definitions = publicSkills.length > 0 ? publicSkills : fallbackPublicSkillDefinitions();
+    if (useCache) publicSkillCache = definitions;
+    return definitions;
   } catch {
     return fallbackPublicSkillDefinitions();
   }
 }
 
-export function parsePublicSkillMarkdown(path: string, raw: string, fallbackName: EvolvriaSkillName): PublicSkillDefinition | null {
+export function parsePublicSkillMarkdown(
+  path: string,
+  raw: string,
+  fallbackName: EvolvriaSkillName,
+  fallbackToolName?: EvolvriaSkillToolName,
+): PublicSkillDefinition | null {
   const { frontmatter, body } = splitFrontmatter(raw);
   const folderName = normalizeSkillName(path.split("/")[0]);
   const declaredName = cleanText(frontmatter.name);
@@ -295,25 +391,35 @@ export function parsePublicSkillMarkdown(path: string, raw: string, fallbackName
   if (declaredName && folderName && declaredName !== folderName) return null;
   const name = normalizeSkillName(declaredName || folderName) ?? fallbackName;
   const fallback = fallbackSkillDefinition(name);
-  if (!fallback) return null;
   const content = body.trim() || raw.trim();
+  const toolName = normalizeToolName(cleanText(frontmatter.tool_name)) ?? normalizeToolName(fallbackToolName) ?? fallback?.tool_name ?? toolNameForSkill(name);
   return {
     name,
-    tool_name: toolNameForSkill(name),
-    path,
-    title: cleanText(frontmatter.title) || fallback.title || cleanText(frontmatter.name),
-    description: cleanText(frontmatter.description) || firstMarkdownParagraph(content) || fallback.description,
-    runtime_context: cleanText(frontmatter.runtime_context) || fallback.runtime_context,
+    tool_name: toolName,
+    path: normalizeSkillPath(path, name),
+    title: cleanText(frontmatter.title) || fallback?.title || titleFromSkillName(name),
+    description: cleanText(frontmatter.description) || firstMarkdownParagraph(content) || fallback?.description || titleFromSkillName(name),
+    runtime_context: cleanText(frontmatter.runtime_context) || fallback?.runtime_context || "按该 skill 文档说明使用",
     content,
   };
 }
 
-export function createEvolvriaBuiltInSkills(runtime: EvolvriaSkillRuntimeContext = {}, publicSkills: PublicSkillDefinition[] = fallbackPublicSkillDefinitions()) {
-  return {
+export function createEvolvriaBuiltInSkills(runtime: EvolvriaSkillRuntimeContext = {}, publicSkills: PublicSkillDefinition[] = fallbackPublicSkillDefinitions()): ToolSet {
+  const skills = {
+    evolvriaGameMcp: tool({
+      description: skillDescription(publicSkills, "evolvria-game-mcp"),
+      inputSchema: z.object({}),
+      execute: async () => gameMcpCapabilityManifest(),
+    }),
     initializeWorld: tool({
       description: skillDescription(publicSkills, "initialize-world"),
       inputSchema: z.object({ seed: worldSeedSchema.optional() }),
       execute: async ({ seed }) => initializeWorldSkill(requireSeed(seed ?? runtime.seed)),
+    }),
+    createWorld: tool({
+      description: skillDescription(publicSkills, "create-world"),
+      inputSchema: z.object({ seed: worldSeedSchema.optional() }),
+      execute: async ({ seed }) => createWorldViaGameMcp(requireSeed(seed ?? runtime.seed)),
     }),
     advanceWorldProgress: tool({
       description: skillDescription(publicSkills, "advance-world-progress"),
@@ -362,15 +468,64 @@ export function createEvolvriaBuiltInSkills(runtime: EvolvriaSkillRuntimeContext
       inputSchema: generateCharacterInputSchema,
       execute: async (input): Promise<Character> => generateCharacterSkill(input),
     }),
+    createCharacterCard: tool({
+      description: skillDescription(publicSkills, "create-character-card"),
+      inputSchema: createCharacterCardInputSchema,
+      execute: async (input): Promise<CreateCharacterCardResult> => createCharacterCardSkill(input),
+    }),
+    backupSave: tool({
+      description: skillDescription(publicSkills, "backup-save"),
+      inputSchema: backupSaveInputSchema,
+      execute: async ({ payload, reason }) => backupSaveViaGameMcp(requirePayload(payload ?? runtime.payload), reason),
+    }),
+    readWorkspaceFile: tool({
+      description: skillDescription(publicSkills, "read-workspace-file"),
+      inputSchema: readWorkspaceFileInputSchema,
+      execute: async ({ payload, path }) => {
+        const currentPayload = requirePayload(payload ?? runtime.payload);
+        return path ? readWorkspaceFileViaGameMcp(currentPayload, path) : listWorkspaceFilesViaGameMcp(currentPayload);
+      },
+    }),
+    editWorkspaceFile: tool({
+      description: skillDescription(publicSkills, "edit-workspace-file"),
+      inputSchema: editWorkspaceFileInputSchema,
+      execute: async ({ payload, path, content }) => editWorkspaceFileViaGameMcp(requirePayload(payload ?? runtime.payload), path, content),
+    }),
+    modifyCharacterData: tool({
+      description: skillDescription(publicSkills, "modify-character-data"),
+      inputSchema: modifyCharacterDataInputSchema,
+      execute: async ({ payload, character_id, updates }) =>
+        modifyCharacterDataViaGameMcp(requirePayload(payload ?? runtime.payload), {
+          character_id,
+          updates,
+        }),
+    }),
     workspaceSaveFormat: tool({
       description: skillDescription(publicSkills, "workspace-save-format"),
       inputSchema: workspaceSaveFormatInputSchema,
       execute: async (input): Promise<string> => workspaceSaveFormatSkill(input),
     }),
-  } as const;
+  };
+
+  const dynamicSkills: ToolSet = { ...skills };
+  for (const publicSkill of publicSkills) {
+    if (publicSkill.tool_name in dynamicSkills) continue;
+    dynamicSkills[publicSkill.tool_name] = tool({
+      description: publicSkill.description || `读取 ${publicSkill.name} skill 文档。`,
+      inputSchema: z.object({}),
+      execute: async () => ({
+        name: publicSkill.name,
+        title: publicSkill.title,
+        description: publicSkill.description,
+        runtime_context: publicSkill.runtime_context,
+        content: publicSkill.content,
+      }),
+    });
+  }
+
+  return dynamicSkills;
 }
 
-export const evolvriaBuiltInSkills = createEvolvriaBuiltInSkills();
 export type EvolvriaBuiltInSkills = ReturnType<typeof createEvolvriaBuiltInSkills>;
 
 export function skillManifest(publicSkills: PublicSkillDefinition[] = fallbackPublicSkillDefinitions()): PublicSkillDefinition[] {
@@ -383,7 +538,7 @@ function requireSeed(seed: WorldSeed | undefined): WorldSeed {
   return parsed.data;
 }
 
-function requirePayload(payload: SavePayload | undefined): SavePayload {
+function requirePayload(payload: unknown): SavePayload {
   if (!validatePayloadSchema(payload)) throw new Error("缺少有效的 SavePayload，无法执行该世界 skill。");
   return payload;
 }
@@ -396,6 +551,28 @@ function requireAction(action: string | undefined): string {
 
 function readRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function buildSkillAppearanceDescription(input: CreateCharacterCardInput & { name: string; gender: string; role: string; description: string }): string {
+  const userAppearance = cleanText(input.appearance_description);
+  const traits = listText(input.personality) || listText(input.traits) || "沉稳、有辨识度";
+  const goals = listText(input.goals);
+  const genre = cleanText(input.genre) || "奇幻";
+  const tone = listText(input.tone) || "冒险";
+  const base = userAppearance
+    ? `${userAppearance}。${input.name}的体态与眼神体现${traits}，服饰材质、配饰和主色贴合${genre}${tone}基调。`
+    : `${input.name}（${input.gender}）是一名${input.role}，${input.description}外形以清晰五官、稳定发型和有身份线索的上半身服装为核心，体态体现${traits}${goals ? `，随身细节呼应目标：${goals}` : ""}。`;
+  return clampText(base, 180);
+}
+
+function listText(value: string | string[] | undefined): string {
+  if (Array.isArray(value)) return value.map((item) => item.trim()).filter(Boolean).join("、");
+  return value?.trim() ?? "";
+}
+
+function clampText(value: string, maxLength: number): string {
+  const trimmed = value.trim();
+  return trimmed.length > maxLength ? `${trimmed.slice(0, maxLength - 1)}。` : trimmed;
 }
 
 function advanceTime(time: WorldTime | undefined, minutes: number): WorldTime {
@@ -415,12 +592,16 @@ async function loadPublicSkillManifest(fetcher: FetchLike): Promise<PublicSkillM
         if (!entry.name) return null;
         const name = normalizeSkillName(entry.name);
         if (!name) return null;
-        return { name, tool_name: toolNameForSkill(name), path: cleanText(entry.path) || defaultSkillPath(name) };
+        return {
+          name,
+          tool_name: normalizeToolName(entry.tool_name) ?? toolNameForSkill(name),
+          path: normalizeSkillPath(cleanText(entry.path) || defaultSkillPath(name), name),
+        };
       })
       .filter((entry): entry is PublicSkillManifestEntry => Boolean(entry));
-    return entries.length > 0 ? entries : [...publicSkillEntries];
+    return entries.length > 0 ? entries : fallbackPublicSkillManifestEntries();
   } catch {
-    return [...publicSkillEntries];
+    return fallbackPublicSkillManifestEntries();
   }
 }
 
@@ -445,11 +626,20 @@ function entryFromName(value: string): PublicSkillManifestEntry | null {
 }
 
 function defaultSkillPath(name: EvolvriaSkillName): string {
-  return publicSkillEntries.find((entry) => entry.name === name)?.path ?? `${name}/SKILL.md`;
+  return `${name}/SKILL.md`;
 }
 
 function normalizeSkillName(value: unknown): EvolvriaSkillName | null {
-  return typeof value === "string" && /^[a-z0-9-]+$/.test(value) && publicSkillEntries.some((entry) => entry.name === value) ? (value as EvolvriaSkillName) : null;
+  return typeof value === "string" && /^[a-z0-9][a-z0-9-]*$/.test(value) ? value : null;
+}
+
+function normalizeSkillPath(path: string, name: EvolvriaSkillName): string {
+  const cleaned = path.replace(/^\/+/, "");
+  return cleaned.startsWith(`${name}/`) ? cleaned : defaultSkillPath(name);
+}
+
+function normalizeToolName(value: unknown): EvolvriaSkillToolName | null {
+  return typeof value === "string" && /^[A-Za-z][A-Za-z0-9_]*$/.test(value) ? value : null;
 }
 
 function splitFrontmatter(raw: string): { frontmatter: Record<string, string>; body: string } {
@@ -494,22 +684,64 @@ function skillDescription(publicSkills: PublicSkillDefinition[], name: EvolvriaS
 }
 
 function mergeWithFallbackSkills(publicSkills: PublicSkillDefinition[]): PublicSkillDefinition[] {
-  const byName = new Map(publicSkills.map((skill) => [skill.name, skill]));
-  return publicSkillEntries.map((entry) => byName.get(entry.name) ?? fallbackSkillDefinition(entry.name)!);
+  const byName = new Map<string, PublicSkillDefinition>();
+  for (const skill of publicSkills) {
+    byName.set(skill.name, skill);
+  }
+  return [...byName.values()];
 }
 
 function fallbackPublicSkillDefinitions(): PublicSkillDefinition[] {
-  return publicSkillEntries.map((entry) => fallbackSkillDefinition(entry.name)!);
+  return Object.keys(fallbackSkillDefinitions).map((name) => fallbackSkillDefinition(name)!);
+}
+
+function fallbackPublicSkillManifestEntries(): PublicSkillManifestEntry[] {
+  return fallbackPublicSkillDefinitions().map(({ name, tool_name, path }) => ({ name, tool_name, path }));
 }
 
 function fallbackSkillDefinition(name: EvolvriaSkillName): PublicSkillDefinition | null {
-  const fallback: Record<EvolvriaSkillName, Omit<PublicSkillDefinition, "name" | "path">> = {
+  const fallback = fallbackSkillDefinitions[name];
+  return fallback ? { name, path: defaultSkillPath(name), ...fallback } : null;
+}
+
+function titleFromSkillName(name: EvolvriaSkillName): string {
+  return name
+    .split("-")
+    .filter(Boolean)
+    .map((part) => `${part.slice(0, 1).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
+function toolNameForSkill(name: EvolvriaSkillName): EvolvriaSkillToolName {
+  return fallbackSkillDefinitions[name]?.tool_name ?? kebabToCamel(name);
+}
+
+function kebabToCamel(value: string): string {
+  const camel = value.replace(/-([a-z0-9])/g, (_, char: string) => char.toUpperCase()).replace(/^[^A-Za-z]+/, "");
+  return normalizeToolName(camel) ?? "publicSkill";
+}
+
+const fallbackSkillDefinitions: Record<string, Omit<PublicSkillDefinition, "name" | "path">> = {
+    "evolvria-game-mcp": {
+      tool_name: "evolvriaGameMcp",
+      title: "Evolvria 游戏 MCP",
+      description: "说明 Evolvria 游戏 MCP 的受限权限边界、可用工具和安全策略，用于 AI 需要读取或编辑工作区、备份存档、创建世界、修改角色数据时。",
+      runtime_context: "可使用当前 SavePayload",
+      content: "列出游戏 MCP 的权限、风险级别和应优先使用的受控工具。",
+    },
     "initialize-world": {
       tool_name: "initializeWorld",
       title: "初始化世界",
       description: "初始化一个 Evolvria 世界，返回完整 schema v1 SavePayload。AI 调用时可省略 seed，程序会使用当前请求 seed。",
       runtime_context: "可使用当前 world_expand seed",
       content: "根据 WorldSeed 创建 schema v1 世界状态，保留玩家设定并写入开局事件。",
+    },
+    "create-world": {
+      tool_name: "createWorld",
+      title: "创建世界",
+      description: "通过 Evolvria 游戏 MCP 根据 WorldSeed 创建完整 schema v1 SavePayload，可作为新游戏世界或导入前草稿。",
+      runtime_context: "可使用当前 world_expand seed",
+      content: "创建新世界时保留玩家种子、生成角色、地点、势力、开局事件、记忆和线索线程。",
     },
     "advance-world-progress": {
       tool_name: "advanceWorldProgress",
@@ -546,6 +778,41 @@ function fallbackSkillDefinition(name: EvolvriaSkillName): PublicSkillDefinition
       runtime_context: "无需运行时上下文",
       content: "根据姓名、身份、描述、目标和秘密生成符合 Character schema 的角色对象。",
     },
+    "create-character-card": {
+      tool_name: "createCharacterCard",
+      title: "创建角色卡",
+      description: "根据稀疏角色输入生成可保存的外貌描写和画像提示词，用于智能补全角色卡与后续形象生成。",
+      runtime_context: "无需运行时上下文",
+      content: "保留玩家明确外貌约束，补全发型、五官、服饰、配饰、体态、色彩和可复现的角色形象细节。",
+    },
+    "backup-save": {
+      tool_name: "backupSave",
+      title: "备份存档",
+      description: "通过 Evolvria 游戏 MCP 在高风险 AI 操作前创建当前 SavePayload 的 AI checkpoint 备份。",
+      runtime_context: "可使用当前 SavePayload",
+      content: "执行编辑文件、覆盖 payload、创建世界或修改角色前先创建可恢复备份。",
+    },
+    "read-workspace-file": {
+      tool_name: "readWorkspaceFile",
+      title: "读取工作区文件",
+      description: "通过 Evolvria 游戏 MCP 读取当前世界工作区文件；省略 path 时列出可读取文件。",
+      runtime_context: "可使用当前 SavePayload",
+      content: "读取 AGENTS.md、world、memory、maps、characters、locations、history、threads 或 state/payload.json。",
+    },
+    "edit-workspace-file": {
+      tool_name: "editWorkspaceFile",
+      title: "编辑工作区文件",
+      description: "通过 Evolvria 游戏 MCP 校验并准备工作区文本文件编辑，特别是 state/payload.json 的 schema v1 校验。",
+      runtime_context: "可使用当前 SavePayload",
+      content: "只编辑 Markdown、JSON 或文本；payload 修改必须先备份并通过 schema 校验。",
+    },
+    "modify-character-data": {
+      tool_name: "modifyCharacterData",
+      title: "修改角色数据",
+      description: "通过 Evolvria 游戏 MCP 修改角色非姓名字段、玩家笔记、位置、可见性、画像字段和行动倾向。",
+      runtime_context: "可使用当前 SavePayload",
+      content: "角色 name 不可修改；current_location_id 必须引用现有地点；更新后返回新的 SavePayload。",
+    },
     "workspace-save-format": {
       tool_name: "workspaceSaveFormat",
       title: "工作区存档格式",
@@ -554,11 +821,6 @@ function fallbackSkillDefinition(name: EvolvriaSkillName): PublicSkillDefinition
       runtime_context: "无需运行时上下文",
       content: "说明 Evolvria workspace 存档布局、兼容规则、AI 上下文加载策略和必须覆盖的测试面。",
     },
-  };
-  const entry = publicSkillEntries.find((item) => item.name === name);
-  return entry ? { name, path: entry.path, ...fallback[name] } : null;
-}
+};
 
-function toolNameForSkill(name: EvolvriaSkillName): EvolvriaSkillToolName {
-  return publicSkillEntries.find((entry) => entry.name === name)!.tool_name;
-}
+export const evolvriaBuiltInSkills = createEvolvriaBuiltInSkills();

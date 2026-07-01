@@ -1,0 +1,4 @@
+interface:
+  display_name: "记录事件"
+  short_description: "向 Evolvria 时间线追加结构化叙事事件和后果"
+  default_prompt: "Use $record-event to append a structured timeline event to the current save payload."

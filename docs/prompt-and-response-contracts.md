@@ -12,6 +12,7 @@
 
 - `world_expand`
 - `player_action`
+- `character_complete`
 - `character_image`
 - `npc_simulation`
 - `memory_extract`
@@ -22,6 +23,8 @@
 
 - `world_expand`：新建世界时调用 `generateWorld`。
 - `player_action`：探索中提交玩家行动时调用 `resolvePlayerAction`。
+- `character_complete`：新建世界的主角/关键角色“智能生成”按钮调用 `completeSeedCharacter`，必须使用设置中配置的 AI 大模型；使用 AI SDK `ToolLoopAgent` 并要求模型先调用 `generateCharacter` 与 `createCharacterCard` 内置 skills，最终只回填当前表单字段。未配置远端、模型调用失败或未确认调用必需 skills 时直接报错，不使用本地模板兜底。
+- `character_image`：人物界面生成角色形象时调用 `generateCharacterImage`，先生成内部角色卡，再请求图像接口或本地占位。
 
 `npc_simulation` 当前由本地 `runNpcTick` 生成简短事件和 AI 日志；其他请求类型是 schema 和规划预留。
 
@@ -39,16 +42,26 @@ TypeScript 端 `callAiSdkJson` 构造：
 
 AI SDK 使用 `Output.json()`，由 provider 发送 JSON 响应格式，并在客户端用 Zod 校验关键结构。`baseUrl` 会标准化为 OpenAI-compatible base URL，例如 `https://one.gloscai.com` 会变成 `https://one.gloscai.com/v1`。
 
-`callAiSdkJson` 使用 AI SDK `ToolLoopAgent`，并向模型暴露程序内置 skills。可执行 tool 仍由 TypeScript 提供，模型可读的 skill 指令从 `public/skills/*/SKILL.md` 加载；浏览器端通过 `public/skills/manifest.json` 枚举目录。skills 会在每次请求创建时绑定当前运行时上下文：`world_expand` 绑定 seed，`player_action` 绑定 action/context，若调用方传入完整 `SavePayload` 也会绑定 payload。模型调用 skill 时应传入最小必要参数，不应复制整份 payload。最终响应仍必须符合 `output_contract`，客户端只按最终 JSON 写入游戏状态。
+`callAiSdkJson` 使用 AI SDK `ToolLoopAgent`，并向模型暴露程序内置 skills。可执行 tool 仍由 TypeScript 提供，模型可读的 skill 指令从 `public/skills/*/SKILL.md` 加载；Vite 会扫描 `public/skills/*/SKILL.md` 自动生成 `public/skills/manifest.json`，浏览器端通过该 manifest 枚举目录。没有内置实现的自定义 skill 会作为 reference tool 暴露，调用后返回对应 Markdown 内容。skills 会在每次请求创建时绑定当前运行时上下文：`world_expand` 绑定 seed，`player_action` 绑定 action/context，若调用方传入完整 `SavePayload` 也会绑定 payload。模型调用 skill 时应传入最小必要参数，不应复制整份 payload。最终响应仍必须符合 `output_contract`，客户端只按最终 JSON 写入游戏状态。
 
-当前 public skill 包名称使用小写字母、数字和连字符，并与目录名一致；`tool_name` 是代码里的 AI SDK tool key：
+项目同时提供本地 stdio MCP 服务 `scripts/evolvria-mcp.mjs`，用于外部 AI 客户端在受控边界内操作 Evolvria 游戏存档。它只允许访问 `saves/active_world` 工作区、schema v1 payload、备份目录和受控角色字段；禁止访问 settings、token、`.env` 和工作区外路径。可通过 `yarn mcp:game` 启动，使用 `EVOLVRIA_APP_DATA_DIR` 或 `EVOLVRIA_SAVE_DIR` 指向指定数据目录。
+
+当前内置可执行 public skill 包名称使用小写字母、数字和连字符，并与目录名一致；`tool_name` 默认由名称转为 camelCase，也可在 manifest/frontmatter 中显式指定：
 
 - `initialize-world` / `initializeWorld`：根据 `WorldSeed` 初始化完整 `SavePayload`。
+- `evolvria-game-mcp` / `evolvriaGameMcp`：说明游戏 MCP 权限边界和本地 MCP 服务。
+- `create-world` / `createWorld`：根据 `WorldSeed` 创建完整 `SavePayload`，作为 MCP 创建世界权限。
 - `advance-world-progress` / `advanceWorldProgress`：推进世界时间并写入世界进度事件。
 - `trigger-player-action` / `triggerPlayerAction`：根据玩家行动和上下文生成 `PlayerActionResult`，可用于本地确定性模拟。
 - `record-event` / `recordEvent`：写入时间线事件。
 - `log-event` / `logEvent`：写入 AI/skill 调用日志，只保存摘要和脱敏 raw。
 - `generate-character` / `generateCharacter`：生成符合 schema 的角色对象。
+- `create-character-card` / `createCharacterCard`：根据稀疏角色输入生成可保存的外貌描写和画像提示词，供智能补全和形象生成使用。
+- `backup-save` / `backupSave`：在高风险 MCP/AI 操作前保存 AI checkpoint。
+- `read-workspace-file` / `readWorkspaceFile`：读取或列出当前世界工作区文件。
+- `edit-workspace-file` / `editWorkspaceFile`：校验工作区文本编辑，尤其是 `state/payload.json` 的 schema v1。
+- `modify-character-data` / `modifyCharacterData`：安全修改角色非姓名字段并返回更新后的 `SavePayload`。
+- `workspace-save-format` / `workspaceSaveFormat`：查询文件夹式世界存档和 workspace_context 规则。
 
 Tauri `call_glosc` fallback 仍直接构造 `/v1/chat/completions` 请求，并使用 `response_format: {"type":"json_object"}`。
 

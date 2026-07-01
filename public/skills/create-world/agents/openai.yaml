@@ -1,0 +1,4 @@
+interface:
+  display_name: "创建世界"
+  short_description: "通过 MCP 从玩家种子创建 schema v1 世界草稿"
+  default_prompt: "Use $create-world to create an Evolvria schema v1 world through the controlled MCP flow."

@@ -10,6 +10,7 @@ import {
   createInitialPayload,
   currentLocation,
   emptyPayload,
+  findTravelActionTarget,
   movePlayerTo,
   nearbyLocations,
   recordAiLog,
@@ -30,6 +31,12 @@ import { useSettingsStore } from "@/stores/settings";
 import type { ExportWorldResult, SaveEntry } from "@/services/save";
 import type { Character, Location, SavePayload, TimelineEvent, World, WorldSeed } from "@/types/domain";
 
+export interface CreateWorldResult {
+  fallback: boolean;
+  warnings: string[];
+  message: string;
+}
+
 export const useWorldStore = defineStore("world", () => {
   const payload = ref<SavePayload>(emptyPayload());
   const busy = ref(false);
@@ -49,6 +56,7 @@ export const useWorldStore = defineStore("world", () => {
   const aiLogs = computed(() => payload.value.ai_logs);
   const suggestedActions = computed(() => payload.value.suggested_actions);
   const current = computed(() => currentLocation(payload.value));
+  const explorationTravelTargets = computed(() => payload.value.locations.filter((location) => location.id !== current.value?.id).slice(0, 4));
   const activeThreads = computed(() => payload.value.threads.filter((thread) => thread.status === "open"));
   const usageSummary = computed(() => aiUsageSummary(payload.value.ai_logs));
   const consistencyIssues = computed(() => validateWorldConsistency(payload.value));
@@ -79,37 +87,49 @@ export const useWorldStore = defineStore("world", () => {
     await refreshSaveEntries();
   }
 
-  async function createWorld(seed: WorldSeed): Promise<void> {
+  async function createWorld(seed: WorldSeed): Promise<CreateWorldResult> {
     const settingsStore = useSettingsStore();
     busy.value = true;
     try {
       const aiResult = await generateWorld(seed, settingsStore.settings);
       if (aiResult.status !== "ok") throw new Error(aiResult.summary);
+      const warnings = aiResult.warnings ?? [];
       let next = createInitialPayload(seed);
       next = applyWorldExpansion(next, aiResult);
-      next = recordAiLog(next, "world_expand", "ok", aiResult.summary, aiResult.usage, aiResult.raw);
+      next = recordAiLog(next, "world_expand", "ok", aiLogSummary(aiResult.summary, warnings), aiResult.usage, aiResult.raw);
       payload.value = next;
       lastNarrative.value = aiResult.openingNarrative?.trim() || aiResult.summary || next.timeline[0]?.description || "";
       await persist();
+      return {
+        fallback: Boolean(aiResult.fallback),
+        warnings,
+        message: worldCreationMessage(Boolean(aiResult.fallback), warnings),
+      };
     } finally {
       busy.value = false;
     }
   }
 
   async function submitPlayerAction(action: string): Promise<void> {
-    if (!hasWorld.value || !action.trim()) return;
+    const trimmed = action.trim();
+    if (!hasWorld.value || !trimmed) return;
+    const travelTarget = travelActionTarget(trimmed);
+    if (travelTarget) {
+      await goToLocation(travelTarget.id);
+      return;
+    }
     const settingsStore = useSettingsStore();
     busy.value = true;
-    pendingAction.value = action;
+    pendingAction.value = trimmed;
     streamingNarrative.value = "";
     try {
       await saveAiCheckpoint(payload.value);
-      const result = await resolvePlayerAction(action, buildAiContext(action), settingsStore.settings);
+      const result = await resolvePlayerAction(trimmed, buildAiContext(trimmed), settingsStore.settings);
       if (result.narrative) {
         await streamNarrative(result.narrative);
       }
-      let next = applyPlayerAction(payload.value, result, action);
-      next = recordAiLog(next, "player_action", result.status === "ok" ? "ok" : "error", result.narrative || result.error || action, result.usage);
+      let next = applyPlayerAction(payload.value, result, trimmed);
+      next = recordAiLog(next, "player_action", result.status === "ok" ? "ok" : "error", result.narrative || result.error || trimmed, result.usage);
       payload.value = next;
       lastNarrative.value = result.narrative;
       await persist();
@@ -165,6 +185,10 @@ export const useWorldStore = defineStore("world", () => {
   async function goToLocation(locationId: string): Promise<void> {
     payload.value = movePlayerTo(payload.value, locationId);
     await persist();
+  }
+
+  function travelActionTarget(action: string, candidates: readonly Location[] = payload.value.locations): Location | undefined {
+    return findTravelActionTarget(action, candidates);
   }
 
   async function editCharacterNote(characterId: string, note: string): Promise<void> {
@@ -304,6 +328,7 @@ export const useWorldStore = defineStore("world", () => {
     aiLogs,
     suggestedActions,
     current,
+    explorationTravelTargets,
     activeThreads,
     usageSummary,
     consistencyIssues,
@@ -316,6 +341,7 @@ export const useWorldStore = defineStore("world", () => {
     buildAiContext,
     getUsageEstimate,
     goToLocation,
+    travelActionTarget,
     editCharacterNote,
     editCharacterProfile,
     regenerateCharacterImage,
@@ -330,3 +356,12 @@ export const useWorldStore = defineStore("world", () => {
     filteredCharacters,
   };
 });
+
+function aiLogSummary(summary: string, warnings: string[]): string {
+  return warnings.length > 0 ? `${summary}\n${warnings.join("；")}` : summary;
+}
+
+function worldCreationMessage(fallback: boolean, warnings: string[]): string {
+  if (!fallback && warnings.length === 0) return "世界已创建。";
+  return `世界已创建。${warnings.join("；") || "远端 AI 不可用，已使用本地模拟扩写。"}`;
+}

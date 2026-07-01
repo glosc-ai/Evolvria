@@ -1,6 +1,7 @@
 import { mockPlayerAction } from "@/domain/fixtures";
-import { aiSdkJsonObjectSchema, callAiSdkJson, playerActionAiSchema } from "@/services/ai-sdk";
+import { aiSdkJsonObjectSchema, callAiSdkJson, parseAiJsonish, playerActionAiSchema } from "@/services/ai-sdk";
 import { safeInvoke } from "@/services/tauri";
+import { redactSensitive } from "@/services/text";
 import { buildSeedWorkspaceAiContext } from "@/services/world-workspace";
 import type { AIUsage, AIPurpose, PlayerActionResult, Settings, WorldSeed } from "@/types/domain";
 
@@ -24,6 +25,7 @@ export interface GloscCallResult {
   parsed?: unknown;
   error?: string;
   usage?: AIUsage;
+  toolCalls?: string[];
 }
 
 export interface WorldExpansionResult {
@@ -32,6 +34,8 @@ export interface WorldExpansionResult {
   openingTitle?: string;
   openingNarrative?: string;
   suggestedActions?: string[];
+  fallback?: boolean;
+  warnings?: string[];
   usage: AIUsage;
   raw?: string;
 }
@@ -60,6 +64,24 @@ export interface CharacterImageResult {
   error?: string;
 }
 
+export type SeedCharacterCompletionKind = "hero" | "key_character";
+
+export interface SeedCharacterCompletionInput {
+  kind: SeedCharacterCompletionKind;
+  seed: WorldSeed;
+  character: Partial<WorldSeed["hero"] & WorldSeed["key_characters"][number]>;
+}
+
+export interface SeedCharacterCompletionResult {
+  status: "ok" | "error";
+  fields: Record<string, string>;
+  used_skills: string[];
+  warnings: string[];
+  usage: AIUsage;
+  raw?: string;
+  error?: string;
+}
+
 interface CharacterCardResult {
   appearance_description: string;
   portrait_prompt: string;
@@ -76,16 +98,67 @@ const PURPOSE_LABELS: Record<string, string> = {
   memory_extract: "记忆抽取",
   summary_update: "阶段摘要",
   consistency_check: "一致性检查",
+  character_complete: "角色智能生成",
   character_image: "角色形象",
 };
 
 function localWorldExpansion(seed: WorldSeed, reason = ""): WorldExpansionResult {
-  const prefix = reason ? `${reason}，已使用本地模拟。` : "";
+  const warning = reason ? `${cleanRemoteReason(reason)}，已降级为本地模拟扩写。` : "未配置远端 AI，已使用本地模拟扩写。";
   return {
     status: "ok",
-    summary: `${prefix}${seed.world_name} 已根据 ${seed.genre}/${seed.tone} 设定完成本地扩写。`,
+    summary: `${seed.world_name} 已根据 ${seed.genre}/${seed.tone} 设定完成本地扩写。`,
+    fallback: true,
+    warnings: [warning],
     usage: { input_tokens: 860, output_tokens: 1080 },
   };
+}
+
+export async function completeSeedCharacter(input: SeedCharacterCompletionInput, settings: Settings): Promise<SeedCharacterCompletionResult> {
+  if (!isGloscConfigured(settings)) {
+    return {
+      status: "error",
+      fields: {},
+      used_skills: [],
+      warnings: ["请先在设置中配置 AI 服务地址和访问令牌。"],
+      usage: { input_tokens: 0, output_tokens: 0 },
+      error: "角色智能生成需要调用设置中配置的 AI 大模型，当前未配置完整。",
+    };
+  }
+
+  const result = await callAiSdkJson({
+    settings,
+    purpose: "character_complete",
+    payload: {
+      task: "generate_seed_character",
+      instructions:
+        "这是新建世界表单里的智能生成。必须先调用 generateCharacter，再调用 createCharacterCard；最终只返回当前角色表单字段。保留玩家已经明确填写的姓名、性别和外貌事实，补全更丰富的身份、目标、弱点、性格、行动倾向和 appearance_description。",
+      seed: input.seed,
+      character_kind: input.kind,
+      character: input.character,
+      allowed_gender_values: ["男", "女", "其他"],
+      existing_key_characters: input.seed.key_characters.map((character) => ({
+        name: character.name,
+        gender: character.gender,
+        role: character.role,
+        relationship: character.relationship,
+      })),
+    },
+    schema: aiSdkJsonObjectSchema,
+    maxOutputTokens: 900,
+    temperature: 0.65,
+  });
+
+  if (result.status !== "ok") {
+    return {
+      status: "error",
+      fields: {},
+      used_skills: [],
+      warnings: ["AI 大模型调用失败，未使用本地模板兜底。"],
+      usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+      error: result.error,
+    };
+  }
+  return normalizeSeedCharacterCompletion(input, result);
 }
 
 export async function generateCharacterImage(input: CharacterImageInput, settings: Settings): Promise<CharacterImageResult> {
@@ -184,6 +257,104 @@ function normalizeCharacterCard(result: GloscCallResult, fallback: CharacterCard
   };
 }
 
+function normalizeSeedCharacterCompletion(
+  input: SeedCharacterCompletionInput,
+  result: { parsed?: unknown; content?: string; usage?: AIUsage; toolCalls?: string[] },
+): SeedCharacterCompletionResult {
+  const source = parseJsonish(result.parsed) || parseJsonish(result.content);
+  if (pickText(source, ["status"]).toLowerCase() === "error") {
+    return {
+      status: "error",
+      fields: {},
+      used_skills: completionUsedSkills(source, result.toolCalls),
+      warnings: firstStringArray(readUnknown(source, "warnings")) ?? [],
+      usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+      error: pickText(source, ["error"]) || "角色智能生成返回错误状态。",
+      raw: result.content,
+    };
+  }
+  const characterSource = readRecord(source, "character");
+  const fieldSource = firstRecord(
+    readRecord(characterSource, "fields"),
+    characterSource,
+    readRecord(source, "fields"),
+    isRecord(source) ? source : undefined,
+  );
+  const generatedFields = collectCompletionFields(input.kind, fieldSource);
+  const usedSkills = completionUsedSkills(source, result.toolCalls);
+  const normalizedUsedSkills = new Set(usedSkills.map(normalizeSkillName));
+  const missingSkills = ["generateCharacter", "createCharacterCard"].filter((skill) => !normalizedUsedSkills.has(normalizeSkillName(skill)));
+  if (missingSkills.length > 0) {
+    return {
+      status: "error",
+      fields: {},
+      used_skills: usedSkills,
+      warnings: [`AI 响应未确认调用内置 skills：${missingSkills.join("、")}。`],
+      usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+      error: "角色智能生成必须调用游戏内置 skills，本次响应未满足要求。",
+      raw: result.content,
+    };
+  }
+  if (Object.keys(generatedFields).length === 0) {
+    return {
+      status: "error",
+      fields: {},
+      used_skills: usedSkills,
+      warnings: ["AI 响应缺少可回填的角色字段。"],
+      usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+      error: "角色智能生成没有返回有效角色卡字段。",
+      raw: result.content,
+    };
+  }
+  return {
+    status: "ok",
+    fields: mergeCompletionFields(input.kind, input.character, generatedFields),
+    used_skills: usedSkills,
+    warnings: firstStringArray(readUnknown(source, "warnings")) ?? [],
+    usage: result.usage ?? { input_tokens: 0, output_tokens: 0 },
+    raw: result.content,
+  };
+}
+
+export { normalizeSeedCharacterCompletion };
+
+function collectCompletionFields(kind: SeedCharacterCompletionKind, source: unknown): Record<string, string> {
+  const keys = kind === "hero" ? heroCompletionKeys() : keyCharacterCompletionKeys();
+  return Object.fromEntries(keys.map((key) => [key, pickText(source, [key])]).filter(([, value]) => value)) as Record<string, string>;
+}
+
+function mergeCompletionFields(
+  kind: SeedCharacterCompletionKind,
+  original: Partial<WorldSeed["hero"] & WorldSeed["key_characters"][number]>,
+  generated: Record<string, string>,
+): Record<string, string> {
+  const merged: Record<string, string> = {};
+  const keys = kind === "hero" ? heroCompletionKeys() : keyCharacterCompletionKeys();
+  for (const key of keys) {
+    const existing = cleanField(original[key as keyof typeof original]);
+    const shouldPreserveExisting = (key === "name" || key === "gender") && existing;
+    merged[key] = shouldPreserveExisting ? existing : generated[key] || existing;
+  }
+  merged.gender = normalizeSeedGender(merged.gender);
+  return merged;
+}
+
+function heroCompletionKeys(): string[] {
+  return ["name", "gender", "description", "goal", "ability", "weakness", "appearance_description"];
+}
+
+function keyCharacterCompletionKeys(): string[] {
+  return ["name", "gender", "role", "relationship", "personality", "goal", "secret", "action_tendency", "description", "appearance_description"];
+}
+
+function normalizeSeedGender(value: string): string {
+  return ["男", "女", "其他"].includes(value) ? value : "其他";
+}
+
+function cleanField(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 function normalizeImagesBaseUrl(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "");
   if (!trimmed) return "https://api.openai.com/v1";
@@ -254,7 +425,7 @@ export function isGloscConfigured(settings: Settings): boolean {
 export function estimateUsage(purpose: string, input: unknown, settings: Settings): UsageEstimate {
   const inputText = JSON.stringify(input);
   const inputTokens = Math.max(120, Math.ceil(inputText.length / 2.6));
-  const outputTokens = purpose === "world_expand" ? 1200 : purpose === "player_action" ? 600 : 360;
+  const outputTokens = purpose === "world_expand" ? 1200 : purpose === "player_action" ? 600 : purpose === "character_complete" ? 700 : 360;
   const remote = isGloscConfigured(settings);
   return {
     purpose,
@@ -280,9 +451,9 @@ export async function generateWorld(seed: WorldSeed, settings: Settings): Promis
     return localWorldExpansion(seed);
   }
   const payload = { seed, workspace_context: buildSeedWorkspaceAiContext(seed) };
-  const result = await callGlosc("world_expand", payload, settings, 1200);
+  const result = await callGlosc("world_expand", payload, settings, 1200, { nativeFallback: false });
   if (!result || result.status !== "ok") {
-    return localWorldExpansion(seed, result?.error ? `Glosc One 调用失败：${result.error}` : "Glosc One 调用失败");
+    return localWorldExpansion(seed, result?.error ? `远端世界扩写失败：${result.error}` : "远端世界扩写失败");
   }
   return normalizeGloscWorldExpansion(result, seed);
 }
@@ -294,30 +465,100 @@ export async function resolvePlayerAction(action: string, context: unknown, sett
   const result = await callGlosc("player_action", { action, context }, settings, 600);
   const normalized = normalizeGloscPlayerAction(result);
   if (normalized) return normalized;
-  return { ...mockPlayerAction(action, context), warnings: ["远端响应不可用，已使用本地模拟结果。"] };
+  const reason = result?.error ? `远端响应不可用：${result.error}` : "远端响应不可用";
+  return { ...mockPlayerAction(action, context), warnings: [`${cleanRemoteReason(reason)}，已使用本地模拟结果。`] };
 }
 
-async function callGlosc(purpose: AIPurpose, payload: unknown, settings: Settings, maxOutputTokens: number): Promise<GloscCallResult | null> {
-  const sdkResult = await callAiSdkJson({
-    settings,
-    purpose,
-    payload,
-    schema: purpose === "player_action" ? playerActionAiSchema : aiSdkJsonObjectSchema,
-    maxOutputTokens,
-  });
+async function callGlosc(
+  purpose: AIPurpose,
+  payload: unknown,
+  settings: Settings,
+  maxOutputTokens: number,
+  options: { nativeFallback?: boolean } = {},
+): Promise<GloscCallResult | null> {
+  let sdkResult: GloscCallResult;
+  try {
+    sdkResult = sanitizeGloscResult(
+      await callAiSdkJson({
+        settings,
+        purpose,
+        payload,
+        schema: purpose === "player_action" ? playerActionAiSchema : aiSdkJsonObjectSchema,
+        maxOutputTokens,
+      }),
+    );
+  } catch (error) {
+    sdkResult = { status: "error", error: remoteErrorMessage(error) };
+  }
   if (sdkResult.status === "ok") return sdkResult;
+  if (options.nativeFallback === false || isAiTimeoutError(sdkResult.error)) return sdkResult;
 
-  const nativeResult = await safeInvoke<GloscCallResult>("call_glosc", {
-    request: {
-      baseUrl: settings.glosc_base_url,
-      token: settings.glosc_token,
-      model: settings.model,
-      purpose,
-      payload,
-      timeoutSeconds: settings.timeout_seconds,
-    },
+  try {
+    const nativeResult = await withRemoteTimeout(
+      safeInvoke<GloscCallResult>("call_glosc", {
+        request: {
+          baseUrl: settings.glosc_base_url,
+          token: settings.glosc_token,
+          model: settings.model,
+          purpose,
+          payload,
+          timeoutSeconds: settings.timeout_seconds,
+        },
+      }),
+      settings.timeout_seconds,
+      "原生 Glosc 调用",
+    );
+    return sanitizeGloscResult(nativeResult) ?? sdkResult;
+  } catch (error) {
+    return {
+      status: "error",
+      error: combineRemoteErrors(sdkResult.error, `原生回退失败：${remoteErrorMessage(error)}`),
+      usage: sdkResult.usage,
+      toolCalls: sdkResult.toolCalls,
+    };
+  }
+}
+
+function isAiTimeoutError(error: string | undefined): boolean {
+  return Boolean(error && /超时|超过设置|停止等待|timeout|timed out|abort/i.test(error));
+}
+
+function sanitizeGloscResult<T extends GloscCallResult | null>(result: T): T {
+  if (!result) return result;
+  return {
+    ...result,
+    error: result.error ? cleanRemoteReason(result.error) : result.error,
+    content: result.content ? redactSensitive(result.content) : result.content,
+  } as T;
+}
+
+function withRemoteTimeout<T>(promise: Promise<T>, timeoutSeconds: number, label: string): Promise<T> {
+  const normalizedTimeoutSeconds = Math.max(5, Number.isFinite(timeoutSeconds) ? Math.floor(timeoutSeconds) : 45);
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label}超过设置的 ${normalizedTimeoutSeconds} 秒，已停止等待。`));
+    }, normalizedTimeoutSeconds * 1000 + 250);
+
+    promise.then(resolve, reject).finally(() => clearTimeout(timer));
   });
-  return nativeResult ?? sdkResult;
+}
+
+function combineRemoteErrors(...errors: Array<string | undefined>): string {
+  const cleaned = errors.map((error) => (error ? cleanRemoteReason(error) : "")).filter(Boolean);
+  return [...new Set(cleaned)].join("；") || "远端调用失败";
+}
+
+function remoteErrorMessage(error: unknown): string {
+  return cleanRemoteReason(error instanceof Error ? error.message : String(error));
+}
+
+function cleanRemoteReason(reason: string): string {
+  const cleaned = redactSensitive(reason)
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[。；;，,\s]+$/, "");
+  if (!cleaned) return "远端调用失败";
+  return cleaned.length > 240 ? `${cleaned.slice(0, 240)}...` : cleaned;
 }
 
 export function normalizeGloscPlayerAction(result: GloscCallResult | null): PlayerActionResult | null {
@@ -387,14 +628,7 @@ function isPlayerActionResult(value: unknown): value is PlayerActionResult {
 }
 
 function parseJsonish(value: unknown): unknown {
-  if (typeof value !== "string") return value;
-  const trimmed = value.trim();
-  if (!trimmed) return "";
-  try {
-    return JSON.parse(trimmed);
-  } catch {
-    return trimmed;
-  }
+  return parseAiJsonish(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -434,9 +668,33 @@ function firstRecord(...values: Array<Record<string, unknown> | undefined>): Rec
 
 function firstStringArray(...values: unknown[]): string[] | undefined {
   for (const value of values) {
-    if (!Array.isArray(value)) continue;
-    const items = value.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
+    const parsed = typeof value === "string" ? parseJsonish(value) : value;
+    if (typeof parsed === "string") {
+      const items = parsed
+        .split(/[,，、\r\n]+/)
+        .map((item) => item.trim())
+        .filter(Boolean);
+      if (items.length > 0) return items;
+      continue;
+    }
+    if (!Array.isArray(parsed)) continue;
+    const items = parsed.filter((item): item is string => typeof item === "string" && Boolean(item.trim())).map((item) => item.trim());
     if (items.length > 0) return items;
   }
   return undefined;
+}
+
+function completionUsedSkills(source: unknown, toolCalls?: string[]): string[] {
+  return uniqueStrings(
+    ...(firstStringArray(readUnknown(source, "used_skills"), readUnknown(source, "usedSkills")) ?? []),
+    ...(toolCalls ?? []),
+  );
+}
+
+function uniqueStrings(...values: string[]): string[] {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
+}
+
+function normalizeSkillName(value: string): string {
+  return value.replace(/[-_\s]/g, "").toLowerCase();
 }

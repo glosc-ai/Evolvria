@@ -1,4 +1,0 @@
-interface:
-  display_name: "Create Character Card"
-  short_description: "Generate Evolvria internal character cards and portrait prompts."
-  default_prompt: "Create an internal Evolvria character card with enriched appearance details and a portrait prompt."

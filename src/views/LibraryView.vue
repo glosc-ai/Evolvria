@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { LayoutGrid, ListFilter, Search, ShieldCheck } from "lucide-vue-next";
-import type { LibraryKind, LibrarySort } from "@/domain/library";
+import { LayoutGrid, ListFilter, Search, ShieldCheck, Sparkles } from "lucide-vue-next";
+import { buildLibraryItems, publicCatalogStats, type LibraryCatalog, type LibraryKind, type LibrarySort } from "@/domain/library";
 import { useAppStore } from "@/stores/app";
 import type { ContentRating, PlayMode } from "@/types/domain";
 
 const store = useAppStore();
 const query = ref("");
 const kind = ref<LibraryKind>("all");
+const catalog = ref<LibraryCatalog>("all");
 const rating = ref<"all" | ContentRating>("all");
 const mode = ref<"all" | PlayMode>("all");
 const language = ref("all");
@@ -20,6 +21,7 @@ const searchResult = computed(() =>
   store.searchContent({
     query: query.value,
     kind: kind.value,
+    catalog: catalog.value,
     rating: rating.value,
     mode: mode.value,
     language: language.value,
@@ -32,6 +34,7 @@ const searchResult = computed(() =>
 const filteredItems = computed(() => searchResult.value.items);
 const facets = computed(() => searchResult.value.facets);
 const totalItems = computed(() => store.searchContent({ pageSize: 1, adultUnlocked: true }).total);
+const catalogStats = computed(() => publicCatalogStats(buildLibraryItems(store.envelope.entities)));
 
 const kinds: Array<{ value: LibraryKind; label: string }> = [
   { value: "all", label: "All" },
@@ -41,9 +44,17 @@ const kinds: Array<{ value: LibraryKind; label: string }> = [
   { value: "media", label: "Media" },
 ];
 
+const catalogs: Array<{ value: LibraryCatalog; label: string }> = [
+  { value: "all", label: "All Local" },
+  { value: "public", label: "Public Catalog" },
+  { value: "private", label: "Private Drafts" },
+  { value: "review", label: "Review Queue" },
+];
+
 function resetFilters() {
   query.value = "";
   kind.value = "all";
+  catalog.value = "all";
   rating.value = "all";
   mode.value = "all";
   language.value = "all";
@@ -69,6 +80,12 @@ function resetFilters() {
         </button>
       </div>
       <div class="row">
+        <label class="field-box">
+          <span>Catalog</span>
+          <select v-model="catalog" class="select">
+            <option v-for="item in catalogs" :key="item.value" :value="item.value">{{ item.label }}</option>
+          </select>
+        </label>
         <label class="field-box" style="flex: 1 1 320px">
           <span><Search :size="15" /> Search</span>
           <input v-model="query" class="input" placeholder="标题、角色、场景、标签、创作者" />
@@ -114,6 +131,7 @@ function resetFilters() {
             <option value="title">Title</option>
             <option value="completion">Completion</option>
             <option value="heat">Heat placeholder</option>
+            <option value="recommended">Recommended</option>
           </select>
         </label>
         <div class="field-box">
@@ -139,10 +157,31 @@ function resetFilters() {
 
     <div class="section-title" style="margin-top: 22px">
       <h2>Results</h2>
-      <span class="muted small">{{ searchResult.total }} / {{ totalItems }} items</span>
+      <span class="muted small">
+        {{ searchResult.total }} / {{ totalItems }} items · public {{ catalogStats.publicCount }} · review {{ catalogStats.reviewCount }}
+      </span>
     </div>
 
-    <div v-if="view === 'grid'" class="card-grid">
+    <section v-if="catalogStats.recommended.length" class="panel field-grid" aria-label="Public recommendations">
+      <h3><Sparkles :size="17" /> Public Recommendations</h3>
+      <div class="card-grid compact-grid">
+        <RouterLink
+          v-for="item in catalogStats.recommended"
+          :key="`recommendation:${item.kind}:${item.id}`"
+          class="media-card"
+          :to="item.route || '/library'"
+          :aria-label="`recommended: ${item.title}`"
+        >
+          <div class="card-body">
+            <h3>{{ item.title }}</h3>
+            <p>{{ item.subtitle || item.summary }}</p>
+            <span class="muted small">{{ item.rating }} · {{ item.status }} · score {{ item.completion + item.heat }}</span>
+          </div>
+        </RouterLink>
+      </div>
+    </section>
+
+    <div v-if="view === 'grid'" class="card-grid" style="margin-top: 18px">
       <component
         :is="item.route ? RouterLink : 'article'"
         v-for="item in filteredItems"
@@ -162,7 +201,7 @@ function resetFilters() {
             <span v-for="itemTag in item.tags.slice(0, 4)" :key="itemTag" class="tag">{{ itemTag }}</span>
           </div>
           <p class="muted small" style="margin-top: 10px">
-            {{ item.language || "unknown" }} · {{ item.status }} · {{ item.castCount ?? 0 }} cast
+            {{ item.language || "unknown" }} · {{ item.status }} · {{ item.visibility || "private" }} · {{ item.castCount ?? 0 }} cast
           </p>
         </div>
       </component>
@@ -188,7 +227,7 @@ function resetFilters() {
         <strong>{{ item.title }}</strong>
         <span>{{ item.rating || "-" }}</span>
         <span>{{ item.modes.join(", ") || "-" }}</span>
-        <span v-if="view === 'review'">{{ item.status }} · {{ item.completion }}%</span>
+        <span v-if="view === 'review'">{{ item.moderationState || item.status }} · {{ item.visibility || "private" }} · {{ item.completion }}%</span>
         <span v-else>{{ new Date(item.updatedAt).toLocaleDateString() }}</span>
       </component>
     </div>

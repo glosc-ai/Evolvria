@@ -49,6 +49,9 @@ type BackupMeta = {
   createdAt: string;
   path?: string;
   sizeBytes?: number;
+  hasSqliteIndex?: boolean;
+  sqlitePath?: string;
+  sqliteSizeBytes?: number;
 };
 
 type AccountAgeGate = "unknown" | "adult" | "minor";
@@ -71,6 +74,14 @@ type BudgetSettings = {
   maxEstimatedCostPerTurn: number;
 };
 
+type SyncSettings = {
+  enabled: boolean;
+  endpoint?: string;
+  lastSyncAt?: string;
+  status: "local_only" | "ready" | "syncing" | "conflict" | "error";
+  conflictCount: number;
+};
+
 type WorkspaceSettings = {
   activeWorkspaceId: string;
   adultContentUnlocked: boolean;
@@ -82,8 +93,9 @@ type WorkspaceSettings = {
 ```
 
 MVP 在发送前用 `BudgetSettings` 做本地预估和拦截；它不是实际扣费系统，真实余额和结算留到 Cloud 阶段。
-`BackupMeta` 不写入 `SaveEnvelope`，而是由 repository 从 Tauri `backups/` 目录或浏览器 fallback 动态读取；恢复备份前必须创建 `pre_restore` 备份。
+`BackupMeta` 不写入 `SaveEnvelope`，而是由 repository 从 Tauri `backups/` 目录或浏览器 fallback 动态读取；恢复备份前必须创建 `pre_restore` 备份。桌面端 `hasSqliteIndex/sqlitePath/sqliteSizeBytes` 表示该备份是否包含 `search.sqlite3` mirror，浏览器 fallback 恒为 false。
 `CloudAccountSession` 是 Account 页面的本地预览 session，不代表真实登录 token，不包含密码或 OAuth credential；启用私有同步前需要本地 session，`minor` 年龄门槛会移除 publish/billing/adult_content 权限并强制关闭 AdultLocked 解锁。
+`SyncSettings` 只表达本地同步意图和状态，不代表已连接云端。Phase 6 本地预览的 `SyncDeviceSnapshot` 只包含设备状态、实体计数和 pending/conflict 计数；`.evolvria-sync.json` operation log 可用于离线演练导入/导出，但不是公开内容包。
 
 ## 核心实体
 
@@ -100,10 +112,16 @@ type EntityStore = {
   summaryChapters: Record<string, SummaryChapter>;
   arcs: Record<string, Arc>;
   dungeonMindConfigs: Record<string, DungeonMindConfig>;
+  fateChecks: Record<string, FateCheck>;
   creditLedger: Record<string, CreditLedgerEntry>;
+  creditAdjustments: Record<string, CreditAdjustment>;
   moderationCases: Record<string, ModerationCase>;
+  creatorEarnings: Record<string, CreatorEarning>;
+  creatorPayoutRequests: Record<string, CreatorPayoutRequest>;
   engagementStats: Record<string, EngagementStats>;
   mediaGenerationJobs: Record<string, MediaGenerationJob>;
+  syncOperations: Record<string, SyncOperation>;
+  syncConflicts: Record<string, SyncConflict>;
 };
 ```
 
@@ -163,7 +181,7 @@ type Storyline = {
 };
 ```
 
-`premise` 给玩家看，`worldRules` 给模型和 Fate Engine 用。`supportedModes` 可为 `chat`、`scene`、`fate`、`voice`、`image`。
+`premise` 给玩家看，`worldRules` 给模型和 Fate Engine 用。`supportedModes` 可为 `chat`、`scene`、`fate`、`voice`、`image`、`video`。
 
 ### Scenario
 
@@ -209,6 +227,7 @@ type MediaAsset = {
 ```
 
 所有媒体通过 `relativePath` 引用，前端使用 asset protocol，不保存绝对路径。
+桌面端资产盘点不新增持久化模型，而是由 `workspace_asset_inventory` 从 `MediaAsset.relativePath`、`MediaVariant.relativePath`、引用集合和物理 `assets/` 文件即时计算：`present/missing/browser_only/placeholder/invalid_path` 状态、未引用资产、未跟踪文件和目录体积分布。`AssetMaintenancePlan` 同样是派生视图，只生成非破坏性 action：restore/reimport/replace/review/import-or-remove/compress，不写回 workspace。
 
 ### Persona
 
@@ -273,7 +292,7 @@ type Message = {
 };
 ```
 
-`checkpointIds` 引用 `ChatCheckpoint`。Checkpoint 记录回滚位置，而不是复制完整消息内容；回滚时当前分支裁剪 `messageIds`，后续消息实体保留用于审计或未来分支恢复。`Message` 支持分支和重试：重试不覆盖旧消息，而是通过 `retryOfMessageId` 关联。AI 生成消息写入 `promptContractVersion`，用于调试、回放和未来 contract migration。JSON MVP 阶段仍保留完整 `messageIds` 顺序，Chat UI 通过 `createMessageWindow` 默认只渲染最近 80 条并按需加载更早消息；搜索必须扫描完整聊天。SQLite Beta 再把该窗口策略下沉到分页 query 和索引。
+`checkpointIds` 引用 `ChatCheckpoint`。Checkpoint 记录回滚位置，而不是复制完整消息内容；回滚时当前分支裁剪 `messageIds`，后续消息实体保留用于审计或未来分支恢复。`Message` 支持分支和重试：重试不覆盖旧消息，而是通过 `retryOfMessageId` 关联。AI 生成消息写入 `promptContractVersion`，用于调试、回放和未来 contract migration。JSON MVP 阶段仍保留完整 `messageIds` 顺序，Chat UI 通过 `createMessageWindow` 默认只渲染最近 80 条并按需加载更早消息；搜索必须扫描完整聊天。SQLite Beta 已把该窗口策略下沉到 Tauri command：`chat_messages` 表按 `chat_id/message_index` 建索引，`workspace_query_sqlite_messages` 可读取最近页或基于 `offsetFromEnd` 读取更早页；Chat 主消息流优先使用 offset 0 的分页页数据，浏览器使用同形状 fallback。
 
 ### SummaryChapter 与 Arc
 
@@ -322,14 +341,14 @@ type DungeonMindConfig = {
 };
 ```
 
-MVP 只建模，Beta 实现 Fate Engine。
+当前已落地 Chat 侧 Fate Engine 技术预览：`DungeonMindConfig` 由 Creator Studio 编辑，`FateCheck` 由 Chat 侧 Dungeon Mind 表单或快速 `Fate` 按钮生成；同一 seed、骰子、难度和 modifier 会复现同一掷骰结果，生成的 `fate` message 与 `fateChecks` 会进入叙事上下文。
 
 ### MediaGenerationJob
 
 ```ts
 type MediaGenerationJob = {
   id: string;
-  kind: "voice" | "image";
+  kind: "voice" | "image" | "video";
   storylineId: string;
   chatId?: string;
   messageId?: string;
@@ -350,7 +369,7 @@ type MediaGenerationJob = {
 };
 ```
 
-`MediaGenerationJob` 是 Scene Mode 语音/图片生成的本地任务队列。MVP 只运行 mock 生成，占位资产仍写入 `MediaAsset`、成本写入 `CreditLedgerEntry`，并把生成结果挂回同一条 `Message.sceneHints`，避免 UI 层孤立状态。
+`MediaGenerationJob` 是 Scene Mode 语音/图片/视频生成的本地任务队列。MVP 已让图片任务在存在用户 API key 时走 AI SDK `generateImage` + Glosc One `openai/gpt-image-2`，Tauri 端写入真实 `MediaAsset` 文件；无 key、浏览器预览、语音和视频任务继续降级为 mock 占位资产。生成资产写入 `MediaAsset`，成本写入 `CreditLedgerEntry`；语音和图片会回填同一条 `Message.sceneHints`，视频先挂入故事媒体列表，避免 UI 层孤立状态。Glosc One 模型路由为 image `openai/gpt-image-2`、video `bytedance/doubao-seedance-2-0`、voice `alibaba/qwen3-tts-instruct-flash`。
 
 ### CreditLedger 与 EngagementStats
 
@@ -360,7 +379,7 @@ type CreditLedgerEntry = {
   chatId?: string;
   provider: string;
   model: string;
-  operation: "chat" | "summary" | "scene" | "image" | "voice";
+  operation: "chat" | "summary" | "scene" | "image" | "voice" | "video";
   estimatedTokens: number;
   estimatedCost: number;
   actualCost?: number;
@@ -384,6 +403,38 @@ type EngagementStats = {
 
 MVP 使用本地估算，不做真实扣费。
 本地互动统计由 `recordEngagementStats` 维护：启动故事时增加 Storyline、Scenario 和 Cast Character 的 `starts` 与 `lastPlayedAt`，成功生成聊天回复时增加对应实体的 `messages`，Library 的 `played` 和 `heat` 排序直接读取该快照。云端 `views/likes/favorites` 后续再合并到同一结构。
+
+### CreatorEarning 与 CreatorPayoutRequest
+
+```ts
+type CreatorEarning = {
+  id: string;
+  creatorId: string;
+  sourceEntityId: string;
+  status: "estimated" | "pending" | "available" | "withheld" | "paid" | "reversed";
+  amount: number;
+  currency: "credit";
+  note: string;
+  createdAt: string;
+};
+
+type CreatorPayoutRequest = {
+  id: string;
+  creatorId: string;
+  earningIds: string[];
+  amount: number;
+  currency: "credit";
+  status: "requested" | "approved" | "paid" | "rejected" | "blocked";
+  riskFlags: string[];
+  note: string;
+  requestedAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+};
+```
+
+MVP Account Preview 已落地 payout 本地演练：只有 `available` 且金额大于 0 的收益可被加入 payout request；创建 request 后关联收益转为 `pending`；`paid` 会把收益标为已支付，`rejected` 会退回 `available`，`blocked` 会把收益转为 `withheld` 并记录风控标记。该流程不处理真实付款、KYC、税务或银行信息。
 
 `SummaryChapter` 支持 `updatedAt` 和 `revisionHistory`。用户在 Chat 侧栏编辑摘要时，旧版本写入 revision；回滚时恢复旧摘要、事实、关系变化和未解线索，并把当前版本也保存为新的 revision，保证长程记忆可人工修正且可撤销。
 
@@ -449,7 +500,8 @@ JSON MVP 维护轻量索引：
 
 SQLite Beta 增加：
 
-- FTS：标题、摘要、角色名、标签。
+- FTS：标题、摘要、角色名、标签。（已完成 Tauri 技术预览：`search.sqlite3` 的 `search_items` 和 `search_items_fts` 镜像 Storyline、Character、Scenario、MediaAsset、Message，支持桌面端重建与搜索）
+- 消息分页：`chat_messages(chat_id, message_id, message_index, created_at, role, mode, content, payload)`，按 `(chat_id, message_index)` 建索引，返回完整 Message payload。
 - 关系索引：Storyline-Cast、Chat-Message、Arc-Beat。
 - 同步索引：`serverId`、`syncVersion`、`updatedAt`。
 

@@ -120,7 +120,7 @@ MVP commands：
 | `workspace_create`     | `CreateWorkspaceInput`       | `WorkspaceMeta`      | 创建 workspace 与初始 `save.json`                                 |
 | `workspace_read`       | `workspaceId`                | `SaveEnvelope`       | 读取并校验存档                                                    |
 | `workspace_write`      | `workspaceId, envelope`      | `WorkspaceMeta`      | 原子写入存档                                                      |
-| `workspace_backup`     | `workspaceId, reason`        | `BackupMeta`         | 创建备份                                                          |
+| `workspace_backup`     | `workspaceId, reason`        | `BackupMeta`         | 创建 `save.json` 备份，并在存在 `search.sqlite3` 时附带 SQLite mirror |
 | `workspace_list_backups` | `workspaceId`              | `BackupMeta[]`       | 列出可恢复备份，供 Saves 页面展示                                 |
 | `workspace_restore_backup` | `workspaceId, backupId`   | `SaveEnvelope`       | 恢复指定备份，恢复前自动创建 `pre_restore` 备份                    |
 | `workspace_export_zip` | `workspaceId, targetPath?`   | `ExportResult`       | 导出 zip                                                          |
@@ -177,7 +177,8 @@ app-data/
       save.json
       manifest.json
       backups/
-        2026-07-02T10-20-30Z_before-ai.zip
+        backup_{timestamp}_{reason}.json
+        backup_{timestamp}_{reason}.sqlite3
       assets/
         images/
         audio/
@@ -188,7 +189,7 @@ app-data/
 写入规则：
 
 - `workspace_write` 先写临时文件，再 `rename` 原子替换。
-- 每次 AI 请求前创建轻量 checkpoint；每 N 次或关键操作创建 zip 备份。
+- 每次 AI 请求前创建轻量 checkpoint；每 N 次或关键操作创建 workspace 备份。
 - 导入 zip 必须检查 schema version、路径穿越、资产 MIME、文件大小和重复 ID。
 - `save.json` 只存 metadata 和相对 asset path，不存绝对路径。
 
@@ -198,6 +199,12 @@ SQLite 迁移条件：
 - 搜索和筛选出现明显卡顿。
 - 需要全文检索、关系查询或同步冲突字段级合并。
 
+当前已落地 Phase 5 技术预览：Tauri command `workspace_rebuild_sqlite_index` 会把 `save.json` 中的 Storyline、Character、Scenario、MediaAsset、Message 镜像到 workspace 目录的 `search.sqlite3`，并创建 FTS5 表与 `chat_messages` 分页表；`workspace_search_sqlite_index` 支持标题/正文全文检索，中文精确片段会回退到 LIKE 查询；`workspace_query_sqlite_messages` 支持按 `chatId/pageSize/offsetFromEnd` 读取最近消息窗口或更早分页。Saves 页面提供桌面端重建和搜索入口，Chat 主消息流在无搜索时使用该分页页数据；如果索引缺失或消息数落后，store 会重建 SQLite mirror 后重试。浏览器预览保留同形状 JSON fallback。
+
+备份恢复已包含 SQLite mirror：`workspace_backup` 先复制 `save.json`，再在 `search.sqlite3` 存在时生成同名 `.sqlite3` 兄弟备份并返回 `hasSqliteIndex/sqliteSizeBytes`；`workspace_restore_backup` 恢复 `save.json` 前会创建 `pre_restore`，随后恢复匹配的 SQLite 备份。若目标备份没有 SQLite 文件，桌面端会移除当前 `search.sqlite3` 及 WAL/SHM sidecar，避免旧索引污染恢复后的 workspace；由于 SQLite 只是可重建索引，复制失败不会阻塞 JSON 存档备份。
+
+大资产管理技术预览：`workspace_asset_inventory` 会扫描 workspace `assets/` 目录，结合 `mediaAssets` metadata 和 Storyline/Character/SceneHint 引用，返回声明资产、引用/未引用资产、浏览器临时资产、缺失物理文件、未跟踪物理文件、目录体积分布和最大未跟踪文件列表。Saves 页面提供刷新入口；浏览器预览只能基于 metadata 生成 fallback。`buildAssetMaintenancePlan` 会在不修改文件的前提下生成维护计划：缺失资产修复、browser-only 重导入、placeholder 替换、未引用资产复核、未跟踪文件导入/移除和大文件压缩候选。
+
 迁移原则：资产仍在文件系统，SQLite 只存结构化 metadata；迁移前自动备份，失败回滚。
 
 ## 前端架构规则
@@ -205,7 +212,7 @@ SQLite 迁移条件：
 - `views/` 负责页面布局和路由参数。
 - `components/` 只接收 props/emit，不直接读写持久化。
 - `stores/` 封装用户动作，如 `sendMessage`、`retryLast`、`saveDraft`。
-- `services/ai/` 封装 provider：`mock`、`openaiCompatible`、`cloudProxy`。
+- `services/ai/` 封装 provider：`mock`、AI SDK `openaiCompatible`、`cloudProxy`，并通过 `public/skills/` 内置项目 AI skills。
 - `domain/chat-reducer.ts` 负责把 AI response 合并为 `Message`、`Event`、`RelationshipDelta`。
 - 所有 long-running 操作都有 abort/cancel 和 loading state。
 
@@ -216,9 +223,26 @@ Provider 类型：
 | Provider            | 阶段  | 说明                                               |
 | ------------------- | ----- | -------------------------------------------------- |
 | `mock`              | MVP   | 本地 deterministic response，用于无 key 演示和测试 |
-| `openai-compatible` | MVP   | 用户提供 base URL、API key、model                  |
+| `openai-compatible` | MVP   | AI SDK `ai` + `@ai-sdk/openai-compatible`；默认 Glosc One `https://one.gloscai.com/v1`，用户提供 API key |
 | `local-http`        | Beta  | 本机 Ollama/LM Studio 等 OpenAI-compatible 端点    |
 | `cloud-proxy`       | Cloud | Evolvria 服务端代理、计费、审核、限流              |
+
+Glosc One 默认模型路由：
+
+| 角色 | 模型 |
+| --- | --- |
+| chat | `zai/glm-5.2` |
+| content | `deepseek/deepseek-v4-flash` |
+| narrative | `deepseek/deepseek-v4-pro` |
+| image | `openai/gpt-image-2` |
+| video | `bytedance/doubao-seedance-2-0` |
+| voice | `alibaba/qwen3-tts-instruct-flash` |
+
+内置 skills 位于 `public/skills/*/SKILL.md`，由 `$skill-creator` 格式生成，并通过 `public/skills/manifest.json` 暴露给应用。当前 Glosc One 走 OpenAI-compatible 文本与图片调用：叙事/content/summary 使用 AI SDK `generateText`，图片使用 `generateImage` + `imageModel()`，视频和语音先保留为 `MediaGenerationJob` 路由与 prompt skill，不假设 provider 已暴露 AI SDK speech/video factory。
+
+新增媒体持久化 command：
+
+- `media_write_generated_image(workspaceId, bytes, mimeType, purpose, prompt)`：只接受 image/png、image/jpeg、image/webp、image/gif 或可由文件头识别的同类图片；写入 `assets/images/media_gen_<hash>.<ext>`，返回 `MediaAsset` metadata，大小上限沿用 `MAX_MEDIA_IMPORT_BYTES`。
 
 请求流程：
 

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Summary Arc"
+  short_description: "Compact memory and update arcs"
+  default_prompt: "Use $evolvria-summary-arc to run the matching Evolvria AI workflow."

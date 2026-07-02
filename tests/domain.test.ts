@@ -1,6 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { createLocalAccountSession, updateAccountAgeGate } from "@/domain/account";
-import { applyCreditAdjustment, createCreditAdjustment } from "@/domain/billing";
+import { AI_MODEL_IDS, GLOSC_ONE_BASE_URL, modelForMediaGenerationKind, resolveProviderForModelRole } from "@/domain/ai-routing";
+import {
+  applyCreditAdjustment,
+  applyPayoutRequestToEarnings,
+  applyPayoutResolutionToEarnings,
+  calculateCreatorEarningTotals,
+  createCreditAdjustment,
+  createCreatorPayoutRequest,
+  resolveCreatorPayoutRequest,
+  updateCreatorEarningStatus,
+} from "@/domain/billing";
 import {
   appendUserMessage,
   createChatSession,
@@ -16,19 +28,29 @@ import { createSeedEnvelope } from "@/domain/fixtures";
 import { checkBudget, compactMessagesForBudget, estimateTurnCost, isRecoverableInputOverflow } from "@/domain/cost";
 import { recordEngagementStats } from "@/domain/engagement";
 import { validateStorylinePackage } from "@/domain/creator-validation";
-import { buildLibraryItems, filterLibraryItems, libraryFacetValues } from "@/domain/library";
-import { createWorkspacePackage, readWorkspacePackage, verifyWorkspacePackage } from "@/domain/package-verification";
-import { rollConfiguredDice, rollD20, runFateCheck } from "@/domain/fate-engine";
-import { completeMockMediaGenerationJob, createMediaGenerationJob, startMediaGenerationJob } from "@/domain/media-generation";
+import { buildLibraryItems, filterLibraryItems, libraryFacetValues, publicCatalogStats } from "@/domain/library";
+import { createStorylineWorkspacePackage, createWorkspacePackage, readWorkspacePackage, verifyWorkspacePackage } from "@/domain/package-verification";
+import { fateCheckToText, rollConfiguredDice, rollD20, runFateCheck } from "@/domain/fate-engine";
+import { completeMediaGenerationJobWithAsset, completeMockMediaGenerationJob, createMediaGenerationJob, startMediaGenerationJob } from "@/domain/media-generation";
 import { applyModerationReview, createModerationAppeal, postcheckNarrativeResponse, precheckContent, resolveModerationAppeal } from "@/domain/moderation";
 import { duplicateStorylinePackage } from "@/domain/storyline-duplicate";
 import { createInitialArc, createSummaryChapter, advanceArc, editArc, editSummaryChapter, messagesSinceLastSummary, revertSummaryChapter, shouldCreateAutoSummary } from "@/domain/summary";
-import { countOpenSyncConflicts, createFieldConflict, createSyncOperation, resolveConflictRecord } from "@/domain/sync";
+import {
+  buildSyncDeviceSnapshot,
+  countOpenSyncConflicts,
+  createFieldConflict,
+  createSyncOperation,
+  createSyncOperationLogPackage,
+  disableSyncRetainingLocalData,
+  importSyncOperationLogPackage,
+  resolveConflictRecord,
+} from "@/domain/sync";
 import { LocalContentRepository } from "@/services/repositories/content";
 import { buildNarrativePromptBundle, buildOpenAIChatMessages, NARRATIVE_PROMPT_CONTRACT_VERSION, redactPromptPreviewContent } from "@/services/ai/context";
 import { generateOpenAICompatible, normalizeProviderBaseUrl, parseProviderContent } from "@/services/ai/openai-compatible";
+import { BUILT_IN_AI_SKILLS, buildSkillPromptBlock, skillForModelRole } from "@/services/ai/skill-catalog";
 import { LocalSyncRepository } from "@/services/repositories/sync";
-import { backupWorkspace, deleteSecret, listWorkspaceBackups, normalizeEnvelope, restoreWorkspaceBackup, saveSecret } from "@/services/repositories/workspace";
+import { backupWorkspace, buildAssetMaintenancePlan, buildBrowserAssetInventory, buildBrowserMessagePage, deleteSecret, listWorkspaceBackups, normalizeEnvelope, restoreWorkspaceBackup, saveSecret } from "@/services/repositories/workspace";
 
 describe("Evolvria domain", () => {
   it("creates seed content with original storylines", () => {
@@ -36,6 +58,43 @@ describe("Evolvria domain", () => {
     expect(Object.keys(envelope.entities.storylines)).toContain("story_starbloom_frontier");
     expect(Object.values(envelope.entities.storylines).some((story) => story.title.includes("ISEKAI"))).toBe(false);
     expect(envelope.entities.personas.persona_default_traveler.name).toBe("默认旅人");
+    expect(envelope.settings.provider.baseUrl).toBe(GLOSC_ONE_BASE_URL);
+    expect(envelope.settings.provider.model).toBe(AI_MODEL_IDS.chat);
+  });
+
+  it("routes Glosc One models and built-in AI skills by operation", () => {
+    const provider = createSeedEnvelope().settings.provider;
+    const narrativeProvider = resolveProviderForModelRole(provider, "narrative");
+    const customProvider = resolveProviderForModelRole({
+      ...provider,
+      baseUrl: "https://custom.example.test/v1",
+      model: "custom/model",
+    }, "narrative");
+
+    expect(narrativeProvider.model).toBe(AI_MODEL_IDS.narrative);
+    expect(customProvider.model).toBe("custom/model");
+    expect(modelForMediaGenerationKind("image")).toBe(AI_MODEL_IDS.image);
+    expect(modelForMediaGenerationKind("video")).toBe(AI_MODEL_IDS.video);
+    expect(modelForMediaGenerationKind("voice")).toBe(AI_MODEL_IDS.voice);
+    expect(skillForModelRole("narrative").id).toBe("evolvria-narrative-turn");
+    expect(buildSkillPromptBlock("evolvria-narrative-turn")).toContain(AI_MODEL_IDS.narrative);
+  });
+
+  it("publishes built-in AI skill files and manifest entries", () => {
+    const manifestPath = resolve(process.cwd(), "public/skills/manifest.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as {
+      baseUrl: string;
+      skills: Array<{ id: string; model: string; path: string; openaiMetadata: string }>;
+    };
+
+    expect(manifest.baseUrl).toBe(GLOSC_ONE_BASE_URL);
+    expect(manifest.skills).toHaveLength(BUILT_IN_AI_SKILLS.length);
+    for (const skill of BUILT_IN_AI_SKILLS) {
+      const entry = manifest.skills.find((item) => item.id === skill.id);
+      expect(entry?.model).toBe(skill.model);
+      expect(existsSync(resolve(process.cwd(), `public${entry?.path}`))).toBe(true);
+      expect(existsSync(resolve(process.cwd(), `public${entry?.openaiMetadata}`))).toBe(true);
+    }
   });
 
   it("creates local account preview sessions with age-gated permissions", () => {
@@ -196,6 +255,42 @@ describe("Evolvria domain", () => {
     expect(upheld.appeal?.resolutionNote).toBe("Sources verified.");
   });
 
+  it("creates payout previews from available creator earnings and resolves risk outcomes", () => {
+    const envelope = createSeedEnvelope();
+    const base = envelope.entities.creatorEarnings.earning_seed_preview;
+    const available = updateCreatorEarningStatus({ ...base, amount: 12.5 }, "available", "Ready for payout.");
+    const withheld = updateCreatorEarningStatus({ ...base, id: "earning_withheld", amount: 3 }, "withheld", "Risk hold.");
+    const earnings = {
+      [available.id]: available,
+      [withheld.id]: withheld,
+    };
+    const request = createCreatorPayoutRequest(Object.values(earnings), {
+      id: "payout_test",
+      creatorId: "creator_local",
+      note: "Creator requests payout.",
+      requestedAt: "2026-07-02T00:00:00.000Z",
+    });
+    const pending = applyPayoutRequestToEarnings(earnings, request);
+    const blocked = resolveCreatorPayoutRequest(request, "block", "2026-07-02T01:00:00.000Z", "Risk review hold.");
+    const afterBlock = applyPayoutResolutionToEarnings(pending, blocked);
+    const totals = calculateCreatorEarningTotals(Object.values(afterBlock));
+
+    expect(request.amount).toBe(12.5);
+    expect(request.earningIds).toEqual([available.id]);
+    expect(pending[available.id].status).toBe("pending");
+    expect(blocked.status).toBe("blocked");
+    expect(blocked.riskFlags).toContain("withheld_for_review");
+    expect(afterBlock[available.id].status).toBe("withheld");
+    expect(afterBlock[withheld.id].status).toBe("withheld");
+    expect(totals.withheld).toBe(15.5);
+    expect(() => createCreatorPayoutRequest([withheld], {
+      id: "payout_empty",
+      creatorId: "creator_local",
+      note: "",
+      requestedAt: "2026-07-02T00:00:00.000Z",
+    })).toThrow("payout_no_available_earnings");
+  });
+
   it("blocks risky creator package text from local_ready validation", () => {
     const envelope = createSeedEnvelope();
     const storyline = {
@@ -267,7 +362,7 @@ describe("Evolvria domain", () => {
       chatId: "chat_media",
       messageId: "msg_media",
       speakerId: "char_lyra",
-      prompt: "Generate a safe voice placeholder.",
+      prompt: "生成安全的中文语音占位。",
       voiceText: "灯还亮着，就还有路。",
       provider: "mock",
       model: "evolvria-mock",
@@ -282,6 +377,50 @@ describe("Evolvria domain", () => {
     expect(completed.asset.source.kind).toBe("generated");
     expect(completed.ledgerEntry.operation).toBe("voice");
     expect(completed.job.assetId).toBe(completed.asset.id);
+
+    const video = completeMockMediaGenerationJob(createMediaGenerationJob({
+      kind: "video",
+      storylineId: "story_starbloom_frontier",
+      prompt: "Animate the beacon light sweeping over the harbor.",
+      provider: "glosc-one",
+      model: AI_MODEL_IDS.video,
+    }), "2026-07-02T00:03:00.000Z");
+    expect(video.asset.kind).toBe("video");
+    expect(video.asset.mimeType).toBe("video/mock-placeholder");
+    expect(video.ledgerEntry.operation).toBe("video");
+  });
+
+  it("completes provider media generation with returned assets", () => {
+    const job = startMediaGenerationJob(createMediaGenerationJob({
+      kind: "image",
+      storylineId: "story_starbloom_frontier",
+      chatId: "chat_media",
+      messageId: "msg_media",
+      prompt: "Generate an original harbor background.",
+      provider: "glosc-one",
+      model: AI_MODEL_IDS.image,
+    }, "2026-07-02T00:00:00.000Z"), "2026-07-02T00:01:00.000Z");
+    const asset = {
+      id: "media_provider_image",
+      kind: "image" as const,
+      purpose: "background" as const,
+      relativePath: "assets/images/media_provider_image.png",
+      mimeType: "image/png",
+      sizeBytes: 1234,
+      variants: [],
+      altText: "Generated harbor background.",
+      source: { kind: "generated" as const, label: "Glosc One image generation" },
+      license: { kind: "owned" as const, note: "Generated and reviewed locally." },
+      safety: { rating: "SFW" as const, state: "draft" as const, reasons: [], safetyFlags: ["none" as const] },
+      createdAt: "2026-07-02T00:02:00.000Z",
+    };
+    const completed = completeMediaGenerationJobWithAsset(job, asset, "2026-07-02T00:03:00.000Z");
+
+    expect(completed.job.status).toBe("completed");
+    expect(completed.job.assetId).toBe(asset.id);
+    expect(completed.ledgerEntry.operation).toBe("image");
+    expect(completed.ledgerEntry.provider).toBe("glosc-one");
+    expect(completed.ledgerEntry.model).toBe(AI_MODEL_IDS.image);
   });
 
   it("builds a unified searchable library", () => {
@@ -292,6 +431,34 @@ describe("Evolvria domain", () => {
     expect(filterLibraryItems(items, { query: "逆潮", kind: "scenario" })).toHaveLength(1);
     expect(filterLibraryItems(items, { mode: "fate" }).every((item) => item.modes.includes("fate"))).toBe(true);
     expect(libraryFacetValues(items).tags).toContain("悬疑");
+  });
+
+  it("filters local public catalog and review queue items", () => {
+    const envelope = createSeedEnvelope();
+    envelope.entities.storylines.story_starbloom_frontier = {
+      ...envelope.entities.storylines.story_starbloom_frontier,
+      visibility: "public",
+      moderation: { ...envelope.entities.storylines.story_starbloom_frontier.moderation, state: "approved" },
+      version: { ...envelope.entities.storylines.story_starbloom_frontier.version, status: "published" },
+    };
+    envelope.entities.storylines.story_mist_harbor = {
+      ...envelope.entities.storylines.story_mist_harbor,
+      visibility: "private",
+      moderation: { ...envelope.entities.storylines.story_mist_harbor.moderation, state: "submitted" },
+      version: { ...envelope.entities.storylines.story_mist_harbor.version, status: "submitted" },
+    };
+
+    const items = buildLibraryItems(envelope.entities);
+    const publicItems = filterLibraryItems(items, { catalog: "public", kind: "storyline" });
+    const reviewItems = filterLibraryItems(items, { catalog: "review", kind: "storyline" });
+    const stats = publicCatalogStats(items);
+
+    expect(publicItems.map((item) => item.id)).toContain("story_starbloom_frontier");
+    expect(publicItems.map((item) => item.id)).not.toContain("story_mist_harbor");
+    expect(reviewItems.map((item) => item.id)).toContain("story_mist_harbor");
+    expect(stats.publicCount).toBeGreaterThanOrEqual(1);
+    expect(stats.reviewCount).toBeGreaterThanOrEqual(1);
+    expect(stats.recommended[0].visibility).toBe("public");
   });
 
   it("searches and saves content through the local repository boundary", () => {
@@ -472,6 +639,43 @@ describe("Evolvria domain", () => {
     expect(check.consequences.join(" ")).toContain("压力钟");
   });
 
+  it("runs configurable Fate checks with selected attribute, skill, difficulty, modifier and seed", () => {
+    const envelope = createSeedEnvelope();
+    const config = {
+      ...envelope.entities.dungeonMindConfigs.dm_starbloom,
+      visibility: "full" as const,
+    };
+    const first = runFateCheck({
+      chatId: "chat_test",
+      actorId: "persona_test",
+      intent: "用读势判断灯塔裂隙",
+      config,
+      attributeId: "attr_will",
+      skillId: "skill_read",
+      difficulty: 16,
+      modifier: 3,
+      seed: "manual-fate-seed",
+    });
+    const second = runFateCheck({
+      chatId: "chat_test",
+      actorId: "persona_test",
+      intent: "用读势判断灯塔裂隙",
+      config,
+      attributeId: "attr_will",
+      skillId: "skill_read",
+      difficulty: 16,
+      modifier: 3,
+      seed: "manual-fate-seed",
+    });
+
+    expect(first.attribute).toBe("attr_will");
+    expect(first.skill).toBe("skill_read");
+    expect(first.difficulty).toBe(16);
+    expect(first.roll.modifier).toBe(3);
+    expect(first.roll).toEqual(second.roll);
+    expect(fateCheckToText(first, config)).toContain("属性 意志 / 技能 读势");
+  });
+
   it("creates summary chapters and advances arcs", () => {
     const message = {
       id: "msg_one",
@@ -603,6 +807,14 @@ describe("Evolvria domain", () => {
         safetyFlags: ["none" as const],
         createdAt: "2026-07-02T00:01:00.000Z",
       },
+      {
+        id: "msg_system_context",
+        chatId: "chat_context",
+        role: "system" as const,
+        content: "预算提示：旧消息已由本地摘要接管。",
+        safetyFlags: ["none" as const],
+        createdAt: "2026-07-02T00:02:00.000Z",
+      },
     ];
     const summary = createSummaryChapter("chat_context", messages);
     const arc = advanceArc(createInitialArc("chat_context", scenario.title, ["msg_open"]), "msg_assistant_context");
@@ -657,6 +869,9 @@ describe("Evolvria domain", () => {
       userInput: "我把坐标片贴近灯塔核心。",
     });
     expect(openAiMessages[0].content).toContain(`Prompt-Contract-Version: ${NARRATIVE_PROMPT_CONTRACT_VERSION}`);
+    expect(openAiMessages[0].content).toContain("Skill: evolvria-narrative-turn");
+    expect(openAiMessages.slice(1).every((message) => message.role !== "system")).toBe(true);
+    expect(openAiMessages.some((message) => message.content.includes("Local System Note: 预算提示"))).toBe(true);
     expect(openAiMessages.at(-1)?.content).toContain("玩家动作");
   });
 
@@ -817,6 +1032,53 @@ describe("Evolvria domain", () => {
     expect(Object.keys(envelope.entities.storylines)).toHaveLength(beforeStorylineCount + 1);
   });
 
+  it("exports, imports and disables local sync operation logs without deleting data", () => {
+    const source = createSeedEnvelope();
+    const target = createSeedEnvelope();
+    const operation = createSyncOperation({
+      id: "syncop_export_test",
+      workspaceId: source.workspace.id,
+      entityType: "storylines",
+      entityId: "story_starbloom_frontier",
+      patch: { title: source.entities.storylines.story_starbloom_frontier.title },
+      createdAt: "2026-07-02T00:00:00.000Z",
+    });
+    const conflict = createFieldConflict({
+      id: "conflict_export_test",
+      operationId: operation.id,
+      entityType: "storylines",
+      entityId: "story_starbloom_frontier",
+      field: "title",
+      localValue: "星烬边境",
+      remoteValue: "星烬边境 - Device B",
+      createdAt: "2026-07-02T00:01:00.000Z",
+    });
+    source.entities.syncOperations[operation.id] = operation;
+    source.entities.syncConflicts[conflict.id] = conflict;
+
+    const snapshot = buildSyncDeviceSnapshot(source, "2026-07-02T00:02:00.000Z");
+    const operationLog = createSyncOperationLogPackage(source, "2026-07-02T00:03:00.000Z");
+    const imported = importSyncOperationLogPackage(target, operationLog, "2026-07-02T00:04:00.000Z");
+    const skipped = importSyncOperationLogPackage(target, operationLog, "2026-07-02T00:05:00.000Z");
+    const disabled = disableSyncRetainingLocalData(target);
+
+    expect(snapshot.privacy.includesChats).toBe(false);
+    expect(snapshot.privacy.includesApiKeys).toBe(false);
+    expect(snapshot.entityCounts.storylines).toBeGreaterThan(0);
+    expect(operationLog.format).toBe("evolvria_sync_operation_log");
+    expect(operationLog.summary.operationCount).toBe(1);
+    expect(operationLog.privacy.includesApiKeys).toBe(false);
+    expect(imported.importedOperations).toBe(1);
+    expect(imported.importedConflicts).toBe(1);
+    expect(skipped.skippedOperations).toBe(1);
+    expect(skipped.skippedConflicts).toBe(1);
+    expect(target.entities.syncOperations.syncop_export_test.patch).toEqual({ title: "星烬边境" });
+    expect(disabled.status).toBe("local_only");
+    expect(disabled.enabled).toBe(false);
+    expect(target.entities.syncOperations.syncop_export_test).toBeTruthy();
+    expect(() => importSyncOperationLogPackage({ ...target, workspace: { ...target.workspace, id: "other_workspace" } }, operationLog, "2026-07-02T00:06:00.000Z")).toThrow("sync_log_workspace_mismatch");
+  });
+
   it("applies credit ledger adjustments", () => {
     const envelope = createSeedEnvelope();
     const entry = {
@@ -854,6 +1116,105 @@ describe("Evolvria domain", () => {
     expect(report.ok).toBe(true);
     expect(report.format).toBe("evolvria_workspace_package");
     expect(report.entityCounts.storylines).toBeGreaterThan(0);
+  });
+
+  it("exports scoped storyline packages with dependencies only", () => {
+    const envelope = createSeedEnvelope();
+    const storylinePackage = createStorylineWorkspacePackage(envelope, "story_starbloom_frontier", "2026-07-02T00:00:00.000Z");
+    const report = verifyWorkspacePackage(storylinePackage);
+
+    expect(storylinePackage.manifest.workspaceName).toBe("星烬边境 Package");
+    expect(storylinePackage.manifest.entityCounts.storylines).toBe(1);
+    expect(storylinePackage.manifest.entityCounts.characters).toBe(2);
+    expect(storylinePackage.manifest.entityCounts.chats).toBe(0);
+    expect(storylinePackage.save.entities.storylines.story_starbloom_frontier).toBeTruthy();
+    expect(Object.keys(storylinePackage.save.entities.personas)).toHaveLength(0);
+    expect(report.ok).toBe(true);
+  });
+
+  it("builds browser asset inventory from workspace metadata", () => {
+    const envelope = createSeedEnvelope();
+    const inventory = buildBrowserAssetInventory(envelope);
+
+    expect(inventory.rootPath).toBe("browser_local_storage");
+    expect(inventory.stats.declaredAssets).toBe(Object.keys(envelope.entities.mediaAssets).length);
+    expect(inventory.stats.referencedAssets).toBeGreaterThan(0);
+    expect(inventory.stats.physicalFiles).toBe(0);
+    expect(inventory.assets.some((asset) => asset.id === "media_starbloom_cover" && asset.referenced)).toBe(true);
+  });
+
+  it("builds browser message pages matching the native SQLite window contract", () => {
+    const envelope = createSeedEnvelope();
+    const storyline = envelope.entities.storylines.story_starbloom_frontier;
+    const scenario = envelope.entities.scenarios.scenario_starbloom_beacon;
+    const persona = envelope.entities.personas.persona_default_traveler;
+    const { chat, openingMessages } = createChatSession(storyline, scenario, persona);
+    envelope.entities.chats[chat.id] = chat;
+    for (const message of openingMessages) envelope.entities.messages[message.id] = message;
+    for (let index = 0; index < 12; index += 1) {
+      const id = `msg_page_unit_${index}`;
+      envelope.entities.messages[id] = {
+        id,
+        chatId: chat.id,
+        role: index % 2 === 0 ? "user" : "assistant",
+        content: `分页消息 ${index}`,
+        safetyFlags: ["none"],
+        createdAt: `2026-07-02T00:${String(index).padStart(2, "0")}:00.000Z`,
+      };
+      chat.messageIds.push(id);
+    }
+    envelope.entities.chats[chat.id] = chat;
+
+    const latest = buildBrowserMessagePage(envelope, chat.id, 5, 0);
+    const older = buildBrowserMessagePage(envelope, chat.id, 5, latest.nextOffsetFromEnd);
+
+    expect(latest.totalCount).toBe(chat.messageIds.length);
+    expect(latest.messages.map((message) => message.content)).toEqual(["分页消息 7", "分页消息 8", "分页消息 9", "分页消息 10", "分页消息 11"]);
+    expect(latest.hasOlder).toBe(true);
+    expect(older.endIndex).toBe(latest.startIndex);
+    expect(older.hasNewer).toBe(true);
+  });
+
+  it("builds a non-destructive asset maintenance plan", () => {
+    const envelope = createSeedEnvelope();
+    const inventory = buildBrowserAssetInventory(envelope);
+    inventory.assets.push({
+      id: "media_browser_temp",
+      kind: "image",
+      purpose: "cover",
+      relativePath: "browser://temp.png",
+      sourceKind: "imported",
+      referenced: true,
+      physicalStatus: "browser_only",
+      declaredSizeBytes: 1024,
+      variantCount: 0,
+    });
+    inventory.assets.push({
+      id: "media_missing",
+      kind: "video",
+      purpose: "background",
+      relativePath: "assets/video/missing.mp4",
+      sourceKind: "generated",
+      referenced: true,
+      physicalStatus: "missing",
+      declaredSizeBytes: 2048,
+      variantCount: 0,
+    });
+    inventory.untrackedFiles.push({
+      relativePath: "assets/video/orphan.mp4",
+      sizeBytes: 4096,
+      folder: "video",
+      supported: true,
+      tracked: false,
+    });
+
+    const plan = buildAssetMaintenancePlan(inventory);
+
+    expect(plan.summary.publishBlockers).toBe(2);
+    expect(plan.actions.some((action) => action.kind === "replace_placeholder_asset")).toBe(true);
+    expect(plan.actions.some((action) => action.kind === "reimport_browser_asset" && action.publishBlocker)).toBe(true);
+    expect(plan.actions.some((action) => action.kind === "restore_missing_asset" && action.severity === "error")).toBe(true);
+    expect(plan.summary.estimatedRecoverableBytes).toBeGreaterThanOrEqual(4096);
   });
 
   it("rejects packages with missing assets or leaked secrets", () => {

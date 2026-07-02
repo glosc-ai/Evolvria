@@ -130,6 +130,15 @@ Scenario 是故事线可玩性的最小单元，必须能独立启动。
 
 Mock run 的结果不自动写入正式故事，除非用户点击“保存为示例开场”。
 
+## 内容包导入导出
+
+Creator Studio 已落地单个 Storyline package 分享闭环：
+
+- `Export Story Package` 会把当前 Storyline、Cast Character、Scenario、媒体 metadata 和 DungeonMindConfig 裁剪成 `evolvria_workspace_package` JSON，不包含 Persona、Chat、Message、账本或用户私密存档。
+- 导出前使用同一套 package verifier 校验 schema、manifest、asset refs、路径和 secret 泄漏；有 error 时阻止导出，warning 仍写入报告。
+- `Import Story Package` 读取 manifest-backed JSON，验证通过后把 Storyline、Character、Scenario、MediaAsset 和 DungeonMindConfig 重新分配本地 ID，合并为 `private/draft` 本地草稿，避免覆盖当前库里的同名实体。
+- 浏览器预览以 JSON 下载/上传完成导入导出；Tauri 桌面完整 workspace zip 仍由 Saves 页面负责。
+
 ## 版本管理
 
 ```ts
@@ -174,7 +183,7 @@ Cloud 阶段审核：
 | `unlisted` | 导出包分享 | 链接访问，不进搜索 |
 | `public` | 不可用 | 审核通过后公开搜索 |
 
-MVP 的“分享”本质是导出 zip，不是上传平台。
+MVP 的“分享”本质是导出本地 package，不是上传平台。Creator Studio 导出单个 Storyline package；Saves 页面导出完整 workspace/zip。
 
 ## 创作者统计预留
 
@@ -204,6 +213,6 @@ Cloud 统计：
 
 - 用户能创建原创 Storyline、Character、Scenario 并进入聊天试跑。
 - 草稿自动保存，校验错误可定位到具体字段。
-- 导出包包含 save、manifest、assets 和 schema version。
+- 导出包包含 save、manifest、schema version 和 Storyline 依赖资产 metadata；完整物理 assets 由 Tauri workspace zip/export 负责。
 - 不允许缺少版权来源的媒体进入 `local_ready`。
 - Storyline package 可以软删除并恢复；软删除后 Library 不再展示，恢复后重新进入本地发现流程。

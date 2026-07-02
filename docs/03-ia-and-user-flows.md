@@ -146,8 +146,12 @@ MVP 不要求登录。Account 页面可为空状态：
 
 - 注册/登录。
 - 选择本地 workspace 上传。
+- 查看设备同步快照：状态、pending operation、open conflict、实体计数，不展示私密正文。
+- 导出/导入本地 operation log，用于模拟两台设备交换同步增量；导入必须校验 workspace id，不能静默覆盖。
 - 处理冲突：本地优先、云端优先、创建副本、字段级合并。
+- 关闭同步：状态回到 `local_only`，本地 workspace、operation log、冲突记录和备份仍留在设备上。
 - 发布审核：草稿 -> 提交 -> 队列 -> 通过/拒绝/申诉。
+- 公开发现：审核通过后内容进入 Library 的 Public Catalog；详情页举报后进入 Account Moderation Queue，要求修改或拒绝会从 Public Catalog 隐藏。
 
 ## 关键决策
 

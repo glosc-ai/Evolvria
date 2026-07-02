@@ -1,8 +1,8 @@
 import { buildIndexes, createSeedEnvelope } from "@/domain/fixtures";
-import { createWorkspacePackage } from "@/domain/package-verification";
+import { createWorkspacePackage, createWorkspacePackageManifest } from "@/domain/package-verification";
 import { invokeOptional } from "@/services/tauri";
 import type { PackageVerificationReport } from "@/domain/package-verification";
-import type { SaveEnvelope, WorkspaceMeta } from "@/types/domain";
+import type { Message, SaveEnvelope, WorkspaceMeta } from "@/types/domain";
 
 const storageKey = "evolvria:workspace:active";
 const secretPrefix = "evolvria:secret:";
@@ -26,12 +26,127 @@ export interface BackupMeta {
   createdAt: string;
   path?: string;
   sizeBytes?: number;
+  hasSqliteIndex?: boolean;
+  sqlitePath?: string;
+  sqliteSizeBytes?: number;
 }
 
 export interface ExportResult {
   path: string;
   cancelled?: boolean;
   report?: PackageVerificationReport;
+}
+
+export interface SQLiteIndexReport {
+  workspaceId: string;
+  path: string;
+  indexedAt: string;
+  itemCount: number;
+  messageCount: number;
+  sourceUpdatedAt?: string;
+}
+
+export interface SQLiteSearchHit {
+  entityType: "storyline" | "character" | "scenario" | "media" | "message" | string;
+  entityId: string;
+  title: string;
+  snippet: string;
+  updatedAt?: string;
+}
+
+export interface SQLiteMessagePage {
+  chatId: string;
+  totalCount: number;
+  offsetFromEnd: number;
+  pageSize: number;
+  startIndex: number;
+  endIndex: number;
+  hasOlder: boolean;
+  hasNewer: boolean;
+  nextOffsetFromEnd: number;
+  messages: Message[];
+}
+
+export interface AssetInventoryStats {
+  declaredAssets: number;
+  referencedAssets: number;
+  unreferencedAssets: number;
+  browserOnlyAssets: number;
+  missingPhysicalAssets: number;
+  physicalFiles: number;
+  untrackedFiles: number;
+  declaredBytes: number;
+  physicalBytes: number;
+  untrackedBytes: number;
+}
+
+export interface AssetInventoryItem {
+  id: string;
+  kind: string;
+  purpose: string;
+  relativePath: string;
+  sourceKind: string;
+  referenced: boolean;
+  physicalStatus: "present" | "missing" | "browser_only" | "placeholder" | "invalid_path" | "unknown" | string;
+  declaredSizeBytes: number;
+  physicalSizeBytes?: number;
+  variantCount: number;
+}
+
+export interface PhysicalAssetFile {
+  relativePath: string;
+  sizeBytes: number;
+  folder: string;
+  supported: boolean;
+  tracked: boolean;
+  assetId?: string;
+}
+
+export interface WorkspaceAssetInventory {
+  workspaceId: string;
+  checkedAt: string;
+  rootPath: string;
+  stats: AssetInventoryStats;
+  byFolder: Record<string, number>;
+  assets: AssetInventoryItem[];
+  untrackedFiles: PhysicalAssetFile[];
+  missingAssetIds: string[];
+}
+
+export type AssetMaintenanceActionKind =
+  | "restore_missing_asset"
+  | "reimport_browser_asset"
+  | "replace_placeholder_asset"
+  | "review_unreferenced_asset"
+  | "import_or_remove_untracked_file"
+  | "compress_large_asset";
+
+export type AssetMaintenanceSeverity = "error" | "warning" | "info";
+
+export interface AssetMaintenanceAction {
+  id: string;
+  kind: AssetMaintenanceActionKind;
+  severity: AssetMaintenanceSeverity;
+  title: string;
+  detail: string;
+  assetId?: string;
+  relativePath?: string;
+  estimatedRecoverableBytes: number;
+  publishBlocker: boolean;
+}
+
+export interface AssetMaintenancePlan {
+  workspaceId: string;
+  generatedAt: string;
+  sourceCheckedAt: string;
+  summary: {
+    totalActions: number;
+    publishBlockers: number;
+    cleanupCandidates: number;
+    compressionCandidates: number;
+    estimatedRecoverableBytes: number;
+  };
+  actions: AssetMaintenanceAction[];
 }
 
 export async function loadWorkspace(): Promise<SaveEnvelope> {
@@ -82,6 +197,7 @@ export async function backupWorkspace(envelope: SaveEnvelope, reason: string): P
     createdAt: new Date().toISOString(),
     path: `browser_local_storage:${backupId}`,
     sizeBytes: JSON.stringify(envelope).length,
+    hasSqliteIndex: false,
   };
   localStorage.setItem(backupStorageKey(envelope.workspace.id, backupId), JSON.stringify({
     meta: fallback,
@@ -159,6 +275,212 @@ export async function verifyWorkspacePackageNative(workspaceId: string): Promise
   return invokeOptional<PackageVerificationReport>("content_package_verify", { workspaceId });
 }
 
+export async function rebuildNativeSearchIndex(workspaceId: string): Promise<SQLiteIndexReport | undefined> {
+  return invokeOptional<SQLiteIndexReport>("workspace_rebuild_sqlite_index", { workspaceId });
+}
+
+export async function searchNativeSearchIndex(workspaceId: string, query: string, limit = 8): Promise<SQLiteSearchHit[] | undefined> {
+  return invokeOptional<SQLiteSearchHit[]>("workspace_search_sqlite_index", { workspaceId, query, limit });
+}
+
+export async function queryNativeMessagePage(workspaceId: string, chatId: string, pageSize = 80, offsetFromEnd = 0): Promise<SQLiteMessagePage | undefined> {
+  return invokeOptional<SQLiteMessagePage>("workspace_query_sqlite_messages", { workspaceId, chatId, pageSize, offsetFromEnd });
+}
+
+export async function getNativeAssetInventory(workspaceId: string): Promise<WorkspaceAssetInventory | undefined> {
+  return invokeOptional<WorkspaceAssetInventory>("workspace_asset_inventory", { workspaceId });
+}
+
+export function buildBrowserAssetInventory(envelope: SaveEnvelope): WorkspaceAssetInventory {
+  const manifest = createWorkspacePackageManifest(envelope);
+  const referenced = new Set(manifest.assetRefs.referenced);
+  const assets = Object.values(envelope.entities.mediaAssets).map((asset) => {
+    const browserOnly = asset.relativePath.startsWith("browser://");
+    const placeholder = !asset.relativePath.trim() && asset.source.kind === "placeholder" && asset.sizeBytes === 0;
+    return {
+      id: asset.id,
+      kind: asset.kind,
+      purpose: asset.purpose,
+      relativePath: asset.relativePath,
+      sourceKind: asset.source.kind,
+      referenced: referenced.has(asset.id),
+      physicalStatus: browserOnly ? "browser_only" : placeholder ? "placeholder" : "unknown",
+      declaredSizeBytes: asset.sizeBytes,
+      physicalSizeBytes: undefined,
+      variantCount: asset.variants.length,
+    } satisfies AssetInventoryItem;
+  }).sort((a, b) => a.physicalStatus.localeCompare(b.physicalStatus) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id));
+  const declaredBytes = assets.reduce((sum, asset) => sum + asset.declaredSizeBytes, 0);
+  const browserOnlyAssets = assets.filter((asset) => asset.physicalStatus === "browser_only").length;
+  return {
+    workspaceId: envelope.workspace.id,
+    checkedAt: new Date().toISOString(),
+    rootPath: "browser_local_storage",
+    stats: {
+      declaredAssets: assets.length,
+      referencedAssets: assets.filter((asset) => asset.referenced).length,
+      unreferencedAssets: assets.filter((asset) => !asset.referenced).length,
+      browserOnlyAssets,
+      missingPhysicalAssets: 0,
+      physicalFiles: 0,
+      untrackedFiles: 0,
+      declaredBytes,
+      physicalBytes: 0,
+      untrackedBytes: 0,
+    },
+    byFolder: {},
+    assets,
+    untrackedFiles: [],
+    missingAssetIds: [...manifest.assetRefs.missing],
+  };
+}
+
+export function buildBrowserMessagePage(envelope: SaveEnvelope, chatId: string, pageSize = 80, offsetFromEnd = 0): SQLiteMessagePage {
+  const chat = envelope.entities.chats[chatId];
+  const allMessages = chat
+    ? chat.messageIds.map((id) => envelope.entities.messages[id]).filter((message): message is Message => Boolean(message))
+    : [];
+  const safePageSize = Math.min(200, Math.max(1, Math.round(pageSize)));
+  const safeOffset = Math.min(allMessages.length, Math.max(0, Math.round(offsetFromEnd)));
+  const endIndex = Math.max(0, allMessages.length - safeOffset);
+  const startIndex = Math.max(0, endIndex - safePageSize);
+  return {
+    chatId,
+    totalCount: allMessages.length,
+    offsetFromEnd: safeOffset,
+    pageSize: safePageSize,
+    startIndex,
+    endIndex,
+    hasOlder: startIndex > 0,
+    hasNewer: safeOffset > 0,
+    nextOffsetFromEnd: Math.min(allMessages.length, safeOffset + (endIndex - startIndex)),
+    messages: allMessages.slice(startIndex, endIndex),
+  };
+}
+
+export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, largeAssetBytes = 25 * 1024 * 1024): AssetMaintenancePlan {
+  const actions: AssetMaintenanceAction[] = [];
+
+  for (const asset of inventory.assets) {
+    if (asset.physicalStatus === "missing" || asset.physicalStatus === "invalid_path") {
+      actions.push({
+        id: `restore:${asset.id}`,
+        kind: "restore_missing_asset",
+        severity: "error",
+        title: `Restore missing asset ${asset.id}`,
+        detail: `${asset.relativePath || "empty path"} is declared in workspace metadata but is not available as a portable asset file.`,
+        assetId: asset.id,
+        relativePath: asset.relativePath,
+        estimatedRecoverableBytes: 0,
+        publishBlocker: true,
+      });
+    }
+
+    if (asset.physicalStatus === "browser_only") {
+      actions.push({
+        id: `reimport:${asset.id}`,
+        kind: "reimport_browser_asset",
+        severity: "warning",
+        title: `Reimport browser-only asset ${asset.id}`,
+        detail: `${asset.relativePath} is only a browser preview reference. Reimport it in the Tauri app before publishing or packaging.`,
+        assetId: asset.id,
+        relativePath: asset.relativePath,
+        estimatedRecoverableBytes: 0,
+        publishBlocker: true,
+      });
+    }
+
+    if (asset.physicalStatus === "placeholder" && asset.referenced) {
+      actions.push({
+        id: `placeholder:${asset.id}`,
+        kind: "replace_placeholder_asset",
+        severity: "warning",
+        title: `Replace placeholder asset ${asset.id}`,
+        detail: "Referenced placeholder covers are acceptable for MVP demos but should be replaced before a polished public package.",
+        assetId: asset.id,
+        relativePath: asset.relativePath,
+        estimatedRecoverableBytes: 0,
+        publishBlocker: false,
+      });
+    }
+
+    if (!asset.referenced) {
+      actions.push({
+        id: `unreferenced:${asset.id}`,
+        kind: "review_unreferenced_asset",
+        severity: "info",
+        title: `Review unreferenced asset ${asset.id}`,
+        detail: "The asset is declared but not referenced by Storyline, Character, or SceneHint data. Keep it only if it is a draft reserve.",
+        assetId: asset.id,
+        relativePath: asset.relativePath,
+        estimatedRecoverableBytes: asset.physicalSizeBytes ?? asset.declaredSizeBytes,
+        publishBlocker: false,
+      });
+    }
+
+    const sizeBytes = asset.physicalSizeBytes ?? asset.declaredSizeBytes;
+    if (asset.physicalStatus === "present" && sizeBytes >= largeAssetBytes) {
+      actions.push({
+        id: `compress:${asset.id}`,
+        kind: "compress_large_asset",
+        severity: "info",
+        title: `Compress large asset ${asset.id}`,
+        detail: `${asset.relativePath} is ${formatBytesForPlan(sizeBytes)}. Consider thumbnail, preview, or lower bitrate variants before publishing.`,
+        assetId: asset.id,
+        relativePath: asset.relativePath,
+        estimatedRecoverableBytes: Math.round(sizeBytes * 0.3),
+        publishBlocker: false,
+      });
+    }
+  }
+
+  for (const file of inventory.untrackedFiles) {
+    actions.push({
+      id: `untracked:${file.relativePath}`,
+      kind: "import_or_remove_untracked_file",
+      severity: file.supported ? "warning" : "info",
+      title: `Review untracked file ${file.relativePath}`,
+      detail: file.supported
+        ? "This file is inside assets/ but is not connected to any MediaAsset metadata. Import it or remove it from the package."
+        : "This unsupported file is inside assets/ but is not package-tracked. Remove it unless it is intentionally reserved.",
+      relativePath: file.relativePath,
+      estimatedRecoverableBytes: file.sizeBytes,
+      publishBlocker: false,
+    });
+  }
+
+  actions.sort((a, b) =>
+    severityRank(a.severity) - severityRank(b.severity)
+    || Number(b.publishBlocker) - Number(a.publishBlocker)
+    || b.estimatedRecoverableBytes - a.estimatedRecoverableBytes
+    || a.id.localeCompare(b.id),
+  );
+
+  return {
+    workspaceId: inventory.workspaceId,
+    generatedAt: new Date().toISOString(),
+    sourceCheckedAt: inventory.checkedAt,
+    summary: {
+      totalActions: actions.length,
+      publishBlockers: actions.filter((action) => action.publishBlocker).length,
+      cleanupCandidates: actions.filter((action) => action.kind === "review_unreferenced_asset" || action.kind === "import_or_remove_untracked_file").length,
+      compressionCandidates: actions.filter((action) => action.kind === "compress_large_asset").length,
+      estimatedRecoverableBytes: actions.reduce((sum, action) => sum + action.estimatedRecoverableBytes, 0),
+    },
+    actions,
+  };
+}
+
+function severityRank(severity: AssetMaintenanceSeverity): number {
+  return severity === "error" ? 0 : severity === "warning" ? 1 : 2;
+}
+
+function formatBytesForPlan(value: number): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export async function resetWorkspace(): Promise<SaveEnvelope> {
   const seed = createSeedEnvelope();
   await saveWorkspace(seed);
@@ -215,6 +537,7 @@ export function normalizeEnvelope(envelope: SaveEnvelope): SaveEnvelope {
     ),
     creditAdjustments: envelope.entities.creditAdjustments ?? {},
     creatorEarnings: envelope.entities.creatorEarnings ?? {},
+    creatorPayoutRequests: envelope.entities.creatorPayoutRequests ?? {},
     mediaGenerationJobs: envelope.entities.mediaGenerationJobs ?? {},
     syncOperations: envelope.entities.syncOperations ?? {},
     syncConflicts: envelope.entities.syncConflicts ?? {},

@@ -65,7 +65,7 @@
 - 表单校验和 draft autosave。
 - Mock preview。
 - `local_ready` 状态。
-- 内容包导出。
+- 内容包导出。（已完成 Creator Studio 单个 Storyline package JSON 导出/导入；导入会重映射实体 ID 并合并为本地草稿）
 
 退出标准：
 
@@ -101,9 +101,9 @@
 
 - Scene Mode 渲染：背景、角色、字幕、选择。（已完成 MVP 渲染与媒体降级）
 - SceneHint 生成和编辑。（已完成手动编辑 mood、camera、前三个选择项；自动生成继续推进）
-- Voice/Image mock generation 队列。（已完成本地排队、mock 运行、资产/账本/SceneHint 回填）
-- Fate Engine：属性、技能、难度、骰点、后果。
-- Fate 可见性设置。
+- Voice/Image/Video generation 队列。（已完成本地排队、资产/账本/SceneHint 或故事媒体回填；image 已接 AI SDK `generateImage` + Glosc One `openai/gpt-image-2` 并在 Tauri 写入真实图片资产，无 key 时降级 mock；voice/video 暂保持 mock + 模型路由）
+- Fate Engine：属性、技能、难度、骰点、后果。（已完成 Chat 侧可配置 Dungeon Mind 检定：意图、属性、技能、难度 band/目标值、modifier、可复现 seed）
+- Fate 可见性设置。（已完成 Creator Studio 配置 hidden/summary/full；Fate message 按可见性输出）
 - Scene/Fate 与 Chat 同存档。
 
 退出标准：
@@ -120,11 +120,11 @@
 
 交付：
 
-- JSON -> SQLite 迁移。
-- FTS 搜索。
-- 消息分页。（已完成 JSON MVP 的 Chat UI 消息窗口：默认最近 80 条、按需加载更早消息、搜索扫描完整聊天；SQLite Beta 仍需后端分页 query）
-- 大资产管理。
-- 数据库备份和恢复。（已完成 JSON/Tauri workspace 备份列表与恢复；SQLite 数据库备份仍留到 Beta）
+- JSON -> SQLite 迁移。（已完成桌面技术预览：`save.json` -> `search.sqlite3` index mirror；完整实体迁移仍在 Beta）
+- FTS 搜索。（已完成 Storyline/Character/Scenario/MediaAsset/Message 的 Tauri FTS5 重建与搜索 command，含中文 LIKE fallback）
+- 消息分页。（已完成 JSON MVP 的 Chat UI 消息窗口；已完成 Tauri `workspace_query_sqlite_messages` 后端分页 query；Chat 主消息流在无搜索时使用同一分页页数据，SQLite 索引缺失/过期会按需重建后重试，搜索仍扫描当前 JSON workspace）
+- 大资产管理。（已完成桌面 Asset Inventory 技术预览：声明/引用/浏览器临时/缺失物理/未跟踪文件/目录体积分布；已完成非破坏性 Asset Maintenance Plan；真实清理/压缩执行仍在 Beta）
+- 数据库备份和恢复。（已完成 JSON/Tauri workspace 备份列表与恢复；`search.sqlite3` mirror 存在时随 workspace 备份/恢复，旧备份无 SQLite 时恢复会清理 stale index）
 
 退出标准：
 
@@ -139,9 +139,10 @@
 交付：
 
 - Auth。（已完成本地 Account Preview：display name/email/age gate/permissions，无真实云端 token）
-- 私有 workspace 同步。
-- operation log。
-- 冲突解决 UI。
+- 私有 workspace 同步。（已完成本地 Private Sync Preview：启用前要求本地账号，关闭同步时保留本地 workspace、operation log 和冲突记录）
+- operation log。（已完成 `.evolvria-sync.json` 导出/导入，导入按 workspace id 校验并按 operation/conflict id 去重合并）
+- 设备快照。（已完成 `SyncDeviceSnapshot`，只包含状态和计数，不导出 Persona、聊天正文、媒体文件或 API key）
+- 冲突解决 UI。（已完成 deterministic title conflict，支持 keep local/use cloud/make copy）
 - 云端 AI proxy 可选。
 
 退出标准：
@@ -158,9 +159,9 @@
 
 - Storyline/Character 发布。
 - 媒体上传。
-- 搜索和推荐基础。
-- 创作者主页。
-- 举报和审核后台。
+- 搜索和推荐基础。（已完成本地 Public Catalog Preview：Library 可切换 All Local/Public Catalog/Private Drafts/Review Queue，公开内容按 `public + published/approved` 过滤，并显示本地推荐条）
+- 创作者主页。（已完成本地 Creator Profile Preview：展示创作者 Storyline、草稿、统计、审核案例、收益预览，并可发起本地 creator report）
+- 举报和审核后台。（已完成 Storyline Detail 本地举报入口，举报进入 Account Moderation Queue；Request Changes/Reject 会让公开内容退出 Public Catalog）
 - 内容分级锁。
 - 申诉状态流。（已完成本地 Cloud Preview：actioned case 可发起 appeal 并模拟 upheld/denied）
 
@@ -180,7 +181,7 @@
 - AI 网关真实计费。
 - 账本、余额、退款。
 - Creator Share 计算。
-- Payout 申请和风控冻结。
+- Payout 申请和风控冻结。（已完成本地 Account Preview：available earning -> payout request -> approve/pay/reject/block，block 会转入 withheld）
 - 支付、退款、创作者条款。
 
 退出标准：

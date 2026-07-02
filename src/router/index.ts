@@ -9,6 +9,7 @@ import SavesView from "@/views/SavesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
 import SceneModeView from "@/views/SceneModeView.vue";
 import AccountCloudView from "@/views/AccountCloudView.vue";
+import CreatorProfileView from "@/views/CreatorProfileView.vue";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -23,6 +24,7 @@ const router = createRouter({
     { path: "/saves", name: "saves", component: SavesView },
     { path: "/settings", name: "settings", component: SettingsView },
     { path: "/account", name: "account-cloud", component: AccountCloudView },
+    { path: "/creators/:creatorId", name: "creator-profile", component: CreatorProfileView },
   ],
 });
 

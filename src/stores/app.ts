@@ -1,6 +1,16 @@
 import { defineStore } from "pinia";
 import { createLocalAccountSession, updateAccountAgeGate } from "@/domain/account";
-import { applyCreditAdjustment, createCreditAdjustment } from "@/domain/billing";
+import {
+  applyCreditAdjustment,
+  applyPayoutRequestToEarnings,
+  applyPayoutResolutionToEarnings,
+  calculateCreatorEarningTotals,
+  createCreditAdjustment,
+  createCreatorPayoutRequest,
+  resolveCreatorPayoutRequest,
+  updateCreatorEarningStatus,
+  type CreatorPayoutResolution,
+} from "@/domain/billing";
 import {
   appendUserMessage,
   createChatSession,
@@ -19,29 +29,43 @@ import { recordEngagementStats } from "@/domain/engagement";
 import { buildIndexes, createSeedEnvelope } from "@/domain/fixtures";
 import { fateCheckToText, runFateCheck } from "@/domain/fate-engine";
 import { createId, nowIso } from "@/domain/ids";
-import { completeMockMediaGenerationJob, createMediaGenerationJob, failMediaGenerationJob, startMediaGenerationJob } from "@/domain/media-generation";
+import { completeMediaGenerationJobWithAsset, completeMockMediaGenerationJob, createMediaGenerationJob, failMediaGenerationJob, startMediaGenerationJob } from "@/domain/media-generation";
+import { modelForMediaGenerationKind, providerLabelForMediaGeneration } from "@/domain/ai-routing";
 import { applyModerationReview, createModerationAppeal, createModerationStatus, postcheckNarrativeResponse, precheckContent, resolveModerationAppeal, type ModerationAppealOutcome, type ModerationReviewOutcome } from "@/domain/moderation";
-import { createWorkspacePackage, readWorkspacePackage, verifyWorkspacePackage, type PackageVerificationReport } from "@/domain/package-verification";
+import { createStorylineWorkspacePackage, createWorkspacePackage, readWorkspacePackage, verifyWorkspacePackage, type PackageVerificationReport } from "@/domain/package-verification";
 import { duplicateStorylinePackage } from "@/domain/storyline-duplicate";
 import { advanceArc, createInitialArc, createSummaryChapter, editArc, editSummaryChapter, revertSummaryChapter, shouldCreateAutoSummary, type ArcEditInput } from "@/domain/summary";
-import type { ConflictResolution } from "@/domain/sync";
+import type { ConflictResolution, SyncDeviceSnapshot, SyncOperationLogPackage } from "@/domain/sync";
 import { generateNarrative } from "@/services/ai";
+import { generateProviderImageAsset } from "@/services/ai/media";
 import { generateTauriMediaThumbnail, importBrowserMedia, importTauriMedia, pickAndImportTauriMedia } from "@/services/media";
 import {
   backupWorkspace,
+  buildAssetMaintenancePlan,
+  buildBrowserAssetInventory,
+  buildBrowserMessagePage,
   deleteSecret,
   exportWorkspace,
+  getNativeAssetInventory,
   importWorkspaceZip,
   listWorkspaceBackups,
   loadWorkspace,
   normalizeEnvelope,
+  queryNativeMessagePage,
+  rebuildNativeSearchIndex,
   resetWorkspace,
   restoreWorkspaceBackup,
   saveSecret,
   saveWorkspace,
+  searchNativeSearchIndex,
   verifyWorkspacePackageNative,
   type SecretDeleteResult,
   type SecretWriteResult,
+  type AssetMaintenancePlan,
+  type SQLiteIndexReport,
+  type SQLiteMessagePage,
+  type SQLiteSearchHit,
+  type WorkspaceAssetInventory,
 } from "@/services/repositories/workspace";
 import { localContentRepository, type ContentSearchQuery, type ContentSearchResult } from "@/services/repositories/content";
 import { localSyncRepository } from "@/services/repositories/sync";
@@ -54,7 +78,9 @@ import type {
   Chat,
   ContentRating,
   CreditAdjustment,
+  CreatorEarning,
   DungeonMindConfig,
+  FateCheck,
   MediaAsset,
   MediaGenerationKind,
   MediaGenerationJob,
@@ -69,6 +95,16 @@ import type {
   Storyline,
 } from "@/types/domain";
 
+type FateCheckRunInput = {
+  intent?: string;
+  attributeId?: string;
+  skillId?: string;
+  difficulty?: number;
+  modifier?: number;
+  seed?: string;
+  continueAfter?: boolean;
+};
+
 interface AppState {
   envelope: SaveEnvelope;
   ready: boolean;
@@ -77,10 +113,23 @@ interface AppState {
   error?: string;
   lastExportPath?: string;
   lastChatExportPath?: string;
+  lastStorylinePackageExportPath?: string;
   lastImportMessage?: string;
   lastBackupMessage?: string;
   lastBudgetWarning?: string;
   lastPackageReport?: PackageVerificationReport;
+  lastSqliteIndexReport?: SQLiteIndexReport;
+  lastSqliteSearchHits: SQLiteSearchHit[];
+  lastSqliteIndexMessage?: string;
+  lastSqliteMessagePage?: SQLiteMessagePage;
+  lastSqliteMessagePageMessage?: string;
+  lastAssetInventory?: WorkspaceAssetInventory;
+  lastAssetInventoryMessage?: string;
+  lastAssetMaintenancePlan?: AssetMaintenancePlan;
+  lastAssetMaintenanceMessage?: string;
+  lastSyncSnapshot?: SyncDeviceSnapshot;
+  lastSyncOperationLog?: SyncOperationLogPackage;
+  lastSyncLogMessage?: string;
   backupMetas: Awaited<ReturnType<typeof listWorkspaceBackups>>;
 }
 
@@ -91,6 +140,7 @@ export const useAppStore = defineStore("app", {
     saving: false,
     generating: false,
     backupMetas: [],
+    lastSqliteSearchHits: [],
   }),
   getters: {
     storylines: (state) => Object.values(state.envelope.entities.storylines).filter((story) => !story.deletedAt).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
@@ -106,6 +156,8 @@ export const useAppStore = defineStore("app", {
         .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     moderationQueue: (state) => Object.values(state.envelope.entities.moderationCases).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)),
     creatorEarnings: (state) => Object.values(state.envelope.entities.creatorEarnings).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    creatorPayoutRequests: (state) => Object.values(state.envelope.entities.creatorPayoutRequests).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt)),
+    creatorEarningTotals: (state) => calculateCreatorEarningTotals(Object.values(state.envelope.entities.creatorEarnings)),
     ledgerEntries: (state) => Object.values(state.envelope.entities.creditLedger).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     creditAdjustments: (state) => Object.values(state.envelope.entities.creditAdjustments).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     mediaGenerationJobs: (state) => Object.values(state.envelope.entities.mediaGenerationJobs).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -527,23 +579,28 @@ export const useAppStore = defineStore("app", {
         ].slice(-80);
       }
     },
-    async performFateCheck(chatId: string, intent?: string) {
+    async performFateCheck(chatId: string, input?: string | FateCheckRunInput): Promise<FateCheck | undefined> {
       const chat = this.getChat(chatId);
       if (!chat || chat.status !== "active") return;
       const storyline = this.getStoryline(chat.storylineId);
       if (!storyline?.dungeonMindConfigId) return;
       const config = this.envelope.entities.dungeonMindConfigs[storyline.dungeonMindConfigId];
       if (!config?.enabled) return;
+      const options: FateCheckRunInput = typeof input === "string" ? { intent: input } : input ?? {};
       const messages = this.chatMessages(chatId);
       const lastUser = [...messages].reverse().find((message) => message.role === "user");
       const check = runFateCheck({
         chatId,
         actorId: chat.personaId,
-        intent: intent?.trim() || lastUser?.content || "尝试推进当前行动",
+        intent: options.intent?.trim() || lastUser?.content || "尝试推进当前行动",
         config,
-        seed: `${chatId}:${messages.length}:${lastUser?.id ?? "manual"}`,
+        attributeId: options.attributeId,
+        skillId: options.skillId,
+        difficulty: options.difficulty,
+        modifier: options.modifier,
+        seed: options.seed?.trim() || `${chatId}:${messages.length}:${lastUser?.id ?? "manual"}`,
       });
-      const message = createMessage(chatId, "fate", fateCheckToText(check), "act", undefined, {
+      const message = createMessage(chatId, "fate", fateCheckToText(check, config), "act", undefined, {
         safetyFlags: ["none"],
       });
       this.envelope.entities.fateChecks[check.id] = check;
@@ -558,6 +615,10 @@ export const useAppStore = defineStore("app", {
         this.envelope.entities.arcs[activeArc.id] = advanceArc(activeArc, message.id);
       }
       await this.persist("fate_check_created");
+      if (options.continueAfter) {
+        await this.continueChat(chatId);
+      }
+      return check;
     },
     async retryLast(chatId: string) {
       const chat = this.getChat(chatId);
@@ -709,6 +770,35 @@ export const useAppStore = defineStore("app", {
       downloadTextFile(fileName, markdown, "text/markdown;charset=utf-8");
       this.lastChatExportPath = fileName;
       await this.persist("chat_excerpt_exported");
+    },
+    async exportStorylinePackage(storylineId: string) {
+      const storyline = this.getStoryline(storylineId, true);
+      if (!storyline) throw new Error("storyline_not_found");
+      const packageFile = createStorylineWorkspacePackage(this.envelope, storylineId);
+      const report = verifyWorkspacePackage(packageFile);
+      this.lastPackageReport = report;
+      if (!report.ok) {
+        throw new Error(`storyline_package_invalid: ${report.issues.filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" ")}`);
+      }
+      const fileName = `${storyline.title.replace(/[^\w\u4e00-\u9fa5-]+/g, "-") || "storyline"}-package.evolvria.json`;
+      downloadTextFile(fileName, JSON.stringify(packageFile, null, 2), "application/json;charset=utf-8");
+      this.lastStorylinePackageExportPath = fileName;
+      await this.persist("storyline_package_exported");
+      return fileName;
+    },
+    async importStorylinePackageFile(file: File): Promise<string> {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const packageInput = readWorkspacePackage(parsed);
+      if (!packageInput.envelope) throw new Error("storyline_package_missing_save");
+      const report = verifyWorkspacePackage(parsed as SaveEnvelope | ReturnType<typeof createWorkspacePackage>);
+      this.lastPackageReport = report;
+      if (!report.ok) {
+        throw new Error(`storyline_package_invalid: ${report.issues.filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" ")}`);
+      }
+      const importedId = importStorylinePackageAsDraft(this.envelope, packageInput.envelope);
+      this.lastImportMessage = `Imported storyline package as local draft ${this.envelope.entities.storylines[importedId]?.title ?? importedId}.`;
+      await this.persist("storyline_package_imported");
+      return importedId;
     },
     async createStorylineDraft(input: { title: string; tagline: string; summary: string; characterName: string; opening: string }): Promise<string> {
       const now = nowIso();
@@ -1122,20 +1212,36 @@ export const useAppStore = defineStore("app", {
         : precheckContent(textForSafety, this.envelope.settings.adultContentUnlocked);
       const job = createMediaGenerationJob({
         ...input,
-        provider: this.envelope.settings.provider.type,
-        model: this.envelope.settings.provider.model,
+        provider: providerLabelForMediaGeneration(this.envelope.settings.provider),
+        model: modelForMediaGenerationKind(input.kind),
         safetyFlags,
       });
       this.envelope.entities.mediaGenerationJobs[job.id] = job;
       await this.persist("media_generation_queued");
       return job.id;
     },
-    async runMockMediaGenerationJob(jobId: string) {
+    async runMediaGenerationJob(jobId: string) {
       const job = this.envelope.entities.mediaGenerationJobs[jobId];
       if (!job || job.status === "blocked") return;
       const running = startMediaGenerationJob(job);
       this.envelope.entities.mediaGenerationJobs[jobId] = running;
       try {
+        const providerAsset = await generateProviderImageAsset({
+          workspaceId: this.envelope.workspace.id,
+          provider: this.envelope.settings.provider,
+          job: running,
+        });
+        if (providerAsset) {
+          const completed = completeMediaGenerationJobWithAsset(running, providerAsset);
+          this.envelope.entities.mediaGenerationJobs[jobId] = completed.job;
+          this.envelope.entities.mediaAssets[providerAsset.id] = providerAsset;
+          this.envelope.entities.creditLedger[completed.ledgerEntry.id] = completed.ledgerEntry;
+          this.attachGeneratedAssetToStoryline(completed.job, providerAsset);
+          this.attachGeneratedAssetToScene(completed.job, providerAsset);
+          await this.persist("media_generation_completed");
+          return providerAsset.id;
+        }
+
         const completed = completeMockMediaGenerationJob(running);
         this.envelope.entities.mediaGenerationJobs[jobId] = completed.job;
         this.envelope.entities.mediaAssets[completed.asset.id] = completed.asset;
@@ -1149,6 +1255,9 @@ export const useAppStore = defineStore("app", {
         await this.persist("media_generation_failed");
       }
     },
+    async runMockMediaGenerationJob(jobId: string) {
+      return this.runMediaGenerationJob(jobId);
+    },
     attachGeneratedAssetToStoryline(job: MediaGenerationJob, asset: MediaAsset) {
       const storyline = this.getStoryline(job.storylineId, true);
       if (!storyline) return;
@@ -1158,7 +1267,7 @@ export const useAppStore = defineStore("app", {
         supportedModes: [...new Set([...storyline.supportedModes, job.kind])],
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : `Added generated ${job.kind} placeholder.`,
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : `添加生成${mediaGenerationKindLabel(job.kind)}占位素材。`,
         }),
         updatedAt: nowIso(),
       });
@@ -1172,6 +1281,13 @@ export const useAppStore = defineStore("app", {
         this.envelope.entities.messages[message.id] = {
           ...message,
           sceneHints: [{ ...hint, backgroundAssetId: asset.id }, ...rest],
+        };
+        return;
+      }
+      if (job.kind === "video") {
+        this.envelope.entities.messages[message.id] = {
+          ...message,
+          sceneHints: [{ ...hint }, ...rest],
         };
         return;
       }
@@ -1203,9 +1319,9 @@ export const useAppStore = defineStore("app", {
       const updatedAsset: MediaAsset = {
         ...asset,
         purpose: "voice",
-        altText: `${character.name} voice reference: ${file.name}`,
-        source: { ...asset.source, label: `Voice reference for ${character.name}` },
-        license: { kind: "unknown", note: "Confirm this voice reference is original or licensed before publishing." },
+        altText: `${character.name} 语音参考：${file.name}`,
+        source: { ...asset.source, label: `${character.name} 的语音参考` },
+        license: { kind: "unknown", note: "发布前请确认该语音参考为原创或已获授权。" },
       };
       this.envelope.entities.mediaAssets[updatedAsset.id] = updatedAsset;
       localContentRepository.saveCharacter(this.envelope, {
@@ -1224,7 +1340,7 @@ export const useAppStore = defineStore("app", {
         supportedModes: [...new Set([...storyline.supportedModes, "voice" as const])],
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Added a voice reference asset.",
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "添加语音参考素材。",
         }),
         updatedAt: nowIso(),
       });
@@ -1237,7 +1353,7 @@ export const useAppStore = defineStore("app", {
       if (!storyline || !character) throw new Error("voice_reference_context_missing");
       const asset = await importTauriMedia(this.envelope.workspace.id, path.trim(), "voice");
       if (!asset) return undefined;
-      await this.attachVoiceReferenceAsset(storyline, character, asset, "native_voice_reference_imported", "Imported native voice reference.");
+      await this.attachVoiceReferenceAsset(storyline, character, asset, "native_voice_reference_imported", "导入本地语音参考素材。");
       return asset.id;
     },
     async pickNativeVoiceReferenceForCharacter(storylineId: string, characterId: string): Promise<string | undefined> {
@@ -1246,16 +1362,16 @@ export const useAppStore = defineStore("app", {
       if (!storyline || !character) throw new Error("voice_reference_context_missing");
       const asset = await pickAndImportTauriMedia(this.envelope.workspace.id, "voice");
       if (!asset) return undefined;
-      await this.attachVoiceReferenceAsset(storyline, character, asset, "native_voice_reference_picked", "Picked native voice reference.");
+      await this.attachVoiceReferenceAsset(storyline, character, asset, "native_voice_reference_picked", "选择本地语音参考素材。");
       return asset.id;
     },
     async attachVoiceReferenceAsset(storyline: Storyline, character: Character, asset: MediaAsset, persistReason: string, changelog: string) {
       const updatedAsset: MediaAsset = {
         ...asset,
         purpose: "voice",
-        altText: `${character.name} native voice reference`,
-        source: { ...asset.source, label: `Native voice reference for ${character.name}` },
-        license: { kind: "unknown", note: "Confirm this voice reference is original or licensed before publishing." },
+        altText: `${character.name} 本地语音参考`,
+        source: { ...asset.source, label: `${character.name} 的本地语音参考` },
+        license: { kind: "unknown", note: "发布前请确认该语音参考为原创或已获授权。" },
       };
       this.envelope.entities.mediaAssets[updatedAsset.id] = updatedAsset;
       localContentRepository.saveCharacter(this.envelope, {
@@ -1465,6 +1581,7 @@ export const useAppStore = defineStore("app", {
         return;
       }
       localSyncRepository.updateSettings(this.envelope, input);
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist("sync_settings_updated");
     },
     async signInLocalAccount(input: { displayName: string; email?: string; ageGate: AccountAgeGate }) {
@@ -1486,6 +1603,7 @@ export const useAppStore = defineStore("app", {
         enabled: false,
         endpoint: this.envelope.settings.sync.endpoint,
       });
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist("account_local_signed_out");
     },
     async queueSyncOperation(entityType: SyncOperationEntity, entityId: string, op: SyncOperationKind = "update", patch: unknown = {}) {
@@ -1495,6 +1613,7 @@ export const useAppStore = defineStore("app", {
         op,
         patch,
       });
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist("sync_operation_queued");
       return operation.id;
     },
@@ -1509,18 +1628,53 @@ export const useAppStore = defineStore("app", {
     },
     async simulateSyncPush() {
       const result = localSyncRepository.push(this.envelope);
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist(`sync_push_simulated_${result.pushedCount}`);
       return result.pushedCount;
     },
     async simulateStorylineConflict(storylineId: string) {
       const result = localSyncRepository.createStorylineConflict(this.envelope, storylineId);
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist("sync_conflict_simulated");
       return result.conflictId;
     },
     async resolveSyncConflict(conflictId: string, resolution: ConflictResolution) {
       const result = localSyncRepository.resolveConflict(this.envelope, conflictId, resolution);
       if (!result.resolved) return;
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
       await this.persist("sync_conflict_resolved");
+    },
+    refreshSyncSnapshot() {
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
+      this.lastSyncLogMessage = "Device snapshot refreshed.";
+      return this.lastSyncSnapshot;
+    },
+    exportSyncOperationLog() {
+      const operationLog = localSyncRepository.exportOperationLog(this.envelope);
+      this.lastSyncOperationLog = operationLog;
+      const safeName = this.envelope.workspace.name.replace(/[^\w-]+/g, "-") || this.envelope.workspace.id;
+      downloadTextFile(
+        `${safeName}.evolvria-sync.json`,
+        JSON.stringify(operationLog, null, 2),
+        "application/json;charset=utf-8",
+      );
+      this.lastSyncLogMessage = `Exported ${operationLog.summary.operationCount} sync operation(s) and ${operationLog.summary.conflictCount} conflict record(s).`;
+      return operationLog;
+    },
+    async importSyncOperationLogFile(file: File) {
+      const parsed = JSON.parse(await file.text()) as unknown;
+      const result = localSyncRepository.importOperationLog(this.envelope, parsed);
+      this.lastSyncSnapshot = result.snapshot;
+      this.lastSyncLogMessage = `Imported ${result.importedOperations} operation(s), skipped ${result.skippedOperations}; imported ${result.importedConflicts} conflict record(s), skipped ${result.skippedConflicts}.`;
+      await this.persist("sync_operation_log_imported");
+      return result;
+    },
+    async disableSyncRetainingLocalData() {
+      localSyncRepository.disableRetainingLocalData(this.envelope);
+      this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
+      this.lastSyncLogMessage = "Private sync disabled. Local workspace, operation log and conflicts remain on this device.";
+      await this.persist("sync_disabled_local_retained");
+      return this.lastSyncSnapshot;
     },
     async submitLocalModerationCase(targetType: "storyline" | "character" | "media" | "chat" | "creator", targetId: string, reason: string) {
       const id = createId("mod");
@@ -1540,7 +1694,7 @@ export const useAppStore = defineStore("app", {
       if (issues.length) return issues;
       const storyline = this.getStoryline(storylineId);
       if (!storyline) return [{ field: "storyline", severity: "error" as const, message: "Storyline not found." }];
-      const packageReport = verifyWorkspacePackage(createWorkspacePackage(createStorylineReviewEnvelope(this.envelope, storyline)));
+      const packageReport = verifyWorkspacePackage(createStorylineWorkspacePackage(this.envelope, storyline.id));
       this.lastPackageReport = packageReport;
       const packageIssues = packageReportToValidationIssues(packageReport);
       if (packageIssues.length) {
@@ -1650,19 +1804,49 @@ export const useAppStore = defineStore("app", {
       }
       await this.persist("moderation_appeal_resolved");
     },
-    async addCreatorEarningEstimate(sourceEntityId: string, amount = 0) {
+    async addCreatorEarningEstimate(sourceEntityId: string, amount = 0, status: CreatorEarning["status"] = "estimated") {
       const id = createId("earning");
       this.envelope.entities.creatorEarnings[id] = {
         id,
         creatorId: "creator_local",
         sourceEntityId,
-        status: "estimated",
-        amount,
+        status,
+        amount: Math.max(0, Number(amount)),
         currency: "credit",
-        note: "Local estimate only. Cloud payout is not enabled.",
+        note: status === "available"
+          ? "Local available earning preview. Cloud payout is not enabled."
+          : "Local estimate only. Cloud payout is not enabled.",
         createdAt: nowIso(),
       };
       await this.persist("creator_earning_estimated");
+      return id;
+    },
+    async updateCreatorEarningStatus(earningId: string, status: CreatorEarning["status"], note = "Local creator earning status preview.") {
+      const earning = this.envelope.entities.creatorEarnings[earningId];
+      if (!earning) return;
+      this.envelope.entities.creatorEarnings[earningId] = updateCreatorEarningStatus(earning, status, note);
+      await this.persist(`creator_earning_${status}`);
+    },
+    async requestCreatorPayout(note = "Local payout preview request.") {
+      const requestedAt = nowIso();
+      const request = createCreatorPayoutRequest(Object.values(this.envelope.entities.creatorEarnings), {
+        id: createId("payout"),
+        creatorId: "creator_local",
+        note,
+        requestedAt,
+      });
+      this.envelope.entities.creatorPayoutRequests[request.id] = request;
+      this.envelope.entities.creatorEarnings = applyPayoutRequestToEarnings(this.envelope.entities.creatorEarnings, request);
+      await this.persist("creator_payout_requested");
+      return request.id;
+    },
+    async resolveCreatorPayout(payoutId: string, outcome: CreatorPayoutResolution, note = "Local payout preview decision.") {
+      const request = this.envelope.entities.creatorPayoutRequests[payoutId];
+      if (!request) return;
+      const resolved = resolveCreatorPayoutRequest(request, outcome, nowIso(), note);
+      this.envelope.entities.creatorPayoutRequests[payoutId] = resolved;
+      this.envelope.entities.creatorEarnings = applyPayoutResolutionToEarnings(this.envelope.entities.creatorEarnings, resolved);
+      await this.persist(`creator_payout_${resolved.status}`);
     },
     async addCreditLedgerEstimate(amount = 1.2) {
       const id = createId("ledger");
@@ -1720,6 +1904,86 @@ export const useAppStore = defineStore("app", {
       this.lastPackageReport = await verifyWorkspacePackageNative(this.envelope.workspace.id) ?? verifyWorkspacePackage(this.envelope);
       return this.lastPackageReport;
     },
+    async refreshAssetInventory() {
+      const nativeInventory = await getNativeAssetInventory(this.envelope.workspace.id);
+      if (nativeInventory) {
+        this.lastAssetInventory = nativeInventory;
+        this.lastAssetInventoryMessage = `Native asset inventory: ${nativeInventory.stats.declaredAssets} declared assets, ${nativeInventory.stats.physicalFiles} physical file(s).`;
+        this.lastAssetMaintenancePlan = buildAssetMaintenancePlan(nativeInventory);
+        this.lastAssetMaintenanceMessage = `Asset maintenance plan: ${this.lastAssetMaintenancePlan.summary.totalActions} action(s), ${this.lastAssetMaintenancePlan.summary.publishBlockers} publish blocker(s).`;
+        return nativeInventory;
+      }
+      const fallback = buildBrowserAssetInventory(this.envelope);
+      this.lastAssetInventory = fallback;
+      this.lastAssetInventoryMessage = `Browser asset inventory uses metadata only: ${fallback.stats.declaredAssets} declared assets.`;
+      this.lastAssetMaintenancePlan = buildAssetMaintenancePlan(fallback);
+      this.lastAssetMaintenanceMessage = `Asset maintenance plan: ${this.lastAssetMaintenancePlan.summary.totalActions} action(s), ${this.lastAssetMaintenancePlan.summary.publishBlockers} publish blocker(s).`;
+      return fallback;
+    },
+    async rebuildSqliteSearchIndex(previewQuery = "星烬") {
+      const report = await rebuildNativeSearchIndex(this.envelope.workspace.id);
+      if (!report) {
+        this.lastSqliteIndexReport = undefined;
+        this.lastSqliteSearchHits = [];
+        this.lastSqliteIndexMessage = "Native SQLite index requires the Tauri desktop runtime. Browser preview uses the JSON repository search in Library.";
+        return undefined;
+      }
+      this.lastSqliteIndexReport = report;
+      this.lastSqliteIndexMessage = `SQLite FTS index rebuilt with ${report.itemCount} item(s).`;
+      await this.searchSqliteIndex(previewQuery);
+      return report;
+    },
+    async searchSqliteIndex(query: string) {
+      const hits = await searchNativeSearchIndex(this.envelope.workspace.id, query, 8);
+      if (!hits) {
+        this.lastSqliteSearchHits = [];
+        this.lastSqliteIndexMessage = "Native SQLite search requires the Tauri desktop runtime. Use Library search in browser preview.";
+        return [];
+      }
+      this.lastSqliteSearchHits = hits;
+      this.lastSqliteIndexMessage = `SQLite search returned ${hits.length} hit(s).`;
+      return hits;
+    },
+    async previewSqliteMessagePage(chatId: string, pageSize = 80, offsetFromEnd = 0) {
+      let nativePage: SQLiteMessagePage | undefined;
+      try {
+        nativePage = await queryNativeMessagePage(this.envelope.workspace.id, chatId, pageSize, offsetFromEnd);
+      } catch (error) {
+        if (isRecoverableSqliteIndexError(error)) {
+          try {
+            await this.rebuildSqliteSearchIndex("");
+            nativePage = await queryNativeMessagePage(this.envelope.workspace.id, chatId, pageSize, offsetFromEnd);
+          } catch {
+            nativePage = undefined;
+          }
+        } else {
+          throw error;
+        }
+      }
+
+      if (nativePage) {
+        const expectedCount = this.chatMessages(chatId).length;
+        if (nativePage.totalCount !== expectedCount) {
+          try {
+            await this.rebuildSqliteSearchIndex("");
+            nativePage = await queryNativeMessagePage(this.envelope.workspace.id, chatId, pageSize, offsetFromEnd);
+          } catch {
+            nativePage = undefined;
+          }
+        }
+      }
+
+      if (nativePage) {
+        this.lastSqliteMessagePage = nativePage;
+        this.lastSqliteMessagePageMessage = `Native SQLite message page: ${nativePage.messages.length} of ${nativePage.totalCount}.`;
+        return nativePage;
+      }
+
+      const fallbackPage = buildBrowserMessagePage(this.envelope, chatId, pageSize, offsetFromEnd);
+      this.lastSqliteMessagePage = fallbackPage;
+      this.lastSqliteMessagePageMessage = `Browser JSON message page preview: ${fallbackPage.messages.length} of ${fallbackPage.totalCount}.`;
+      return fallbackPage;
+    },
     async resetToSeed() {
       this.envelope = await resetWorkspace();
       await this.refreshBackups();
@@ -1739,67 +2003,93 @@ function clampDifficulty(value: number, min: number, max: number, fallback: numb
   return Math.min(max, Math.max(min, Math.round(value)));
 }
 
-function createStorylineReviewEnvelope(envelope: SaveEnvelope, storyline: Storyline): SaveEnvelope {
-  const characterIds = new Set(storyline.cast.map((cast) => cast.characterId));
-  const scenarioIds = new Set(storyline.scenarioIds);
-  const mediaIds = new Set(storyline.mediaIds);
-  const characters = Object.fromEntries(
-    [...characterIds]
-      .map((id) => envelope.entities.characters[id])
-      .filter((character): character is Character => Boolean(character))
-      .map((character) => {
-        for (const mediaId of character.mediaIds) mediaIds.add(mediaId);
-        if (character.voice.referenceAssetId) mediaIds.add(character.voice.referenceAssetId);
-        return [character.id, character];
-      }),
+function isRecoverableSqliteIndexError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /sqlite_index_missing|no such table|database disk image is malformed/i.test(message);
+}
+
+function importStorylinePackageAsDraft(targetEnvelope: SaveEnvelope, packageEnvelope: SaveEnvelope): string {
+  const sourceStoryline = Object.values(packageEnvelope.entities.storylines)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0];
+  if (!sourceStoryline) throw new Error("storyline_package_empty");
+  const now = nowIso();
+  const duplicated = duplicateStorylinePackage(packageEnvelope.entities, sourceStoryline.id, {
+    titleSuffix: " 导入草稿",
+    now,
+    creator: { id: "creator_local", name: "Local Creator" },
+  });
+  const mediaIdMap = Object.fromEntries(
+    collectStorylinePackageMediaIds(packageEnvelope, sourceStoryline)
+      .map((id) => [id, createId("media")]),
   );
-  const scenarios = Object.fromEntries(
-    [...scenarioIds]
-      .map((id) => envelope.entities.scenarios[id])
-      .filter((scenario): scenario is Scenario => Boolean(scenario))
-      .map((scenario) => [scenario.id, scenario]),
-  );
-  const mediaAssets = Object.fromEntries(
-    [...mediaIds]
-      .map((id) => envelope.entities.mediaAssets[id])
-      .filter((asset): asset is MediaAsset => Boolean(asset))
-      .map((asset) => [asset.id, asset]),
-  );
-  const dungeonMindConfigs = storyline.dungeonMindConfigId && envelope.entities.dungeonMindConfigs[storyline.dungeonMindConfigId]
-    ? { [storyline.dungeonMindConfigId]: envelope.entities.dungeonMindConfigs[storyline.dungeonMindConfigId] }
-    : {};
-  const entities: SaveEnvelope["entities"] = {
-    characters,
-    storylines: { [storyline.id]: storyline },
-    scenarios,
-    mediaAssets,
-    personas: {},
-    chats: {},
-    chatCheckpoints: {},
-    messages: {},
-    summaryChapters: {},
-    arcs: {},
-    dungeonMindConfigs,
-    fateChecks: {},
-    creditLedger: {},
-    creditAdjustments: {},
-    moderationCases: {},
-    creatorEarnings: {},
-    engagementStats: {},
-    mediaGenerationJobs: {},
-    syncOperations: {},
-    syncConflicts: {},
-  };
-  return {
-    ...envelope,
-    workspace: {
-      ...envelope.workspace,
-      name: `${storyline.title} Review Package`,
+  const remapMediaId = (id: string) => mediaIdMap[id] ?? id;
+  const mediaAssets: MediaAsset[] = [];
+  for (const [sourceId, importedId] of Object.entries(mediaIdMap)) {
+    const asset = packageEnvelope.entities.mediaAssets[sourceId];
+    if (!asset) continue;
+    mediaAssets.push({
+      ...asset,
+      id: importedId,
+      variants: asset.variants.map((variant) => ({ ...variant, id: createId("variant") })),
+      safety: {
+        ...asset.safety,
+        state: "draft",
+        reasons: [],
+        reviewedAt: undefined,
+        reviewerId: undefined,
+      },
+      createdAt: now,
+    });
+  }
+  const characters = duplicated.characters.map((character) => ({
+    ...character,
+    mediaIds: character.mediaIds.map(remapMediaId),
+    voice: {
+      ...character.voice,
+      referenceAssetId: character.voice.referenceAssetId ? remapMediaId(character.voice.referenceAssetId) : undefined,
     },
-    entities,
-    indexes: buildIndexes(entities),
-    audit: [],
+  }));
+  const storyline = {
+    ...duplicated.storyline,
+    mediaIds: duplicated.storyline.mediaIds.map(remapMediaId),
+    version: {
+      ...duplicated.storyline.version,
+      changelog: "Imported from Evolvria storyline package.",
+    },
   };
+
+  for (const asset of mediaAssets) targetEnvelope.entities.mediaAssets[asset.id] = asset;
+  for (const character of characters) localContentRepository.saveCharacter(targetEnvelope, character);
+  for (const scenario of duplicated.scenarios) localContentRepository.saveScenario(targetEnvelope, scenario);
+  if (duplicated.dungeonMindConfig) targetEnvelope.entities.dungeonMindConfigs[duplicated.dungeonMindConfig.id] = duplicated.dungeonMindConfig;
+  localContentRepository.saveStoryline(targetEnvelope, storyline);
+  targetEnvelope.audit = [
+    ...targetEnvelope.audit,
+    {
+      id: createId("audit"),
+      type: "storyline_package_imported",
+      message: `Imported ${sourceStoryline.title} as ${storyline.title}.`,
+      createdAt: now,
+    },
+  ].slice(-80);
+  return storyline.id;
+}
+
+function collectStorylinePackageMediaIds(envelope: SaveEnvelope, storyline: Storyline): string[] {
+  const mediaIds = new Set(storyline.mediaIds);
+  for (const cast of storyline.cast) {
+    const character = envelope.entities.characters[cast.characterId];
+    if (!character) continue;
+    for (const mediaId of character.mediaIds) mediaIds.add(mediaId);
+    if (character.voice.referenceAssetId) mediaIds.add(character.voice.referenceAssetId);
+  }
+  return [...mediaIds].filter((id) => Boolean(envelope.entities.mediaAssets[id]));
+}
+
+function mediaGenerationKindLabel(kind: MediaGenerationKind): string {
+  if (kind === "voice") return "语音";
+  if (kind === "image") return "图片";
+  return "视频";
 }
 
 function packageReportToValidationIssues(report: PackageVerificationReport): ValidationIssue[] {

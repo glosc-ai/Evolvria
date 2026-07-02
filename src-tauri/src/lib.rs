@@ -2,9 +2,11 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use image::{GenericImageView, ImageFormat, ImageReader};
 use keyring::{Entry, Error as KeyringError};
+use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fs::{self, File};
 use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
@@ -43,6 +45,11 @@ struct BackupMeta {
     created_at: String,
     path: String,
     size_bytes: u64,
+    has_sqlite_index: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlite_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sqlite_size_bytes: Option<u64>,
 }
 
 #[derive(Debug, Serialize)]
@@ -75,6 +82,10 @@ struct MediaAssetResult {
     purpose: String,
     relative_path: String,
     mime_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    height: Option<u32>,
     size_bytes: u64,
     variants: Vec<Value>,
     alt_text: String,
@@ -113,6 +124,105 @@ struct PackageVerificationReport {
     entity_counts: Value,
     asset_refs: AssetRefsReport,
     issues: Vec<PackageVerificationIssue>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetInventoryStats {
+    declared_assets: usize,
+    referenced_assets: usize,
+    unreferenced_assets: usize,
+    browser_only_assets: usize,
+    missing_physical_assets: usize,
+    physical_files: usize,
+    untracked_files: usize,
+    declared_bytes: u64,
+    physical_bytes: u64,
+    untracked_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetInventoryItem {
+    id: String,
+    kind: String,
+    purpose: String,
+    relative_path: String,
+    source_kind: String,
+    referenced: bool,
+    physical_status: String,
+    declared_size_bytes: u64,
+    physical_size_bytes: Option<u64>,
+    variant_count: usize,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PhysicalAssetFile {
+    relative_path: String,
+    size_bytes: u64,
+    folder: String,
+    supported: bool,
+    tracked: bool,
+    asset_id: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceAssetInventory {
+    workspace_id: String,
+    checked_at: String,
+    root_path: String,
+    stats: AssetInventoryStats,
+    by_folder: BTreeMap<String, u64>,
+    assets: Vec<AssetInventoryItem>,
+    untracked_files: Vec<PhysicalAssetFile>,
+    missing_asset_ids: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SqliteIndexReport {
+    workspace_id: String,
+    path: String,
+    indexed_at: String,
+    item_count: usize,
+    message_count: usize,
+    source_updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SqliteSearchHit {
+    entity_type: String,
+    entity_id: String,
+    title: String,
+    snippet: String,
+    updated_at: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SqliteMessagePage {
+    chat_id: String,
+    total_count: usize,
+    offset_from_end: usize,
+    page_size: usize,
+    start_index: usize,
+    end_index: usize,
+    has_older: bool,
+    has_newer: bool,
+    next_offset_from_end: usize,
+    messages: Vec<Value>,
+}
+
+#[derive(Debug)]
+struct SearchIndexItem {
+    entity_type: String,
+    entity_id: String,
+    title: String,
+    body: String,
+    updated_at: Option<String>,
 }
 
 #[tauri::command]
@@ -318,6 +428,20 @@ async fn media_pick_and_import(
     import_media_file(&app, &workspace_id, source, purpose).map(Some)
 }
 
+#[tauri::command]
+fn media_write_generated_image(
+    app: AppHandle,
+    workspace_id: String,
+    bytes: Vec<u8>,
+    mime_type: String,
+    purpose: String,
+    prompt: String,
+) -> Result<MediaAssetResult, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    write_generated_image_from_bytes(&dir, bytes, mime_type, purpose, prompt)
+}
+
 fn import_media_file(
     app: &AppHandle,
     workspace_id: &str,
@@ -350,11 +474,58 @@ fn import_media_file(
         purpose,
         relative_path,
         mime_type: mime_type.to_string(),
+        width: None,
+        height: None,
         size_bytes: metadata.len(),
         variants: vec![],
         alt_text: "Imported local asset".to_string(),
         source: json!({ "kind": "imported", "label": "Local file import" }),
         license: json!({ "kind": "unknown", "note": "User must confirm rights before publishing." }),
+        safety: json!({ "rating": "SFW", "state": "draft", "reasons": [], "safetyFlags": ["none"] }),
+        created_at: Utc::now().to_rfc3339(),
+    })
+}
+
+fn write_generated_image_from_bytes(
+    workspace_dir: &Path,
+    bytes: Vec<u8>,
+    mime_type: String,
+    purpose: String,
+    prompt: String,
+) -> Result<MediaAssetResult, String> {
+    validate_media_purpose(&purpose)?;
+    if bytes.is_empty() {
+        return Err("generated_image_empty".to_string());
+    }
+    if bytes.len() as u64 > MAX_MEDIA_IMPORT_BYTES {
+        return Err("generated_image_too_large".to_string());
+    }
+    if prompt.contains('\0') || prompt.len() > 10_000 {
+        return Err("generated_image_invalid_prompt".to_string());
+    }
+    let (extension, normalized_mime) = generated_image_extension(&mime_type, &bytes)?;
+    let dimensions = image::load_from_memory(&bytes)
+        .ok()
+        .map(|image| image.dimensions());
+    let id = format!("media_gen_{}", hash_bytes(&bytes));
+    let relative_path = format!("assets/images/{}.{}", id, extension);
+    let target = workspace_dir.join(&relative_path);
+    ensure_parent(&target)?;
+    fs::write(&target, &bytes).map_err(to_string)?;
+    let alt = compact_generated_prompt(&prompt);
+    Ok(MediaAssetResult {
+        id,
+        kind: "image".to_string(),
+        purpose,
+        relative_path,
+        mime_type: normalized_mime.to_string(),
+        width: dimensions.map(|(width, _)| width),
+        height: dimensions.map(|(_, height)| height),
+        size_bytes: bytes.len() as u64,
+        variants: vec![],
+        alt_text: format!("Generated image: {}", alt),
+        source: json!({ "kind": "generated", "label": "Glosc One image generation" }),
+        license: json!({ "kind": "owned", "note": "Generated through the configured AI provider; review before publishing." }),
         safety: json!({ "rating": "SFW", "state": "draft", "reasons": [], "safetyFlags": ["none"] }),
         created_at: Utc::now().to_rfc3339(),
     })
@@ -508,6 +679,57 @@ fn content_package_verify(
     verify_workspace_package_dir(&dir)
 }
 
+#[tauri::command]
+fn workspace_asset_inventory(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<WorkspaceAssetInventory, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    workspace_asset_inventory_in_dir(&dir, &workspace_id)
+}
+
+#[tauri::command]
+fn workspace_rebuild_sqlite_index(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<SqliteIndexReport, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    rebuild_sqlite_index_in_dir(&dir, &workspace_id)
+}
+
+#[tauri::command]
+fn workspace_search_sqlite_index(
+    app: AppHandle,
+    workspace_id: String,
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<SqliteSearchHit>, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    search_sqlite_index_in_dir(&dir, &query, limit.unwrap_or(20))
+}
+
+#[tauri::command]
+fn workspace_query_sqlite_messages(
+    app: AppHandle,
+    workspace_id: String,
+    chat_id: String,
+    page_size: Option<usize>,
+    offset_from_end: Option<usize>,
+) -> Result<SqliteMessagePage, String> {
+    validate_workspace_id(&workspace_id)?;
+    validate_entity_id(&chat_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    query_sqlite_messages_in_dir(
+        &dir,
+        &chat_id,
+        page_size.unwrap_or(80),
+        offset_from_end.unwrap_or(0),
+    )
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -526,13 +748,18 @@ pub fn run() {
             workspace_import_zip_bytes,
             media_import,
             media_pick_and_import,
+            media_write_generated_image,
             media_thumbnail,
             media_read_data_url,
             secret_set,
             secret_get,
             secret_delete,
             log_export,
-            content_package_verify
+            content_package_verify,
+            workspace_asset_inventory,
+            workspace_rebuild_sqlite_index,
+            workspace_search_sqlite_index,
+            workspace_query_sqlite_messages
         ])
         .run(tauri::generate_context!())
         .expect("error while running Evolvria");
@@ -682,6 +909,7 @@ fn create_backup_in_dir(
     let file_name = format!("{}_{}.json", id, sanitize_file_part(reason));
     let target = backups.join(file_name);
     let size_bytes = fs::copy(save_path, &target).map_err(to_string)?;
+    let sqlite_backup = copy_sqlite_index_backup(dir, &target);
     Ok(BackupMeta {
         id,
         workspace_id: workspace_id.to_string(),
@@ -689,6 +917,9 @@ fn create_backup_in_dir(
         created_at: Utc::now().to_rfc3339(),
         path: path_to_string(target),
         size_bytes,
+        has_sqlite_index: sqlite_backup.is_some(),
+        sqlite_path: sqlite_backup.as_ref().map(|(path, _)| path_to_string(path)),
+        sqlite_size_bytes: sqlite_backup.map(|(_, size)| size),
     })
 }
 
@@ -734,6 +965,7 @@ fn backup_meta_from_path(path: &Path, workspace_id: &str) -> Result<Option<Backu
     validate_backup_id(&id)?;
     let reason = parts.next().unwrap_or("manual").to_string();
     let metadata = fs::metadata(path).map_err(to_string)?;
+    let sqlite_meta = backup_sqlite_meta(path);
     let modified = metadata.modified().map_err(to_string)?;
     let created_at: DateTime<Utc> = modified.into();
     Ok(Some(BackupMeta {
@@ -743,6 +975,9 @@ fn backup_meta_from_path(path: &Path, workspace_id: &str) -> Result<Option<Backu
         created_at: created_at.to_rfc3339(),
         path: path_to_string(path),
         size_bytes: metadata.len(),
+        has_sqlite_index: sqlite_meta.is_some(),
+        sqlite_path: sqlite_meta.as_ref().map(|(path, _)| path_to_string(path)),
+        sqlite_size_bytes: sqlite_meta.map(|(_, size)| size),
     }))
 }
 
@@ -772,6 +1007,7 @@ fn restore_backup_from_dir(
         create_backup_in_dir(dir, workspace_id, "pre_restore")?;
     }
     write_json_atomic(&dir.join(SAVE_FILE), &envelope)?;
+    restore_sqlite_index_backup(dir, &backup_path);
     let manifest = json!({
         "format": "evolvria_workspace",
         "schemaVersion": envelope.get("schemaVersion").and_then(Value::as_str).unwrap_or("unknown"),
@@ -781,6 +1017,58 @@ fn restore_backup_from_dir(
     });
     write_json_atomic(&dir.join(MANIFEST_FILE), &manifest)?;
     Ok(envelope)
+}
+
+fn copy_sqlite_index_backup(dir: &Path, save_backup_path: &Path) -> Option<(PathBuf, u64)> {
+    let index_path = sqlite_index_path(dir);
+    if !index_path.is_file() {
+        return None;
+    }
+
+    // The SQLite file is a rebuildable mirror. Checkpoint if possible, but keep
+    // save backups available even when the mirror is locked or malformed.
+    if let Ok(connection) = Connection::open(&index_path) {
+        let _ = connection.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    let target = sqlite_backup_path_for_save_backup(save_backup_path);
+    fs::copy(&index_path, &target)
+        .ok()
+        .map(|size| (target, size))
+}
+
+fn backup_sqlite_meta(save_backup_path: &Path) -> Option<(PathBuf, u64)> {
+    let sqlite_path = sqlite_backup_path_for_save_backup(save_backup_path);
+    let metadata = fs::metadata(&sqlite_path).ok()?;
+    if !metadata.is_file() {
+        return None;
+    }
+    Some((sqlite_path, metadata.len()))
+}
+
+fn restore_sqlite_index_backup(dir: &Path, save_backup_path: &Path) {
+    let sqlite_backup_path = sqlite_backup_path_for_save_backup(save_backup_path);
+    remove_sqlite_index_files(dir);
+    if sqlite_backup_path.is_file() {
+        let _ = fs::copy(sqlite_backup_path, sqlite_index_path(dir));
+    }
+}
+
+fn remove_sqlite_index_files(dir: &Path) {
+    let index_path = sqlite_index_path(dir);
+    let _ = fs::remove_file(&index_path);
+    let _ = fs::remove_file(sqlite_sidecar_path(&index_path, "-wal"));
+    let _ = fs::remove_file(sqlite_sidecar_path(&index_path, "-shm"));
+}
+
+fn sqlite_backup_path_for_save_backup(save_backup_path: &Path) -> PathBuf {
+    save_backup_path.with_extension("sqlite3")
+}
+
+fn sqlite_sidecar_path(index_path: &Path, suffix: &str) -> PathBuf {
+    let mut raw_path = index_path.as_os_str().to_os_string();
+    raw_path.push(suffix);
+    PathBuf::from(raw_path)
 }
 
 fn validate_secret_key(key: &str) -> Result<(), String> {
@@ -1033,10 +1321,22 @@ fn sanitize_file_part(value: &str) -> String {
     }
 }
 
+fn compact_generated_prompt(value: &str) -> String {
+    let compact = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    compact.chars().take(120).collect()
+}
+
 fn hash_file_name(path: &Path, size: u64) -> String {
     let mut hasher = Sha256::new();
     hasher.update(path.to_string_lossy().as_bytes());
     hasher.update(size.to_le_bytes());
+    let digest = hasher.finalize();
+    format!("{:x}", digest)[..16].to_string()
+}
+
+fn hash_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
     let digest = hasher.finalize();
     format!("{:x}", digest)[..16].to_string()
 }
@@ -1058,6 +1358,27 @@ fn media_metadata(extension: &str) -> Option<(&'static str, &'static str)> {
         "json" => Some(("document", "application/json")),
         "pdf" => Some(("document", "application/pdf")),
         _ => None,
+    }
+}
+
+fn generated_image_extension(
+    mime_type: &str,
+    bytes: &[u8],
+) -> Result<(&'static str, &'static str), String> {
+    match mime_type.to_ascii_lowercase().as_str() {
+        "image/png" => return Ok(("png", "image/png")),
+        "image/jpeg" | "image/jpg" => return Ok(("jpg", "image/jpeg")),
+        "image/webp" => return Ok(("webp", "image/webp")),
+        "image/gif" => return Ok(("gif", "image/gif")),
+        _ => {}
+    }
+
+    match image::guess_format(bytes).map_err(|_| "generated_image_unsupported_type".to_string())? {
+        ImageFormat::Png => Ok(("png", "image/png")),
+        ImageFormat::Jpeg => Ok(("jpg", "image/jpeg")),
+        ImageFormat::WebP => Ok(("webp", "image/webp")),
+        ImageFormat::Gif => Ok(("gif", "image/gif")),
+        _ => Err("generated_image_unsupported_type".to_string()),
     }
 }
 
@@ -1320,6 +1641,808 @@ fn verify_workspace_package_dir(workspace_dir: &Path) -> Result<PackageVerificat
     })
 }
 
+fn workspace_asset_inventory_in_dir(
+    workspace_dir: &Path,
+    workspace_id: &str,
+) -> Result<WorkspaceAssetInventory, String> {
+    validate_workspace_id(workspace_id)?;
+    let save_path = workspace_dir.join(SAVE_FILE);
+    if !save_path.exists() {
+        return Err("workspace_not_found".to_string());
+    }
+    let envelope = read_json(&save_path)?;
+    validate_envelope(&envelope)?;
+    let envelope_workspace_id = envelope_workspace_id(&envelope)?;
+    if envelope_workspace_id != workspace_id {
+        return Err("workspace_mismatch".to_string());
+    }
+
+    let physical_files = list_workspace_asset_files(workspace_dir)?;
+    let physical_by_path: HashMap<String, PhysicalAssetFile> = physical_files
+        .iter()
+        .map(|file| (file.relative_path.clone(), file.clone()))
+        .collect();
+    let referenced: HashSet<String> = package_asset_refs(&envelope)
+        .referenced
+        .into_iter()
+        .collect();
+    let media = envelope
+        .get("entities")
+        .and_then(|entities| entities.get("mediaAssets"))
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    let mut tracked_paths: HashMap<String, String> = HashMap::new();
+    let mut assets = Vec::new();
+    let mut missing_asset_ids = Vec::new();
+    let mut declared_bytes = 0_u64;
+    let mut browser_only_assets = 0_usize;
+    let mut missing_physical_assets = 0_usize;
+
+    for (id, asset) in &media {
+        let relative_path = value_str(asset, "relativePath").unwrap_or("").to_string();
+        let declared_size_bytes = asset.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0);
+        declared_bytes = declared_bytes.saturating_add(declared_size_bytes);
+        let source_kind = asset
+            .get("source")
+            .and_then(|source| source.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string();
+        let variant_paths = collect_media_variant_paths(asset);
+        for variant_path in &variant_paths {
+            tracked_paths.insert(variant_path.clone(), id.clone());
+        }
+
+        let (physical_status, physical_size_bytes) = if relative_path.starts_with("browser://") {
+            browser_only_assets += 1;
+            ("browser_only".to_string(), None)
+        } else if relative_path.trim().is_empty()
+            && source_kind == "placeholder"
+            && declared_size_bytes == 0
+        {
+            ("placeholder".to_string(), None)
+        } else if validate_asset_relative_path(&relative_path).is_err() {
+            missing_physical_assets += 1;
+            missing_asset_ids.push(id.clone());
+            ("invalid_path".to_string(), None)
+        } else if let Some(file) = physical_by_path.get(&relative_path) {
+            tracked_paths.insert(relative_path.clone(), id.clone());
+            ("present".to_string(), Some(file.size_bytes))
+        } else {
+            missing_physical_assets += 1;
+            missing_asset_ids.push(id.clone());
+            ("missing".to_string(), None)
+        };
+
+        assets.push(AssetInventoryItem {
+            id: id.clone(),
+            kind: value_str(asset, "kind").unwrap_or("unknown").to_string(),
+            purpose: value_str(asset, "purpose").unwrap_or("unknown").to_string(),
+            relative_path,
+            source_kind,
+            referenced: referenced.contains(id),
+            physical_status,
+            declared_size_bytes,
+            physical_size_bytes,
+            variant_count: variant_paths.len(),
+        });
+    }
+
+    assets.sort_by(|a, b| {
+        a.physical_status
+            .cmp(&b.physical_status)
+            .then_with(|| a.kind.cmp(&b.kind))
+            .then_with(|| a.id.cmp(&b.id))
+    });
+    missing_asset_ids.sort();
+    missing_asset_ids.dedup();
+
+    let mut by_folder: BTreeMap<String, u64> = BTreeMap::new();
+    let mut physical_bytes = 0_u64;
+    let mut untracked_bytes = 0_u64;
+    let mut untracked_files = Vec::new();
+    for mut file in physical_files {
+        physical_bytes = physical_bytes.saturating_add(file.size_bytes);
+        *by_folder.entry(file.folder.clone()).or_insert(0) += file.size_bytes;
+        if let Some(asset_id) = tracked_paths.get(&file.relative_path) {
+            file.tracked = true;
+            file.asset_id = Some(asset_id.clone());
+        } else {
+            untracked_bytes = untracked_bytes.saturating_add(file.size_bytes);
+            untracked_files.push(file);
+        }
+    }
+    untracked_files.sort_by(|a, b| {
+        b.size_bytes
+            .cmp(&a.size_bytes)
+            .then_with(|| a.relative_path.cmp(&b.relative_path))
+    });
+
+    let stats = AssetInventoryStats {
+        declared_assets: media.len(),
+        referenced_assets: assets.iter().filter(|asset| asset.referenced).count(),
+        unreferenced_assets: assets.iter().filter(|asset| !asset.referenced).count(),
+        browser_only_assets,
+        missing_physical_assets,
+        physical_files: physical_by_path.len(),
+        untracked_files: untracked_files.len(),
+        declared_bytes,
+        physical_bytes,
+        untracked_bytes,
+    };
+
+    Ok(WorkspaceAssetInventory {
+        workspace_id: workspace_id.to_string(),
+        checked_at: Utc::now().to_rfc3339(),
+        root_path: path_to_string(workspace_dir),
+        stats,
+        by_folder,
+        assets,
+        untracked_files,
+        missing_asset_ids,
+    })
+}
+
+fn list_workspace_asset_files(workspace_dir: &Path) -> Result<Vec<PhysicalAssetFile>, String> {
+    let assets_dir = workspace_dir.join("assets");
+    if !assets_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    collect_workspace_asset_files(workspace_dir, &assets_dir, &mut files)?;
+    files.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    Ok(files)
+}
+
+fn collect_workspace_asset_files(
+    workspace_dir: &Path,
+    dir: &Path,
+    out: &mut Vec<PhysicalAssetFile>,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(to_string)? {
+        let entry = entry.map_err(to_string)?;
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).map_err(to_string)?;
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+        if metadata.is_dir() {
+            collect_workspace_asset_files(workspace_dir, &path, out)?;
+            continue;
+        }
+        if !metadata.is_file() {
+            continue;
+        }
+        let relative_path = path
+            .strip_prefix(workspace_dir)
+            .map_err(to_string)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if !relative_path.starts_with("assets/") {
+            continue;
+        }
+        out.push(PhysicalAssetFile {
+            folder: asset_inventory_folder(&relative_path),
+            supported: is_import_asset_path(&relative_path),
+            relative_path,
+            size_bytes: metadata.len(),
+            tracked: false,
+            asset_id: None,
+        });
+    }
+    Ok(())
+}
+
+fn collect_media_variant_paths(asset: &Value) -> Vec<String> {
+    asset
+        .get("variants")
+        .and_then(Value::as_array)
+        .map(|variants| {
+            variants
+                .iter()
+                .filter_map(|variant| variant.get("relativePath").and_then(Value::as_str))
+                .filter(|path| validate_asset_relative_path(path).is_ok())
+                .map(ToOwned::to_owned)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn asset_inventory_folder(relative_path: &str) -> String {
+    let mut parts = relative_path.split('/');
+    let _assets = parts.next();
+    parts.next().unwrap_or("unknown").to_string()
+}
+
+fn rebuild_sqlite_index_in_dir(
+    workspace_dir: &Path,
+    workspace_id: &str,
+) -> Result<SqliteIndexReport, String> {
+    let save_path = workspace_dir.join(SAVE_FILE);
+    if !save_path.exists() {
+        return Err("workspace_not_found".to_string());
+    }
+    let envelope = read_json(&save_path)?;
+    validate_envelope(&envelope)?;
+    let envelope_workspace_id = envelope_workspace_id(&envelope)?;
+    if envelope_workspace_id != workspace_id {
+        return Err("workspace_mismatch".to_string());
+    }
+
+    let index_path = sqlite_index_path(workspace_dir);
+    ensure_parent(&index_path)?;
+    let mut connection = Connection::open(&index_path).map_err(to_string)?;
+    connection
+        .execute_batch(
+            "
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            DROP TABLE IF EXISTS search_items_fts;
+            DROP TABLE IF EXISTS search_items;
+            DROP TABLE IF EXISTS chat_messages;
+            CREATE TABLE search_items (
+              entity_type TEXT NOT NULL,
+              entity_id TEXT NOT NULL,
+              title TEXT NOT NULL,
+              body TEXT NOT NULL,
+              updated_at TEXT,
+              PRIMARY KEY(entity_type, entity_id)
+            );
+            CREATE VIRTUAL TABLE search_items_fts USING fts5(
+              title,
+              body,
+              entity_type UNINDEXED,
+              entity_id UNINDEXED,
+              updated_at UNINDEXED,
+              tokenize = 'unicode61'
+            );
+            CREATE TABLE chat_messages (
+              chat_id TEXT NOT NULL,
+              message_id TEXT NOT NULL,
+              message_index INTEGER NOT NULL,
+              created_at TEXT,
+              role TEXT,
+              mode TEXT,
+              content TEXT NOT NULL,
+              payload TEXT NOT NULL,
+              PRIMARY KEY(chat_id, message_id)
+            );
+            CREATE INDEX chat_messages_window_idx ON chat_messages(chat_id, message_index);
+            ",
+        )
+        .map_err(to_string)?;
+
+    let items = build_sqlite_search_items(&envelope);
+    let message_count = count_sqlite_chat_messages(&envelope);
+    let transaction = connection.transaction().map_err(to_string)?;
+    for item in &items {
+        transaction
+            .execute(
+                "INSERT INTO search_items (entity_type, entity_id, title, body, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![item.entity_type, item.entity_id, item.title, item.body, item.updated_at],
+            )
+            .map_err(to_string)?;
+        transaction
+            .execute(
+                "INSERT INTO search_items_fts (title, body, entity_type, entity_id, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![item.title, item.body, item.entity_type, item.entity_id, item.updated_at],
+            )
+            .map_err(to_string)?;
+    }
+    insert_sqlite_chat_messages(&transaction, &envelope)?;
+    transaction.commit().map_err(to_string)?;
+
+    Ok(SqliteIndexReport {
+        workspace_id: workspace_id.to_string(),
+        path: path_to_string(index_path),
+        indexed_at: Utc::now().to_rfc3339(),
+        item_count: items.len(),
+        message_count,
+        source_updated_at: envelope
+            .get("workspace")
+            .and_then(|workspace| workspace.get("updatedAt"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    })
+}
+
+fn search_sqlite_index_in_dir(
+    workspace_dir: &Path,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SqliteSearchHit>, String> {
+    let index_path = sqlite_index_path(workspace_dir);
+    if !index_path.exists() {
+        return Err("sqlite_index_missing".to_string());
+    }
+    let connection = Connection::open(&index_path).map_err(to_string)?;
+    let limit = limit.clamp(1, 100);
+    let query = query.trim();
+    if query.is_empty() {
+        return search_sqlite_recent(&connection, limit);
+    }
+
+    let fts_hits = search_sqlite_fts(&connection, query, limit).unwrap_or_default();
+    if !fts_hits.is_empty() {
+        return Ok(fts_hits);
+    }
+    search_sqlite_like(&connection, query, limit)
+}
+
+fn search_sqlite_recent(
+    connection: &Connection,
+    limit: usize,
+) -> Result<Vec<SqliteSearchHit>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT entity_type, entity_id, title, body, updated_at
+             FROM search_items
+             ORDER BY COALESCE(updated_at, '') DESC, title ASC
+             LIMIT ?1",
+        )
+        .map_err(to_string)?;
+    let rows = statement
+        .query_map(params![limit as i64], |row| {
+            let body: String = row.get(3)?;
+            Ok(SqliteSearchHit {
+                entity_type: row.get(0)?,
+                entity_id: row.get(1)?,
+                title: row.get(2)?,
+                snippet: compact_snippet(&body),
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(to_string)?;
+    collect_sqlite_hits(rows)
+}
+
+fn search_sqlite_fts(
+    connection: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SqliteSearchHit>, String> {
+    let fts_query = fts_phrase(query);
+    let mut statement = connection
+        .prepare(
+            "SELECT entity_type, entity_id, title,
+                    snippet(search_items_fts, 1, '', '', ' ... ', 18) AS snippet,
+                    updated_at
+             FROM search_items_fts
+             WHERE search_items_fts MATCH ?1
+             ORDER BY bm25(search_items_fts), COALESCE(updated_at, '') DESC
+             LIMIT ?2",
+        )
+        .map_err(to_string)?;
+    let rows = statement
+        .query_map(params![fts_query, limit as i64], |row| {
+            let snippet: String = row.get(3)?;
+            Ok(SqliteSearchHit {
+                entity_type: row.get(0)?,
+                entity_id: row.get(1)?,
+                title: row.get(2)?,
+                snippet: compact_snippet(&snippet),
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(to_string)?;
+    collect_sqlite_hits(rows)
+}
+
+fn search_sqlite_like(
+    connection: &Connection,
+    query: &str,
+    limit: usize,
+) -> Result<Vec<SqliteSearchHit>, String> {
+    let like_query = escape_like_query(query);
+    let mut statement = connection
+        .prepare(
+            "SELECT entity_type, entity_id, title, body, updated_at
+             FROM search_items
+             WHERE title LIKE ?1 ESCAPE '\\'
+                OR body LIKE ?1 ESCAPE '\\'
+             ORDER BY COALESCE(updated_at, '') DESC, title ASC
+             LIMIT ?2",
+        )
+        .map_err(to_string)?;
+    let rows = statement
+        .query_map(params![like_query, limit as i64], |row| {
+            let body: String = row.get(3)?;
+            Ok(SqliteSearchHit {
+                entity_type: row.get(0)?,
+                entity_id: row.get(1)?,
+                title: row.get(2)?,
+                snippet: snippet_around(&body, query),
+                updated_at: row.get(4)?,
+            })
+        })
+        .map_err(to_string)?;
+    collect_sqlite_hits(rows)
+}
+
+fn query_sqlite_messages_in_dir(
+    workspace_dir: &Path,
+    chat_id: &str,
+    page_size: usize,
+    offset_from_end: usize,
+) -> Result<SqliteMessagePage, String> {
+    validate_entity_id(chat_id)?;
+    let index_path = sqlite_index_path(workspace_dir);
+    if !index_path.exists() {
+        return Err("sqlite_index_missing".to_string());
+    }
+    let connection = Connection::open(&index_path).map_err(to_string)?;
+    let total_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM chat_messages WHERE chat_id = ?1",
+            params![chat_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(to_string)?
+        .max(0) as usize;
+    let page_size = page_size.clamp(1, 200);
+    let offset_from_end = offset_from_end.min(total_count);
+    let end_index = total_count.saturating_sub(offset_from_end);
+    let start_index = end_index.saturating_sub(page_size);
+    let messages = query_sqlite_message_payloads(&connection, chat_id, start_index, end_index)?;
+    let returned_count = messages.len();
+
+    Ok(SqliteMessagePage {
+        chat_id: chat_id.to_string(),
+        total_count,
+        offset_from_end,
+        page_size,
+        start_index,
+        end_index,
+        has_older: start_index > 0,
+        has_newer: offset_from_end > 0,
+        next_offset_from_end: (offset_from_end + returned_count).min(total_count),
+        messages,
+    })
+}
+
+fn query_sqlite_message_payloads(
+    connection: &Connection,
+    chat_id: &str,
+    start_index: usize,
+    end_index: usize,
+) -> Result<Vec<Value>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT payload
+             FROM chat_messages
+             WHERE chat_id = ?1
+               AND message_index >= ?2
+               AND message_index < ?3
+             ORDER BY message_index ASC",
+        )
+        .map_err(to_string)?;
+    let rows = statement
+        .query_map(
+            params![chat_id, start_index as i64, end_index as i64],
+            |row| row.get::<_, String>(0),
+        )
+        .map_err(to_string)?;
+    let payloads = rows.collect::<Result<Vec<_>, _>>().map_err(to_string)?;
+    payloads
+        .into_iter()
+        .map(|payload| serde_json::from_str(&payload).map_err(to_string))
+        .collect()
+}
+
+fn insert_sqlite_chat_messages(
+    transaction: &rusqlite::Transaction<'_>,
+    envelope: &Value,
+) -> Result<(), String> {
+    let entities = envelope.get("entities").unwrap_or(&Value::Null);
+    let Some(chats) = entities.get("chats").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    let Some(messages) = entities.get("messages").and_then(Value::as_object) else {
+        return Ok(());
+    };
+
+    for (chat_id, chat) in chats {
+        validate_entity_id(chat_id)?;
+        let Some(message_ids) = chat.get("messageIds").and_then(Value::as_array) else {
+            continue;
+        };
+        for (message_index, message_id) in message_ids.iter().filter_map(Value::as_str).enumerate()
+        {
+            validate_entity_id(message_id)?;
+            let Some(message) = messages.get(message_id) else {
+                continue;
+            };
+            let payload = serde_json::to_string(message).map_err(to_string)?;
+            transaction
+                .execute(
+                    "INSERT INTO chat_messages (chat_id, message_id, message_index, created_at, role, mode, content, payload)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        chat_id,
+                        message_id,
+                        message_index as i64,
+                        value_str(message, "createdAt"),
+                        value_str(message, "role"),
+                        value_str(message, "mode"),
+                        value_str(message, "content").unwrap_or(""),
+                        payload,
+                    ],
+                )
+                .map_err(to_string)?;
+        }
+    }
+    Ok(())
+}
+
+fn count_sqlite_chat_messages(envelope: &Value) -> usize {
+    let entities = envelope.get("entities").unwrap_or(&Value::Null);
+    let Some(chats) = entities.get("chats").and_then(Value::as_object) else {
+        return 0;
+    };
+    let Some(messages) = entities.get("messages").and_then(Value::as_object) else {
+        return 0;
+    };
+    chats
+        .values()
+        .filter_map(|chat| chat.get("messageIds").and_then(Value::as_array))
+        .flat_map(|ids| ids.iter().filter_map(Value::as_str))
+        .filter(|id| messages.contains_key(*id))
+        .count()
+}
+
+fn collect_sqlite_hits<F>(rows: rusqlite::MappedRows<'_, F>) -> Result<Vec<SqliteSearchHit>, String>
+where
+    F: FnMut(&rusqlite::Row<'_>) -> rusqlite::Result<SqliteSearchHit>,
+{
+    rows.collect::<Result<Vec<_>, _>>().map_err(to_string)
+}
+
+fn build_sqlite_search_items(envelope: &Value) -> Vec<SearchIndexItem> {
+    let mut items = Vec::new();
+    let entities = envelope.get("entities").unwrap_or(&Value::Null);
+
+    if let Some(storylines) = entities.get("storylines").and_then(Value::as_object) {
+        for (id, story) in storylines {
+            if is_deleted(story) {
+                continue;
+            }
+            let mut body = Vec::new();
+            append_str(story, "tagline", &mut body);
+            append_str(story, "summary", &mut body);
+            append_str(story, "premise", &mut body);
+            append_str(story, "playerRole", &mut body);
+            append_str_array(story, "worldRules", &mut body);
+            append_str_array(story, "tags", &mut body);
+            if let Some(name) = story
+                .get("createdBy")
+                .and_then(|creator| creator.get("name"))
+                .and_then(Value::as_str)
+            {
+                body.push(name.to_string());
+            }
+            items.push(search_item(
+                "storyline",
+                id,
+                value_str(story, "title").unwrap_or(id),
+                body,
+                updated_or_created_at(story),
+            ));
+        }
+    }
+
+    if let Some(characters) = entities.get("characters").and_then(Value::as_object) {
+        for (id, character) in characters {
+            if is_deleted(character) {
+                continue;
+            }
+            let mut body = Vec::new();
+            append_str(character, "subtitle", &mut body);
+            append_str(character, "summary", &mut body);
+            append_str(character, "profile", &mut body);
+            append_str_array(character, "goals", &mut body);
+            append_str_array(character, "fears", &mut body);
+            append_str_array(character, "boundaries", &mut body);
+            append_str_array(character, "tags", &mut body);
+            append_nested_str(character, &["voice", "tone"], &mut body);
+            append_nested_str(character, &["voice", "cadence"], &mut body);
+            items.push(search_item(
+                "character",
+                id,
+                value_str(character, "name").unwrap_or(id),
+                body,
+                updated_or_created_at(character),
+            ));
+        }
+    }
+
+    if let Some(scenarios) = entities.get("scenarios").and_then(Value::as_object) {
+        for (id, scenario) in scenarios {
+            if is_deleted(scenario) {
+                continue;
+            }
+            let mut body = Vec::new();
+            append_str(scenario, "summary", &mut body);
+            append_str(scenario, "opening", &mut body);
+            append_str(scenario, "location", &mut body);
+            items.push(search_item(
+                "scenario",
+                id,
+                value_str(scenario, "title").unwrap_or(id),
+                body,
+                updated_or_created_at(scenario),
+            ));
+        }
+    }
+
+    if let Some(media_assets) = entities.get("mediaAssets").and_then(Value::as_object) {
+        for (id, asset) in media_assets {
+            if is_deleted(asset) {
+                continue;
+            }
+            let mut body = Vec::new();
+            append_str(asset, "kind", &mut body);
+            append_str(asset, "purpose", &mut body);
+            append_str(asset, "mimeType", &mut body);
+            append_nested_str(asset, &["source", "label"], &mut body);
+            append_nested_str(asset, &["license", "note"], &mut body);
+            items.push(search_item(
+                "media",
+                id,
+                value_str(asset, "altText").unwrap_or(id),
+                body,
+                updated_or_created_at(asset),
+            ));
+        }
+    }
+
+    if let Some(messages) = entities.get("messages").and_then(Value::as_object) {
+        for (id, message) in messages {
+            let content = value_str(message, "content").unwrap_or("");
+            if content.is_empty() {
+                continue;
+            }
+            let role = value_str(message, "role").unwrap_or("message");
+            let title = format!("{}: {}", role, content.chars().take(42).collect::<String>());
+            let mut body = vec![content.to_string()];
+            append_str(message, "mode", &mut body);
+            append_str(message, "speakerId", &mut body);
+            items.push(search_item(
+                "message",
+                id,
+                &title,
+                body,
+                updated_or_created_at(message),
+            ));
+        }
+    }
+
+    items.sort_by(|a, b| {
+        b.updated_at
+            .cmp(&a.updated_at)
+            .then_with(|| a.entity_type.cmp(&b.entity_type))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+    items
+}
+
+fn search_item(
+    entity_type: &str,
+    entity_id: &str,
+    title: &str,
+    body: Vec<String>,
+    updated_at: Option<String>,
+) -> SearchIndexItem {
+    SearchIndexItem {
+        entity_type: entity_type.to_string(),
+        entity_id: entity_id.to_string(),
+        title: title.trim().to_string(),
+        body: body
+            .into_iter()
+            .map(|part| part.trim().to_string())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        updated_at,
+    }
+}
+
+fn sqlite_index_path(workspace_dir: &Path) -> PathBuf {
+    workspace_dir.join("search.sqlite3")
+}
+
+fn value_str<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
+    value.get(key).and_then(Value::as_str)
+}
+
+fn append_str(value: &Value, key: &str, out: &mut Vec<String>) {
+    if let Some(text) = value_str(value, key) {
+        out.push(text.to_string());
+    }
+}
+
+fn append_nested_str(value: &Value, path: &[&str], out: &mut Vec<String>) {
+    let mut current = value;
+    for key in path {
+        current = current.get(*key).unwrap_or(&Value::Null);
+    }
+    if let Some(text) = current.as_str() {
+        out.push(text.to_string());
+    }
+}
+
+fn append_str_array(value: &Value, key: &str, out: &mut Vec<String>) {
+    if let Some(items) = value.get(key).and_then(Value::as_array) {
+        for item in items {
+            if let Some(text) = item.as_str() {
+                out.push(text.to_string());
+            }
+        }
+    }
+}
+
+fn updated_or_created_at(value: &Value) -> Option<String> {
+    value_str(value, "updatedAt")
+        .or_else(|| value_str(value, "createdAt"))
+        .map(ToOwned::to_owned)
+}
+
+fn is_deleted(value: &Value) -> bool {
+    value.get("deletedAt").and_then(Value::as_str).is_some()
+}
+
+fn fts_phrase(query: &str) -> String {
+    format!("\"{}\"", query.replace('"', "\"\""))
+}
+
+fn escape_like_query(query: &str) -> String {
+    let mut escaped = String::from("%");
+    for char in query.chars() {
+        if matches!(char, '%' | '_' | '\\') {
+            escaped.push('\\');
+        }
+        escaped.push(char);
+    }
+    escaped.push('%');
+    escaped
+}
+
+fn compact_snippet(value: &str) -> String {
+    let text = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if text.chars().count() <= 180 {
+        text
+    } else {
+        format!("{}...", text.chars().take(180).collect::<String>())
+    }
+}
+
+fn snippet_around(body: &str, query: &str) -> String {
+    if query.is_empty() {
+        return compact_snippet(body);
+    }
+    let Some(byte_index) = body.find(query) else {
+        return compact_snippet(body);
+    };
+    let start = body[..byte_index]
+        .char_indices()
+        .rev()
+        .nth(48)
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let end = body[byte_index..]
+        .char_indices()
+        .nth(query.chars().count() + 96)
+        .map(|(index, _)| byte_index + index)
+        .unwrap_or(body.len());
+    compact_snippet(&format!(
+        "{}{}{}",
+        if start > 0 { "..." } else { "" },
+        &body[start..end],
+        if end < body.len() { "..." } else { "" }
+    ))
+}
+
 fn package_issue(
     severity: impl Into<String>,
     field: impl Into<String>,
@@ -1350,6 +2473,7 @@ fn package_entity_counts(envelope: &Value, issues: &mut Vec<PackageVerificationI
         "creditAdjustments",
         "moderationCases",
         "creatorEarnings",
+        "creatorPayoutRequests",
         "engagementStats",
         "syncOperations",
         "syncConflicts",
@@ -1601,29 +2725,159 @@ mod tests {
     }
 
     #[test]
+    fn rebuilds_sqlite_index_and_searches_workspace_content() {
+        let dir = temp_test_dir("sqlite_index");
+        fs::create_dir_all(&dir).unwrap();
+        let mut envelope = test_envelope(json!({}));
+        envelope["entities"]["storylines"]["story_test"]["title"] = json!("星烬边境");
+        envelope["entities"]["storylines"]["story_test"]["summary"] =
+            json!("灯塔坐标片正在记录新的航线。");
+        envelope["entities"]["scenarios"]["scenario_beacon"] = json!({
+            "id": "scenario_beacon",
+            "title": "灯塔第一次熄灭",
+            "summary": "Beacon opening",
+            "opening": "玩家发现坐标片发热。",
+            "createdAt": "2026-07-02T00:01:00Z",
+            "updatedAt": "2026-07-02T00:02:00Z"
+        });
+        envelope["entities"]["messages"]["msg_beacon"] = json!({
+            "id": "msg_beacon",
+            "chatId": "chat_test",
+            "role": "assistant",
+            "content": "The Starbloom beacon answers in static.",
+            "safetyFlags": ["none"],
+            "createdAt": "2026-07-02T00:03:00Z"
+        });
+        envelope["entities"]["chats"]["chat_test"] = json!({
+            "id": "chat_test",
+            "storylineId": "story_test",
+            "scenarioId": "scenario_beacon",
+            "personaId": "persona_test",
+            "title": "SQLite paging chat",
+            "status": "active",
+            "provider": { "type": "mock", "model": "evolvria-mock" },
+            "messageIds": ["msg_beacon"],
+            "checkpointIds": [],
+            "createdAt": "2026-07-02T00:00:00Z",
+            "updatedAt": "2026-07-02T00:03:00Z"
+        });
+        for index in 0..12 {
+            let id = format!("msg_page_{}", index);
+            envelope["entities"]["messages"][&id] = json!({
+                "id": id,
+                "chatId": "chat_test",
+                "role": if index % 2 == 0 { "user" } else { "assistant" },
+                "content": format!("Paged message {}", index),
+                "safetyFlags": ["none"],
+                "createdAt": format!("2026-07-02T00:{:02}:00Z", index + 4)
+            });
+            envelope["entities"]["chats"]["chat_test"]["messageIds"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!(format!("msg_page_{}", index)));
+        }
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+
+        let report = rebuild_sqlite_index_in_dir(&dir, "workspace_test").unwrap();
+        assert!(PathBuf::from(&report.path).exists());
+        assert!(report.item_count >= 3);
+        assert_eq!(report.message_count, 13);
+        assert_eq!(
+            report.source_updated_at.as_deref(),
+            Some("2026-07-02T00:00:00Z")
+        );
+
+        let cjk_hits = search_sqlite_index_in_dir(&dir, "坐标片", 10).unwrap();
+        assert!(cjk_hits
+            .iter()
+            .any(|hit| hit.entity_id == "story_test" || hit.entity_id == "scenario_beacon"));
+        let latin_hits = search_sqlite_index_in_dir(&dir, "Starbloom", 10).unwrap();
+        assert!(latin_hits.iter().any(|hit| hit.entity_id == "msg_beacon"));
+        let recent = search_sqlite_index_in_dir(&dir, "", 2).unwrap();
+        assert_eq!(recent.len(), 2);
+        let latest_page = query_sqlite_messages_in_dir(&dir, "chat_test", 5, 0).unwrap();
+        assert_eq!(latest_page.total_count, 13);
+        assert_eq!(latest_page.start_index, 8);
+        assert_eq!(latest_page.messages.len(), 5);
+        assert_eq!(latest_page.messages[0]["id"], "msg_page_7");
+        assert!(latest_page.has_older);
+        assert!(!latest_page.has_newer);
+        let older_page =
+            query_sqlite_messages_in_dir(&dir, "chat_test", 5, latest_page.next_offset_from_end)
+                .unwrap();
+        assert_eq!(older_page.start_index, 3);
+        assert_eq!(older_page.messages[0]["id"], "msg_page_2");
+        assert!(older_page.has_older);
+        assert!(older_page.has_newer);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn lists_and_restores_workspace_backups_from_dir() {
         let dir = temp_test_dir("workspace_backups");
         fs::create_dir_all(&dir).unwrap();
         let envelope = test_envelope(json!({}));
         write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+        fs::write(sqlite_index_path(&dir), b"sqlite-backup-v1").unwrap();
 
         let backup = create_backup_in_dir(&dir, "workspace_test", "manual_test").unwrap();
         assert!(PathBuf::from(&backup.path).exists());
         assert!(backup.size_bytes > 0);
+        assert!(backup.has_sqlite_index);
+        assert!(PathBuf::from(backup.sqlite_path.as_deref().unwrap()).exists());
+        assert_eq!(backup.sqlite_size_bytes, Some(16));
 
         let mut changed = envelope.clone();
         changed["workspace"]["name"] = json!("Changed Workspace");
         write_json_atomic(&dir.join(SAVE_FILE), &changed).unwrap();
+        fs::write(sqlite_index_path(&dir), b"sqlite-changed").unwrap();
         let restored = restore_backup_from_dir(&dir, "workspace_test", &backup.id).unwrap();
         assert_eq!(restored["workspace"]["name"], "Test Workspace");
         assert_eq!(
             read_json(&dir.join(SAVE_FILE)).unwrap()["workspace"]["name"],
             "Test Workspace"
         );
+        assert_eq!(
+            fs::read(sqlite_index_path(&dir)).unwrap(),
+            b"sqlite-backup-v1"
+        );
 
         let backups = list_backups_from_dir(&dir, "workspace_test").unwrap();
-        assert!(backups.iter().any(|item| item.id == backup.id));
-        assert!(backups.iter().any(|item| item.reason == "pre_restore"));
+        assert!(backups
+            .iter()
+            .any(|item| item.id == backup.id && item.has_sqlite_index));
+        assert!(backups
+            .iter()
+            .any(|item| item.reason == "pre_restore" && item.has_sqlite_index));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn restore_backup_without_sqlite_removes_stale_index() {
+        let dir = temp_test_dir("workspace_backup_without_sqlite");
+        fs::create_dir_all(&dir).unwrap();
+        let envelope = test_envelope(json!({}));
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+
+        let backup = create_backup_in_dir(&dir, "workspace_test", "manual_test").unwrap();
+        assert!(!backup.has_sqlite_index);
+
+        fs::write(sqlite_index_path(&dir), b"stale-sqlite").unwrap();
+        fs::write(
+            sqlite_sidecar_path(&sqlite_index_path(&dir), "-wal"),
+            b"wal",
+        )
+        .unwrap();
+        fs::write(
+            sqlite_sidecar_path(&sqlite_index_path(&dir), "-shm"),
+            b"shm",
+        )
+        .unwrap();
+        let restored = restore_backup_from_dir(&dir, "workspace_test", &backup.id).unwrap();
+        assert_eq!(restored["workspace"]["name"], "Test Workspace");
+        assert!(!sqlite_index_path(&dir).exists());
+        assert!(!sqlite_sidecar_path(&sqlite_index_path(&dir), "-wal").exists());
+        assert!(!sqlite_sidecar_path(&sqlite_index_path(&dir), "-shm").exists());
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -1815,6 +3069,139 @@ mod tests {
     }
 
     #[test]
+    fn writes_generated_image_asset_from_bytes() {
+        let dir = temp_test_dir("generated_image");
+        fs::create_dir_all(&dir).unwrap();
+        let source = dir.join("source.png");
+        let image = image::RgbaImage::from_pixel(80, 45, image::Rgba([16, 32, 64, 255]));
+        image.save(&source).unwrap();
+        let bytes = fs::read(&source).unwrap();
+
+        let asset = write_generated_image_from_bytes(
+            &dir,
+            bytes,
+            "image/png".to_string(),
+            "background".to_string(),
+            "Original storm harbor background with beacon light".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(asset.kind, "image");
+        assert_eq!(asset.purpose, "background");
+        assert_eq!(asset.mime_type, "image/png");
+        assert_eq!(asset.width, Some(80));
+        assert_eq!(asset.height, Some(45));
+        assert!(asset.relative_path.starts_with("assets/images/media_gen_"));
+        assert!(dir.join(&asset.relative_path).exists());
+        assert!(asset.alt_text.contains("Original storm harbor"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn inventories_declared_missing_browser_and_untracked_assets() {
+        let dir = temp_test_dir("asset_inventory");
+        fs::create_dir_all(dir.join("assets/images/variants")).unwrap();
+        fs::create_dir_all(dir.join("assets/audio")).unwrap();
+        fs::create_dir_all(dir.join("assets/video")).unwrap();
+        fs::write(dir.join("assets/images/cover.png"), b"cover").unwrap();
+        fs::write(dir.join("assets/images/variants/thumb.png"), b"thumb").unwrap();
+        fs::write(dir.join("assets/audio/orphan.wav"), b"orphan").unwrap();
+        fs::write(dir.join("assets/video/untracked.mp4"), b"untracked").unwrap();
+
+        let envelope = test_envelope(json!({
+            "media_cover": {
+                "id": "media_cover",
+                "kind": "image",
+                "purpose": "cover",
+                "relativePath": "assets/images/cover.png",
+                "mimeType": "image/png",
+                "sizeBytes": 5,
+                "variants": [{
+                    "id": "variant_cover_thumb",
+                    "relativePath": "assets/images/variants/thumb.png",
+                    "sizeBytes": 5,
+                    "purpose": "thumbnail"
+                }],
+                "altText": "Cover",
+                "source": { "kind": "owned", "label": "Test" },
+                "license": { "kind": "owned", "note": "Test" },
+                "safety": { "rating": "SFW", "state": "local_ready", "reasons": [], "safetyFlags": ["none"] },
+                "createdAt": "2026-07-02T00:00:00Z"
+            },
+            "media_orphan": {
+                "id": "media_orphan",
+                "kind": "audio",
+                "purpose": "voice",
+                "relativePath": "assets/audio/orphan.wav",
+                "mimeType": "audio/wav",
+                "sizeBytes": 6,
+                "variants": [],
+                "altText": "Unused voice",
+                "source": { "kind": "imported", "label": "Test" },
+                "license": { "kind": "owned", "note": "Test" },
+                "safety": { "rating": "SFW", "state": "local_ready", "reasons": [], "safetyFlags": ["none"] },
+                "createdAt": "2026-07-02T00:00:00Z"
+            },
+            "media_missing": {
+                "id": "media_missing",
+                "kind": "video",
+                "purpose": "background",
+                "relativePath": "assets/video/missing.mp4",
+                "mimeType": "video/mp4",
+                "sizeBytes": 9,
+                "variants": [],
+                "altText": "Missing",
+                "source": { "kind": "generated", "label": "Test" },
+                "license": { "kind": "owned", "note": "Test" },
+                "safety": { "rating": "SFW", "state": "local_ready", "reasons": [], "safetyFlags": ["none"] },
+                "createdAt": "2026-07-02T00:00:00Z"
+            },
+            "media_browser": {
+                "id": "media_browser",
+                "kind": "image",
+                "purpose": "cover",
+                "relativePath": "browser://temp.png",
+                "mimeType": "image/png",
+                "sizeBytes": 7,
+                "variants": [],
+                "altText": "Browser temp",
+                "source": { "kind": "imported", "label": "Browser" },
+                "license": { "kind": "unknown", "note": "Test" },
+                "safety": { "rating": "SFW", "state": "draft", "reasons": [], "safetyFlags": ["none"] },
+                "createdAt": "2026-07-02T00:00:00Z"
+            }
+        }));
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+
+        let inventory = workspace_asset_inventory_in_dir(&dir, "workspace_test").unwrap();
+        assert_eq!(inventory.stats.declared_assets, 4);
+        assert_eq!(inventory.stats.referenced_assets, 1);
+        assert_eq!(inventory.stats.unreferenced_assets, 3);
+        assert_eq!(inventory.stats.browser_only_assets, 1);
+        assert_eq!(inventory.stats.missing_physical_assets, 1);
+        assert_eq!(inventory.stats.physical_files, 4);
+        assert_eq!(inventory.stats.untracked_files, 1);
+        assert_eq!(
+            inventory.missing_asset_ids,
+            vec!["media_missing".to_string()]
+        );
+        assert_eq!(
+            inventory
+                .assets
+                .iter()
+                .find(|asset| asset.id == "media_cover")
+                .unwrap()
+                .variant_count,
+            1
+        );
+        assert_eq!(
+            inventory.untracked_files[0].relative_path,
+            "assets/video/untracked.mp4"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn verifies_workspace_package_dir_with_manifest_and_placeholder_warning() {
         let dir = temp_test_dir("verify_ok");
         fs::create_dir_all(&dir).unwrap();
@@ -1945,6 +3332,7 @@ mod tests {
                 "creditAdjustments": empty,
                 "moderationCases": empty,
                 "creatorEarnings": empty,
+                "creatorPayoutRequests": empty,
                 "engagementStats": empty,
                 "syncOperations": empty,
                 "syncConflicts": empty

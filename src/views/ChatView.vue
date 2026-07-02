@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { Archive, Bookmark, BookmarkCheck, Dices, Download, Film, Plus, RotateCcw, Save, ScrollText, Search, Send, Sparkles, Trash2, Undo2 } from "lucide-vue-next";
+import { Archive, Bookmark, BookmarkCheck, Database, Dices, Download, Film, Plus, RotateCcw, Save, ScrollText, Search, Send, Sparkles, Trash2, Undo2 } from "lucide-vue-next";
 import { createMessageWindow } from "@/domain/chat-reducer";
 import { NARRATIVE_PROMPT_CONTRACT_VERSION } from "@/services/ai/context";
 import { useAppStore } from "@/stores/app";
@@ -27,10 +27,42 @@ const relationshipDeltas = computed(() => messages.value.flatMap((message) => me
 const input = ref("");
 const searchQuery = ref("");
 const mode = ref<MessageMode>("say");
+const fateFeedback = ref("");
+const fateDraft = reactive({
+  intent: "",
+  attributeId: "",
+  skillId: "",
+  difficultyBandIndex: "1",
+  difficulty: 12,
+  modifier: 0,
+  seed: "",
+});
 const feed = ref<HTMLElement | null>(null);
 const messagePageSize = 80;
 const visibleMessageLimit = ref(messagePageSize);
-const messageWindow = computed(() => createMessageWindow(messages.value, visibleMessageLimit.value, searchQuery.value));
+const messagePageProbeVisible = ref(false);
+const jsonMessageWindow = computed(() => createMessageWindow(messages.value, visibleMessageLimit.value, searchQuery.value));
+const activeSqliteMessagePage = computed(() => store.lastSqliteMessagePage?.chatId === chatId.value ? store.lastSqliteMessagePage : undefined);
+const activeDisplayMessagePage = computed(() => {
+  const page = activeSqliteMessagePage.value;
+  if (!page || searchQuery.value.trim() || page.offsetFromEnd !== 0) return undefined;
+  if (page.totalCount !== messages.value.length) return undefined;
+  if (page.pageSize < Math.min(200, Math.max(1, Math.round(visibleMessageLimit.value)))) return undefined;
+  return page;
+});
+const activeDisplayPageMessages = computed(() =>
+  activeDisplayMessagePage.value?.messages.map((message) => store.envelope.entities.messages[message.id] ?? message) ?? [],
+);
+const messageWindow = computed(() => {
+  const page = activeDisplayMessagePage.value;
+  if (!page) return jsonMessageWindow.value;
+  return {
+    messages: activeDisplayPageMessages.value,
+    totalCount: page.totalCount,
+    hiddenCount: page.startIndex,
+    searchActive: false,
+  };
+});
 const visibleMessages = computed(() => messageWindow.value.messages);
 const latestPromptContractVersion = computed(() =>
   [...messages.value].reverse().find((message) => message.promptContractVersion)?.promptContractVersion ?? NARRATIVE_PROMPT_CONTRACT_VERSION,
@@ -38,6 +70,15 @@ const latestPromptContractVersion = computed(() =>
 const turnEstimate = computed(() => input.value.trim() ? store.estimateChatTurn(chatId.value, input.value.trim()) : undefined);
 const budgetCheck = computed(() => input.value.trim() ? store.checkChatBudget(chatId.value, input.value.trim()) : { ok: true, reasons: [] });
 const canRetry = computed(() => Boolean(chat.value && chat.value.status !== "archived" && !store.generating));
+const fateAttributes = computed(() => dungeonMindConfig.value?.attributes ?? []);
+const fateSkillOptions = computed(() => {
+  const skills = dungeonMindConfig.value?.skills ?? [];
+  if (!fateDraft.attributeId) return skills;
+  return skills.filter((skill) => skill.attributeId === fateDraft.attributeId);
+});
+const selectedFateAttribute = computed(() => fateAttributes.value.find((attribute) => attribute.id === fateDraft.attributeId));
+const fateDifficultyBands = computed(() => dungeonMindConfig.value?.difficultyTable ?? []);
+const lastFateCheck = computed(() => fateChecks.value.at(-1));
 const summaryDraft = reactive({
   title: "",
   summary: "",
@@ -75,11 +116,18 @@ watch(messages, async () => {
 watch(chatId, () => {
   visibleMessageLimit.value = messagePageSize;
   searchQuery.value = "";
+  messagePageProbeVisible.value = false;
+  void refreshDisplayMessagePage();
 });
 
 watch(searchQuery, () => {
   visibleMessageLimit.value = messagePageSize;
+  if (!searchQuery.value.trim()) void refreshDisplayMessagePage();
 });
+
+watch(() => messages.value.length, () => {
+  if (!searchQuery.value.trim()) void refreshDisplayMessagePage();
+}, { immediate: true });
 
 watch(latestSummary, (summary) => {
   summaryDraft.title = summary?.title ?? "";
@@ -91,6 +139,22 @@ watch(latestSummary, (summary) => {
 watch(activeArc, (arc) => {
   resetArcDraft(arc);
 }, { immediate: true });
+
+watch(dungeonMindConfig, (config) => {
+  hydrateFateDraft(config);
+}, { immediate: true });
+
+watch(() => fateDraft.difficultyBandIndex, (index) => {
+  const band = fateDifficultyBands.value[Number(index)];
+  if (band) fateDraft.difficulty = band.target;
+});
+
+watch(() => fateDraft.attributeId, () => {
+  fateDraft.modifier = selectedFateAttribute.value?.defaultValue ?? 0;
+  if (!fateSkillOptions.value.some((skill) => skill.id === fateDraft.skillId)) {
+    fateDraft.skillId = fateSkillOptions.value[0]?.id ?? "";
+  }
+});
 
 async function send() {
   const content = input.value.trim();
@@ -117,6 +181,39 @@ async function switchToMockProvider() {
     type: "mock",
     model: "evolvria-mock",
   });
+}
+
+function hydrateFateDraft(config = dungeonMindConfig.value) {
+  const attribute = config?.attributes[0];
+  const skill = attribute
+    ? config?.skills.find((item) => item.attributeId === attribute.id)
+    : config?.skills[0];
+  const bandIndex = config?.difficultyTable[1] ? 1 : 0;
+  fateDraft.intent = "";
+  fateDraft.attributeId = attribute?.id ?? "";
+  fateDraft.skillId = skill?.id ?? "";
+  fateDraft.difficultyBandIndex = String(bandIndex);
+  fateDraft.difficulty = config?.difficultyTable[bandIndex]?.target ?? 12;
+  fateDraft.modifier = attribute?.defaultValue ?? 0;
+  fateDraft.seed = "";
+  fateFeedback.value = "";
+}
+
+async function runFateFromDraft(continueAfter = false) {
+  if (!chat.value || !dungeonMindConfig.value?.enabled) return;
+  const check = await store.performFateCheck(chat.value.id, {
+    intent: fateDraft.intent,
+    attributeId: fateDraft.attributeId || undefined,
+    skillId: fateDraft.skillId || undefined,
+    difficulty: Number(fateDraft.difficulty),
+    modifier: Number(fateDraft.modifier),
+    seed: fateDraft.seed,
+    continueAfter,
+  });
+  if (check) {
+    fateFeedback.value = `${check.outcome} · total ${check.roll.total}`;
+    fateDraft.seed = "";
+  }
 }
 
 async function saveLatestSummary() {
@@ -180,6 +277,21 @@ function splitLines(value: string): string[] {
 
 function loadOlderMessages() {
   visibleMessageLimit.value += messagePageSize;
+  void refreshDisplayMessagePage();
+}
+
+async function previewMessagePage(offsetFromEnd = 0) {
+  messagePageProbeVisible.value = true;
+  await store.previewSqliteMessagePage(chatId.value, messagePageSize, offsetFromEnd);
+}
+
+async function previewOlderMessagePage() {
+  await previewMessagePage(activeSqliteMessagePage.value?.nextOffsetFromEnd ?? messagePageSize);
+}
+
+async function refreshDisplayMessagePage() {
+  if (searchQuery.value.trim()) return;
+  await store.previewSqliteMessagePage(chatId.value, visibleMessageLimit.value, 0);
 }
 </script>
 
@@ -339,6 +451,28 @@ function loadOlderMessages() {
           <span class="muted">Prompt contract {{ latestPromptContractVersion }}</span>
         </div>
         <div class="field-box">
+          <strong>Message Pages</strong>
+          <span class="muted">Main feed uses paged latest messages when search is empty.</span>
+          <span v-if="messagePageProbeVisible && store.lastSqliteMessagePageMessage" class="muted">{{ store.lastSqliteMessagePageMessage }}</span>
+          <span v-if="messagePageProbeVisible && activeSqliteMessagePage" class="muted">
+            Rows {{ activeSqliteMessagePage.startIndex + 1 }}-{{ activeSqliteMessagePage.endIndex }} / {{ activeSqliteMessagePage.totalCount }}
+          </span>
+          <div class="cluster">
+            <button class="ghost-button" type="button" @click="previewMessagePage()">
+              <Database :size="15" />
+              Preview Page
+            </button>
+            <button class="ghost-button" type="button" :disabled="!activeSqliteMessagePage?.hasOlder" @click="previewOlderMessagePage">
+              Older Page
+            </button>
+          </div>
+          <div v-if="messagePageProbeVisible && activeSqliteMessagePage?.messages.length" class="field-grid">
+            <span v-for="message in activeSqliteMessagePage.messages.slice(0, 3)" :key="message.id" class="muted">
+              {{ message.role }}: {{ message.content.slice(0, 72) }}
+            </span>
+          </div>
+        </div>
+        <div class="field-box">
           <strong>Checkpoints</strong>
           <span class="muted">{{ checkpoints.length }} rollback point(s)</span>
           <div class="field-grid">
@@ -479,8 +613,73 @@ function loadOlderMessages() {
         </div>
         <div class="field-box">
           <strong>Fate</strong>
-          <span class="muted">{{ fateChecks.length }} checks</span>
-          <p v-if="fateChecks.at(-1)" class="muted">{{ fateChecks.at(-1)?.outcome }} / total {{ fateChecks.at(-1)?.roll.total }}</p>
+          <span class="muted">
+            {{ dungeonMindConfig?.enabled ? `${fateChecks.length} checks · ${dungeonMindConfig.dice} · ${dungeonMindConfig.visibility}` : "Disabled for this storyline" }}
+          </span>
+          <form v-if="dungeonMindConfig?.enabled" class="field-grid" aria-label="Dungeon Mind Check" @submit.prevent="runFateFromDraft(false)">
+            <label>
+              Intent
+              <textarea
+                v-model="fateDraft.intent"
+                class="textarea compact"
+                aria-label="Fate intent"
+                placeholder="Describe the risky action to judge"
+              />
+            </label>
+            <label>
+              Attribute
+              <select v-model="fateDraft.attributeId" class="select" aria-label="Fate attribute">
+                <option v-for="attribute in fateAttributes" :key="attribute.id" :value="attribute.id">
+                  {{ attribute.name }} (+{{ attribute.defaultValue }})
+                </option>
+              </select>
+            </label>
+            <label>
+              Skill
+              <select v-model="fateDraft.skillId" class="select" aria-label="Fate skill">
+                <option value="">No skill</option>
+                <option v-for="skill in fateSkillOptions" :key="skill.id" :value="skill.id">
+                  {{ skill.name }}
+                </option>
+              </select>
+            </label>
+            <label>
+              Difficulty band
+              <select v-model="fateDraft.difficultyBandIndex" class="select" aria-label="Fate difficulty band">
+                <option v-for="(band, bandIndex) in fateDifficultyBands" :key="`${band.label}-${band.target}`" :value="String(bandIndex)">
+                  {{ band.label }} · {{ band.target }}
+                </option>
+              </select>
+            </label>
+            <div class="field-grid two-column-fields">
+              <label>
+                Difficulty target
+                <input v-model.number="fateDraft.difficulty" class="input" aria-label="Difficulty target" type="number" min="2" max="100" />
+              </label>
+              <label>
+                Modifier
+                <input v-model.number="fateDraft.modifier" class="input" aria-label="Modifier" type="number" min="-20" max="50" />
+              </label>
+            </div>
+            <label>
+              Seed
+              <input v-model="fateDraft.seed" class="input" aria-label="Fate seed" placeholder="Optional reproducible seed" />
+            </label>
+            <div class="cluster">
+              <button class="ghost-button" type="submit" :disabled="store.generating || chat.status !== 'active'">
+                <Dices :size="15" />
+                Run Check
+              </button>
+              <button class="secondary-button" type="button" :disabled="store.generating || chat.status !== 'active'" @click="runFateFromDraft(true)">
+                <Sparkles :size="15" />
+                Check + Continue
+              </button>
+            </div>
+          </form>
+          <p v-if="fateFeedback" class="muted">{{ fateFeedback }}</p>
+          <p v-if="lastFateCheck" class="muted">
+            {{ lastFateCheck.intent }} · {{ lastFateCheck.outcome }} / total {{ lastFateCheck.roll.total }}
+          </p>
         </div>
       </aside>
     </div>

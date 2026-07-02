@@ -31,7 +31,7 @@
 
 - This repo intentionally implements Evolvria-owned content only; do not copy ISEKAI ZERO brands, assets, private APIs, user content, or prompt text.
 - Seed storylines are original Chinese content; tests assert no seed title includes `ISEKAI` and moderation blocks risky copyright/competitor references.
-- Mock AI is the default reliable path for offline demos and E2E; `openai-compatible` only runs when a saved key exists, while `local-http` can run without a key.
+- Glosc One `openai-compatible` is the default configured provider, but it falls back to mock when no saved key exists; mock remains the reliable offline/E2E path, while `local-http` can run without a key.
 
 ## UI And Test Quirks
 

@@ -6,7 +6,7 @@
 
 ## 范围
 
-- MVP：mock provider、OpenAI-compatible provider、聊天生成、摘要预留、成本估算、错误恢复。
+- MVP：mock provider、AI SDK OpenAI-compatible provider、聊天生成、摘要预留、成本估算、错误恢复、内置项目 skills。
 - Beta：Arc 自动维护、Fate Engine 结果注入、Scene Mode 输出。
 - Cloud：统一 AI 网关、模型路由、计费、内容安全和限流。
 
@@ -15,7 +15,7 @@
 | Provider | 阶段 | 用途 | 要求 |
 | --- | --- | --- | --- |
 | `mock` | MVP | 无 key 演示、自动化测试、离线可玩 | deterministic、可快照测试 |
-| `openai-compatible` | MVP | 用户自配模型 | 支持 base URL、API key、model、temperature、max tokens |
+| `openai-compatible` | MVP | 用户自配 key / Glosc One 默认模型 | AI SDK `generateText` + `createOpenAICompatible`，支持 base URL、API key、model、temperature、max tokens |
 | `local-http` | Beta | 本机模型服务 | 同 OpenAI-compatible，增加超时提示 |
 | `cloud-proxy` | Cloud | 平台代理 | 服务端密钥、计费、审核、限流 |
 
@@ -24,10 +24,12 @@ mock provider 不能只是“Lorem ipsum”。它应根据 Storyline、Character
 MVP provider 运行边界已落地：
 
 - `openai-compatible` 只有在 Keychain/本地 secret 中存在 API key 时才调用远端，否则回退 mock，避免无意请求失败。
+- 默认远端为 Glosc One `https://one.gloscai.com/v1`；用户只填写自己的 key。当前模型路由：chat `zai/glm-5.2`，content `deepseek/deepseek-v4-flash`，narrative `deepseek/deepseek-v4-pro`，image `openai/gpt-image-2`，video `bytedance/doubao-seedance-2-0`，voice `alibaba/qwen3-tts-instruct-flash`。
 - `local-http` 允许无 API key 调用本机 OpenAI-compatible 服务，只接受 `localhost`、`127.0.0.1`、`::1` 或 `.localhost` 主机。
 - provider 请求默认 45 秒超时，Abort 后映射为 `provider_timeout`，聊天层保留用户输入并提示可重试或切换 mock。
 - base URL 只允许 HTTP/HTTPS，非法协议映射为 `provider_invalid_base_url`。
 - provider 请求失败会把 Chat 标记为 `error` 但保留输入和上下文；Chat UI 允许直接 Retry，也提供 `Switch to mock` 快捷动作，Retry 成功后恢复为 `active`。
+- 图片生成由 `src/services/ai/media.ts` 使用 AI SDK `generateImage` 和 OpenAI-compatible `imageModel()`；仅在已有用户 API key 时调用 Glosc One `openai/gpt-image-2`，Tauri 端通过 `media_write_generated_image` 持久化生成文件，失败或无 key 不影响聊天主流程。
 
 ## Prompt 分层
 
@@ -42,6 +44,7 @@ System Policy
   -> Active Arc
   -> Recent Messages
   -> Fate Result / Tool Results
+  -> Built-in AI Skill
   -> User Input
   -> Output Contract
 ```
@@ -49,7 +52,8 @@ System Policy
 MVP 已落地 `src/services/ai/context.ts`：
 
 - `buildNarrativePromptBundle(request)` 生成可测试的分层上下文，每层包含 `name`、`title`、`content`、`priority` 和 `locked`，并返回稳定的 `contractVersion`。
-- `buildOpenAIChatMessages(request)` 把分层上下文转换成 OpenAI-compatible chat messages，并在 system message 顶部写入 `Prompt-Contract-Version`。
+- `buildOpenAIChatMessages(request)` 把分层上下文转换成 OpenAI-compatible chat messages，并在首条 system message 顶部写入 `Prompt-Contract-Version`；实际 AI SDK 调用会把首条 system 转为 `instructions`，历史里的本地 `system` 消息降级为 assistant 可见的 `Local System Note`，避免 AI SDK 7 默认拒绝 `messages` 内 system role。
+- `Built-in AI Skill` 层注入 `evolvria-narrative-turn` 的本地 skill 契约；skill 文件在 `public/skills/evolvria-narrative-turn/SKILL.md`，manifest 在 `public/skills/manifest.json`。
 - `redactPromptPreviewContent(content)` 用于 Creator Studio 预览，隐藏 `sk-*` 和 Bearer token 形态的密钥，确保 prompt 可审计但不泄露 provider secret。
 - Store 在调用 provider 时传入 `summaryChapters`、`activeArc`、`fateChecks` 和 `adultContentUnlocked`，让模型上下文不只依赖最近消息。
 - `openai-compatible` provider 优先要求 JSON 输出，并在 JSON 无效时降级包装为普通 assistant message。

@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { RouterLink } from "vue-router";
-import { Download, RotateCcw, Save, ShieldCheck, Upload } from "lucide-vue-next";
+import { Database, Download, HardDrive, RotateCcw, Save, Search, ShieldCheck, Upload } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
 
 const store = useAppStore();
 const importError = ref("");
+const nativeIndexQuery = ref("星烬");
+const assetInventory = computed(() => store.lastAssetInventory);
+const assetMaintenancePlan = computed(() => store.lastAssetMaintenancePlan);
 const packageIssues = computed(() => store.lastPackageReport?.issues ?? []);
 const packageErrors = computed(() => packageIssues.value.filter((issue) => issue.severity === "error").length);
 const packageWarnings = computed(() => packageIssues.value.filter((issue) => issue.severity === "warning").length);
@@ -21,6 +24,20 @@ async function importWorkspace(event: Event) {
     importError.value = error instanceof Error ? error.message : String(error);
   }
   input.value = "";
+}
+
+async function rebuildNativeIndex() {
+  await store.rebuildSqliteSearchIndex(nativeIndexQuery.value);
+}
+
+async function searchNativeIndex() {
+  await store.searchSqliteIndex(nativeIndexQuery.value);
+}
+
+function formatBytes(value = 0): string {
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
 }
 </script>
 
@@ -79,6 +96,12 @@ async function importWorkspace(event: Event) {
                 {{ new Date(backup.createdAt).toLocaleString() }}
                 <template v-if="backup.sizeBytes"> · {{ Math.round(backup.sizeBytes / 1024) }} KB</template>
               </span>
+              <span v-if="backup.hasSqliteIndex" class="muted">
+                SQLite index included
+                <template v-if="backup.sqliteSizeBytes">
+                  · {{ Math.round(backup.sqliteSizeBytes / 1024) }} KB
+                </template>
+              </span>
               <div class="cluster">
                 <button class="secondary-button" type="button" @click="store.restoreWorkspaceFromBackup(backup.id)">
                   <RotateCcw :size="16" />
@@ -105,6 +128,80 @@ async function importWorkspace(event: Event) {
             <div v-for="issue in packageIssues.slice(0, 6)" :key="`${issue.field}-${issue.message}`" class="field-box">
               <strong>{{ issue.severity }}: {{ issue.field }}</strong>
               <span class="muted">{{ issue.message }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="field-box">
+          <strong>Asset Inventory</strong>
+          <span class="muted">Desktop scans workspace assets for missing, browser-only and untracked files. Browser preview can inspect metadata only.</span>
+          <button class="secondary-button" type="button" @click="store.refreshAssetInventory()">
+            <HardDrive :size="16" />
+            Refresh Asset Inventory
+          </button>
+          <p v-if="store.lastAssetInventoryMessage" class="muted">{{ store.lastAssetInventoryMessage }}</p>
+          <div v-if="assetInventory" class="field-grid">
+            <div class="field-box">
+              <strong>{{ assetInventory.stats.declaredAssets }} declared assets</strong>
+              <span class="muted">{{ assetInventory.stats.referencedAssets }} referenced · {{ assetInventory.stats.unreferencedAssets }} unreferenced</span>
+              <span class="muted">{{ assetInventory.stats.browserOnlyAssets }} browser-only · {{ assetInventory.stats.missingPhysicalAssets }} missing physical</span>
+            </div>
+            <div class="field-box">
+              <strong>{{ formatBytes(assetInventory.stats.physicalBytes || assetInventory.stats.declaredBytes) }}</strong>
+              <span class="muted">{{ assetInventory.stats.physicalFiles }} physical files · {{ assetInventory.stats.untrackedFiles }} untracked</span>
+              <span class="muted">Declared metadata {{ formatBytes(assetInventory.stats.declaredBytes) }}</span>
+            </div>
+            <div v-if="assetInventory.missingAssetIds.length" class="field-box">
+              <strong>Missing asset ids</strong>
+              <span class="muted">{{ assetInventory.missingAssetIds.slice(0, 6).join(", ") }}</span>
+            </div>
+            <div v-if="assetInventory.untrackedFiles.length" class="field-box">
+              <strong>Largest untracked files</strong>
+              <span v-for="file in assetInventory.untrackedFiles.slice(0, 4)" :key="file.relativePath" class="muted">
+                {{ file.relativePath }} · {{ formatBytes(file.sizeBytes) }}
+              </span>
+            </div>
+          </div>
+          <div v-if="assetMaintenancePlan" class="field-box">
+            <strong>Maintenance Plan</strong>
+            <span class="muted">
+              {{ assetMaintenancePlan.summary.totalActions }} actions ·
+              {{ assetMaintenancePlan.summary.publishBlockers }} publish blockers ·
+              {{ assetMaintenancePlan.summary.cleanupCandidates }} cleanup candidates ·
+              {{ formatBytes(assetMaintenancePlan.summary.estimatedRecoverableBytes) }} recoverable
+            </span>
+            <span v-if="store.lastAssetMaintenanceMessage" class="muted">{{ store.lastAssetMaintenanceMessage }}</span>
+            <div v-if="assetMaintenancePlan.actions.length" class="field-grid">
+              <div v-for="action in assetMaintenancePlan.actions.slice(0, 5)" :key="action.id" class="field-box">
+                <strong>{{ action.severity }}: {{ action.title }}</strong>
+                <span class="muted">{{ action.detail }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="field-box">
+          <strong>Native SQLite Search Index</strong>
+          <span class="muted">Tauri desktop builds mirror JSON content into `search.sqlite3` for Phase 5 FTS search and large library migration.</span>
+          <div class="row">
+            <input v-model="nativeIndexQuery" class="input" aria-label="Native index query" placeholder="Search native index" />
+          </div>
+          <div class="cluster">
+            <button class="secondary-button" type="button" @click="rebuildNativeIndex">
+              <Database :size="16" />
+              Rebuild SQLite Index
+            </button>
+            <button class="ghost-button" type="button" @click="searchNativeIndex">
+              <Search :size="16" />
+              Search Index
+            </button>
+          </div>
+          <p v-if="store.lastSqliteIndexMessage" class="muted">{{ store.lastSqliteIndexMessage }}</p>
+          <span v-if="store.lastSqliteIndexReport" class="muted">
+            {{ store.lastSqliteIndexReport.itemCount }} items · {{ store.lastSqliteIndexReport.messageCount }} messages · {{ store.lastSqliteIndexReport.path }}
+          </span>
+          <div v-if="store.lastSqliteSearchHits.length" class="field-grid">
+            <div v-for="hit in store.lastSqliteSearchHits" :key="`${hit.entityType}:${hit.entityId}`" class="field-box">
+              <strong>{{ hit.entityType }}: {{ hit.title }}</strong>
+              <span class="muted">{{ hit.snippet }}</span>
             </div>
           </div>
         </div>

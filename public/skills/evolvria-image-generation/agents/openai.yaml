@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Image Generation"
+  short_description: "Create safe image prompts"
+  default_prompt: "Use $evolvria-image-generation to run the matching Evolvria AI workflow."

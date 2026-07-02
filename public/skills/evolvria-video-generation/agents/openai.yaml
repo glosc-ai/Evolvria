@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Video Generation"
+  short_description: "Create short video prompts"
+  default_prompt: "Use $evolvria-video-generation to run the matching Evolvria AI workflow."

@@ -58,12 +58,26 @@ export function runFateCheck(input: {
   actorId: string;
   intent: string;
   config: DungeonMindConfig;
+  attributeId?: string;
+  skillId?: string;
   difficulty?: number;
   modifier?: number;
   seed?: string;
 }): FateCheck {
-  const attribute = input.config.attributes[0]?.id ?? "attr_default";
-  const skill = input.config.skills[0]?.id;
+  const requestedSkill = input.skillId
+    ? input.config.skills.find((skill) => skill.id === input.skillId)
+    : undefined;
+  const requestedAttribute = input.attributeId
+    ? input.config.attributes.find((attribute) => attribute.id === input.attributeId)
+    : undefined;
+  const attribute =
+    requestedAttribute?.id ??
+    (requestedSkill ? input.config.attributes.find((item) => item.id === requestedSkill.attributeId)?.id : undefined) ??
+    input.config.attributes[0]?.id ??
+    "attr_default";
+  const skill =
+    requestedSkill?.id ??
+    input.config.skills.find((item) => item.attributeId === attribute)?.id;
   const difficulty = input.difficulty ?? input.config.difficultyTable[1]?.target ?? 12;
   const seed = input.seed ?? `${input.chatId}:${input.intent}:${Date.now()}`;
   const roll = rollConfiguredDice(seed, input.config.dice, difficulty, input.modifier ?? 0);
@@ -88,7 +102,13 @@ export function runFateCheck(input: {
   };
 }
 
-export function fateCheckToText(check: FateCheck): string {
+export function fateCheckToText(check: FateCheck, config?: DungeonMindConfig): string {
+  const attribute = config?.attributes.find((item) => item.id === check.attribute);
+  const skill = check.skill ? config?.skills.find((item) => item.id === check.skill) : undefined;
+  const resolution = [
+    attribute ? `属性 ${attribute.name}` : `属性 ${check.attribute}`,
+    skill ? `技能 ${skill.name}` : check.skill ? `技能 ${check.skill}` : undefined,
+  ].filter(Boolean).join(" / ");
   const visibleRoll = check.visibility === "full"
     ? `掷骰 ${check.roll.die} + ${check.roll.modifier} = ${check.roll.total}，难度 ${check.difficulty}。`
     : check.visibility === "summary"
@@ -96,6 +116,7 @@ export function fateCheckToText(check: FateCheck): string {
       : "命运在幕后完成裁定。";
   return [
     `Fate Check: ${check.intent}`,
+    `裁定：${resolution || "默认规则"}。`,
     visibleRoll,
     `后果：${check.consequences.join("；")}`,
   ].join("\n");

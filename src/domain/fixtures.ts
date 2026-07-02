@@ -1,4 +1,5 @@
 import { createModerationStatus } from "@/domain/moderation";
+import { DEFAULT_GLOSC_PROVIDER } from "@/domain/ai-routing";
 import type {
   Character,
   EntityStore,
@@ -95,6 +96,7 @@ export function createSeedEnvelope(): SaveEnvelope {
         createdAt: seedTime,
       },
     },
+    creatorPayoutRequests: {},
     engagementStats: {},
     mediaGenerationJobs: {},
     syncOperations: {},
@@ -161,13 +163,7 @@ const seedWorkspace: Workspace = {
 const seedSettings: WorkspaceSettings = {
   activeWorkspaceId: seedWorkspace.id,
   adultContentUnlocked: false,
-  provider: {
-    type: "mock",
-    baseUrl: "https://api.openai.com/v1",
-    model: "evolvria-mock",
-    temperature: 0.75,
-    maxTokens: 700,
-  },
+  provider: DEFAULT_GLOSC_PROVIDER,
   budget: {
     maxInputTokens: 8000,
     maxOutputTokens: 900,

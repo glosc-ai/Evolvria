@@ -46,7 +46,7 @@ MVP 必须交付：
 - 首页、内容库、故事详情、启动 Persona、聊天、创作草稿、存档、设置页面。
 - 原创示例故事线、角色、封面占位和标签。
 - `mock` provider：无网络也能生成可预测的叙事回复。
-- OpenAI-compatible provider：用户配置 base URL、API key、model、上下文限制。
+- AI SDK + OpenAI-compatible provider：默认 Glosc One `https://one.gloscai.com/v1`，用户配置 API key；模型路由为 chat `zai/glm-5.2`、content `deepseek/deepseek-v4-flash`、narrative `deepseek/deepseek-v4-pro`、image `openai/gpt-image-2`、video `bytedance/doubao-seedance-2-0`、voice `alibaba/qwen3-tts-instruct-flash`。
 - 本地 JSON workspace：故事、角色、Persona、聊天、消息、摘要、资产元数据。
 - 导入/导出 zip、自动备份、基本错误恢复。
 - 成本估算 UI：token 估计、模型单价占位、预算上限。

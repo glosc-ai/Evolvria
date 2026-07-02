@@ -65,20 +65,22 @@ export function completeMockMediaGenerationJob(job: MediaGenerationJob, complete
 } {
   const assetId = createId("media");
   const ledgerEntryId = createId("ledger");
+  const isVoice = job.kind === "voice";
+  const isVideo = job.kind === "video";
   const asset: MediaAsset = {
     id: assetId,
-    kind: job.kind === "voice" ? "audio" : "image",
-    purpose: job.kind === "voice" ? "voice" : "background",
+    kind: isVoice ? "audio" : isVideo ? "video" : "image",
+    purpose: isVoice ? "voice" : "background",
     relativePath: "",
-    mimeType: job.kind === "voice" ? "audio/mock-placeholder" : "image/mock-placeholder",
+    mimeType: isVoice ? "audio/mock-placeholder" : isVideo ? "video/mock-placeholder" : "image/mock-placeholder",
     width: job.kind === "image" ? 1280 : undefined,
     height: job.kind === "image" ? 720 : undefined,
-    durationMs: job.kind === "voice" ? Math.max(1200, (job.voiceText ?? job.prompt).length * 80) : undefined,
+    durationMs: isVoice ? Math.max(1200, (job.voiceText ?? job.prompt).length * 80) : isVideo ? 5000 : undefined,
     sizeBytes: 0,
     variants: [],
     altText: buildGeneratedAltText(job),
-    source: { kind: "generated", label: `Mock ${job.kind} generation: ${job.model}` },
-    license: { kind: "owned", note: "Local mock generation placeholder; replace with reviewed generated media before publishing." },
+    source: { kind: "generated", label: `本地模拟${mediaKindLabel(job.kind)}生成：${job.model}` },
+    license: { kind: "owned", note: "本地模拟生成占位素材；发布前请替换为已审校的生成媒体。" },
     safety: createModerationStatus("SFW", job.safetyFlags.includes("blocked") ? "rejected" : "draft"),
     createdAt: completedAt,
   };
@@ -110,7 +112,51 @@ export function completeMockMediaGenerationJob(job: MediaGenerationJob, complete
   };
 }
 
+export function completeMediaGenerationJobWithAsset(job: MediaGenerationJob, asset: MediaAsset, completedAt = nowIso()): {
+  job: MediaGenerationJob;
+  ledgerEntry: CreditLedgerEntry;
+} {
+  const ledgerEntryId = createId("ledger");
+  const ledgerEntry: CreditLedgerEntry = {
+    id: ledgerEntryId,
+    chatId: job.chatId,
+    provider: job.provider,
+    model: job.model,
+    operation: job.kind,
+    estimatedTokens: estimateTokens([job.prompt, job.style, job.voiceText].filter(Boolean).join("\n")),
+    estimatedCost: 0,
+    status: "estimated",
+    adjustmentIds: [],
+    currency: "local_estimate",
+    createdAt: completedAt,
+  };
+
+  return {
+    job: {
+      ...job,
+      status: "completed",
+      assetId: asset.id,
+      ledgerEntryId,
+      updatedAt: completedAt,
+      completedAt,
+      error: undefined,
+    },
+    ledgerEntry,
+  };
+}
+
 function buildGeneratedAltText(job: MediaGenerationJob): string {
   const source = job.kind === "voice" ? job.voiceText || job.prompt : job.prompt;
-  return `${job.kind === "voice" ? "Generated voice placeholder" : "Generated scene image placeholder"}: ${source.replace(/\s+/g, " ").slice(0, 120)}`;
+  const label = job.kind === "voice"
+    ? "生成语音占位"
+    : job.kind === "video"
+      ? "生成场景视频占位"
+      : "生成场景图片占位";
+  return `${label}: ${source.replace(/\s+/g, " ").slice(0, 120)}`;
+}
+
+function mediaKindLabel(kind: MediaGenerationKind): string {
+  if (kind === "voice") return "语音";
+  if (kind === "video") return "视频";
+  return "图片";
 }

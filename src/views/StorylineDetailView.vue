@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { RouterLink, useRoute, useRouter } from "vue-router";
-import { CopyPlus, PenTool, Play, RotateCcw } from "lucide-vue-next";
+import { CopyPlus, Flag, PenTool, Play, RotateCcw } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
 import type { Character, MediaAsset } from "@/types/domain";
 
@@ -9,6 +9,8 @@ const route = useRoute();
 const router = useRouter();
 const store = useAppStore();
 const duplicating = ref(false);
+const reportReason = ref("Public catalog report: content needs another local moderation review.");
+const reportMessage = ref("");
 const activeTab = ref<"overview" | "characters" | "scenarios" | "notes" | "safety" | "changelog">("overview");
 const storyline = computed(() => store.getStoryline(String(route.params.id)));
 const casts = computed(() => storyline.value ? store.storylineCharacters(storyline.value) : []);
@@ -40,6 +42,12 @@ async function duplicateAsDraft() {
 function voiceReference(character: Character): MediaAsset | undefined {
   const assetId = character.voice.referenceAssetId;
   return assetId ? store.envelope.entities.mediaAssets[assetId] : undefined;
+}
+
+async function reportStoryline() {
+  if (!storyline.value) return;
+  await store.submitLocalModerationCase("storyline", storyline.value.id, reportReason.value);
+  reportMessage.value = "Storyline report added to local moderation queue.";
 }
 </script>
 
@@ -113,9 +121,9 @@ function voiceReference(character: Character): MediaAsset | undefined {
               <p>{{ character.summary }}</p>
               <span class="muted small">{{ character.voice.tone }}</span>
               <template v-if="voiceReference(character)">
-                <span class="muted small">Voice reference: {{ voiceReference(character)?.altText }}</span>
+                <span class="muted small">语音参考：{{ voiceReference(character)?.altText }}</span>
                 <span class="muted small">
-                  {{ voiceReference(character)?.license.kind }} license
+                  授权 {{ voiceReference(character)?.license.kind }}
                   · {{ voiceReference(character)?.safety.state }}
                   · {{ voiceReference(character)?.source.label }}
                 </span>
@@ -169,6 +177,12 @@ function voiceReference(character: Character): MediaAsset | undefined {
               <strong>No validation issues</strong>
               <span class="muted">This package can remain local_ready unless edited or new media is added.</span>
             </div>
+            <form class="field-box field-grid" @submit.prevent="reportStoryline">
+              <strong><Flag :size="15" /> Report Storyline</strong>
+              <textarea v-model="reportReason" class="textarea" aria-label="Storyline report reason" />
+              <button class="danger-button" type="submit">Create Report</button>
+              <span v-if="reportMessage" class="muted">{{ reportMessage }}</span>
+            </form>
           </div>
         </section>
 

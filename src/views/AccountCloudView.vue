@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, reactive } from "vue";
-import { Cloud, Flag, GitBranch, Receipt, UserRound, Wallet } from "lucide-vue-next";
+import { RouterLink } from "vue-router";
+import { Cloud, Download, Flag, GitBranch, Receipt, UserRound, Wallet } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
-import type { AccountAgeGate } from "@/types/domain";
+import type { AccountAgeGate, CreatorEarning } from "@/types/domain";
 
 const store = useAppStore();
 const account = computed(() => store.envelope.settings.cloudAccount);
@@ -25,6 +26,10 @@ const reportForm = reactive({
 const appealForm = reactive({
   reason: "Creator appeal: the issue was fixed or the decision needs a second review.",
 });
+const payoutForm = reactive({
+  amount: 12.5,
+  note: "Local payout preview request for available creator share.",
+});
 const publishForm = reactive({
   storylineId: "story_starbloom_frontier",
 });
@@ -33,6 +38,9 @@ const openConflicts = computed(() => store.openSyncConflicts);
 const latestOperations = computed(() => store.syncOperations.slice(0, 6));
 const latestLedger = computed(() => store.ledgerEntries.slice(0, 6));
 const latestAdjustments = computed(() => store.creditAdjustments.slice(0, 4));
+const latestPayouts = computed(() => store.creatorPayoutRequests.slice(0, 5));
+const latestEarnings = computed(() => store.creatorEarnings.slice(0, 6));
+const syncSnapshot = computed(() => store.lastSyncSnapshot);
 
 async function signInAccount() {
   await store.signInLocalAccount({
@@ -64,6 +72,36 @@ async function saveSync() {
   feedback.message = "Sync settings saved locally.";
 }
 
+function refreshSyncSnapshot() {
+  store.refreshSyncSnapshot();
+  feedback.message = "Device snapshot refreshed.";
+}
+
+function exportSyncOperationLog() {
+  store.exportSyncOperationLog();
+  feedback.message = store.lastSyncLogMessage ?? "Sync operation log exported.";
+}
+
+async function importSyncOperationLog(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const [file] = Array.from(input.files ?? []);
+  if (!file) return;
+  try {
+    await store.importSyncOperationLogFile(file);
+    feedback.message = store.lastSyncLogMessage ?? "Sync operation log imported.";
+  } catch (error) {
+    feedback.message = error instanceof Error ? error.message : String(error);
+  } finally {
+    input.value = "";
+  }
+}
+
+async function disableSyncKeepLocal() {
+  await store.disableSyncRetainingLocalData();
+  syncForm.enabled = false;
+  feedback.message = store.lastSyncLogMessage ?? "Private sync disabled and local data retained.";
+}
+
 async function queueSync() {
   await store.queueStorylineSyncOperation(syncPlayground.storylineId);
   feedback.message = "Queued a local sync operation.";
@@ -90,6 +128,30 @@ async function createReport() {
 
 async function addEarning() {
   await store.addCreatorEarningEstimate("story_starbloom_frontier", 0);
+}
+
+async function addAvailableEarning() {
+  await store.addCreatorEarningEstimate("story_starbloom_frontier", Number(payoutForm.amount), "available");
+  feedback.message = "Available earning preview added.";
+}
+
+async function updateEarning(earningId: string, status: CreatorEarning["status"]) {
+  await store.updateCreatorEarningStatus(earningId, status, `Creator earning marked ${status} from Account preview.`);
+  feedback.message = `Creator earning marked ${status}.`;
+}
+
+async function requestPayout() {
+  try {
+    const payoutId = await store.requestCreatorPayout(payoutForm.note);
+    feedback.message = `Payout preview requested: ${payoutId}.`;
+  } catch (error) {
+    feedback.message = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function resolvePayout(payoutId: string, outcome: "approve" | "pay" | "reject" | "block") {
+  await store.resolveCreatorPayout(payoutId, outcome, `${outcome} decision from Account payout preview.`);
+  feedback.message = `Payout ${outcome} recorded.`;
 }
 
 async function addLedger() {
@@ -173,6 +235,7 @@ async function resolveAppeal(caseId: string, outcome: "upheld" | "denied") {
             <strong>Signed in locally as {{ account.displayName }}</strong>
             <span class="muted">{{ account.email || "no email" }} · {{ account.ageGate }} · {{ account.status }}</span>
             <span class="muted">Permissions: {{ account.permissions.join(", ") }}</span>
+            <RouterLink class="ghost-button" to="/creators/creator_local">Open Creator Profile</RouterLink>
           </div>
           <p class="muted">这是本地账号预览，不上传 Persona、Chat、草稿或 API key。</p>
         </form>
@@ -190,7 +253,25 @@ async function resolveAppeal(caseId: string, outcome: "upheld" | "denied") {
             <span>Endpoint</span>
             <input v-model="syncForm.endpoint" class="input" />
           </label>
-          <button class="primary-button" type="submit">Save Sync State</button>
+          <div class="cluster">
+            <button class="primary-button" type="submit">Save Sync State</button>
+            <button class="ghost-button" type="button" @click="disableSyncKeepLocal">Disable, Keep Local</button>
+          </div>
+          <div class="cluster">
+            <button class="ghost-button" type="button" @click="refreshSyncSnapshot">Refresh Device Snapshot</button>
+          </div>
+          <div v-if="syncSnapshot" class="field-box">
+            <strong>Device snapshot</strong>
+            <span class="muted">
+              {{ syncSnapshot.deviceId }} · {{ syncSnapshot.syncStatus }} ·
+              pending {{ syncSnapshot.pendingOperationCount }} · conflicts {{ syncSnapshot.openConflictCount }}
+            </span>
+            <span class="muted">
+              {{ syncSnapshot.entityCounts.storylines }} storylines ·
+              {{ syncSnapshot.entityCounts.messages }} messages ·
+              latest {{ syncSnapshot.latestOperationAt || "none" }}
+            </span>
+          </div>
           <p class="muted">当前只保存同步意图，不上传本地 Persona、聊天或草稿。</p>
         </form>
 
@@ -207,6 +288,23 @@ async function resolveAppeal(caseId: string, outcome: "upheld" | "denied") {
             <button class="ghost-button" type="button" @click="pushSync">Simulate Push</button>
             <button class="danger-button" type="button" @click="createConflict">Create Conflict</button>
           </div>
+          <div class="cluster">
+            <button class="ghost-button" type="button" @click="exportSyncOperationLog">
+              <Download :size="15" />
+              Export Operation Log
+            </button>
+            <label class="ghost-button file-button">
+              Import Operation Log
+              <input
+                class="sr-only"
+                aria-label="Import sync operation log"
+                type="file"
+                accept="application/json,.json,.evolvria-sync.json"
+                @change="importSyncOperationLog"
+              />
+            </label>
+          </div>
+          <p v-if="store.lastSyncLogMessage" class="muted">{{ store.lastSyncLogMessage }}</p>
           <div v-if="openConflicts.length" class="field-grid">
             <div v-for="conflict in openConflicts" :key="conflict.id" class="field-box">
               <strong>{{ conflict.field }} conflict / {{ conflict.entityId }}</strong>
@@ -306,9 +404,56 @@ async function resolveAppeal(caseId: string, outcome: "upheld" | "denied") {
         </div>
         <div class="field-box">
           <strong>Creator earnings</strong>
-          <span class="muted">{{ store.creatorEarnings.length }} ledger placeholders</span>
+          <span class="muted">
+            {{ store.creatorEarnings.length }} ledger placeholders ·
+            available {{ store.creatorEarningTotals.available }} ·
+            pending {{ store.creatorEarningTotals.pending }} ·
+            withheld {{ store.creatorEarningTotals.withheld }} ·
+            paid {{ store.creatorEarningTotals.paid }}
+          </span>
         </div>
-        <button class="ghost-button" @click="addEarning">Add Earning Estimate</button>
+        <div class="cluster">
+          <button class="ghost-button" @click="addEarning">Add Earning Estimate</button>
+          <button class="secondary-button" type="button" @click="addAvailableEarning">Add Available Earning</button>
+        </div>
+        <label class="field-box">
+          <span>Available earning amount</span>
+          <input v-model.number="payoutForm.amount" class="input" type="number" min="0" step="0.01" />
+        </label>
+        <label class="field-box">
+          <span>Payout note</span>
+          <textarea v-model="payoutForm.note" class="textarea" />
+        </label>
+        <button class="primary-button" type="button" @click="requestPayout">Request Payout Preview</button>
+        <div class="field-grid">
+          <div v-for="earning in latestEarnings" :key="earning.id" class="field-box">
+            <strong>{{ earning.status }} / {{ earning.amount }} {{ earning.currency }}</strong>
+            <span class="muted">{{ earning.sourceEntityId }} · {{ earning.note }}</span>
+            <div class="cluster">
+              <button v-if="earning.status === 'estimated'" class="ghost-button" type="button" @click="updateEarning(earning.id, 'available')">Make Available</button>
+              <button v-if="earning.status === 'available'" class="ghost-button" type="button" @click="updateEarning(earning.id, 'withheld')">Withhold</button>
+              <button v-if="earning.status === 'withheld'" class="ghost-button" type="button" @click="updateEarning(earning.id, 'available')">Release</button>
+            </div>
+          </div>
+        </div>
+        <div class="field-box">
+          <strong>Payout requests</strong>
+          <span class="muted">{{ store.creatorPayoutRequests.length }} local payout preview(s)</span>
+        </div>
+        <div class="field-grid">
+          <div v-for="payout in latestPayouts" :key="payout.id" class="field-box">
+            <strong>{{ payout.status }} / {{ payout.amount }} {{ payout.currency }}</strong>
+            <span class="muted">{{ payout.earningIds.length }} earning(s) · risk {{ payout.riskFlags.join(", ") || "none" }}</span>
+            <span class="muted">{{ payout.note }}</span>
+            <span v-if="payout.resolutionNote" class="muted">{{ payout.resolutionNote }}</span>
+            <div class="cluster">
+              <button v-if="payout.status === 'requested'" class="ghost-button" type="button" @click="resolvePayout(payout.id, 'approve')">Approve Payout</button>
+              <button v-if="payout.status === 'approved'" class="ghost-button" type="button" @click="resolvePayout(payout.id, 'pay')">Mark Paid</button>
+              <button v-if="payout.status === 'requested'" class="ghost-button" type="button" @click="resolvePayout(payout.id, 'reject')">Reject Payout</button>
+              <button v-if="payout.status === 'requested'" class="danger-button" type="button" @click="resolvePayout(payout.id, 'block')">Block & Withhold</button>
+            </div>
+          </div>
+        </div>
 
         <div class="field-box">
           <strong>Sync operations</strong>

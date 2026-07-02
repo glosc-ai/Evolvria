@@ -1,0 +1,57 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-07-02T00:00:00.000Z",
+  "baseUrl": "https://one.gloscai.com/v1",
+  "library": "ai@7",
+  "providerPackage": "@ai-sdk/openai-compatible",
+  "skills": [
+    {
+      "id": "evolvria-narrative-turn",
+      "modelRole": "narrative",
+      "model": "deepseek/deepseek-v4-pro",
+      "path": "/skills/evolvria-narrative-turn/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-narrative-turn/agents/openai.yaml",
+      "invocationMode": "prompt-layer"
+    },
+    {
+      "id": "evolvria-content-safety",
+      "modelRole": "content",
+      "model": "deepseek/deepseek-v4-flash",
+      "path": "/skills/evolvria-content-safety/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-content-safety/agents/openai.yaml",
+      "invocationMode": "prompt-layer"
+    },
+    {
+      "id": "evolvria-image-generation",
+      "modelRole": "image",
+      "model": "openai/gpt-image-2",
+      "path": "/skills/evolvria-image-generation/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-image-generation/agents/openai.yaml",
+      "invocationMode": "media-job"
+    },
+    {
+      "id": "evolvria-video-generation",
+      "modelRole": "video",
+      "model": "bytedance/doubao-seedance-2-0",
+      "path": "/skills/evolvria-video-generation/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-video-generation/agents/openai.yaml",
+      "invocationMode": "media-job"
+    },
+    {
+      "id": "evolvria-voice-generation",
+      "modelRole": "voice",
+      "model": "alibaba/qwen3-tts-instruct-flash",
+      "path": "/skills/evolvria-voice-generation/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-voice-generation/agents/openai.yaml",
+      "invocationMode": "media-job"
+    },
+    {
+      "id": "evolvria-summary-arc",
+      "modelRole": "summary",
+      "model": "deepseek/deepseek-v4-flash",
+      "path": "/skills/evolvria-summary-arc/SKILL.md",
+      "openaiMetadata": "/skills/evolvria-summary-arc/agents/openai.yaml",
+      "invocationMode": "prompt-layer"
+    }
+  ]
+}

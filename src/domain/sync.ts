@@ -1,6 +1,62 @@
-import type { SaveEnvelope, SyncConflict, SyncOperation, SyncOperationEntity, SyncOperationKind } from "@/types/domain";
+import type { SaveEnvelope, SyncConflict, SyncOperation, SyncOperationEntity, SyncOperationKind, SyncSettings } from "@/types/domain";
 
 export type ConflictResolution = "local" | "remote" | "copy";
+export type SyncLogFormat = "evolvria_sync_operation_log";
+
+export interface SyncDeviceSnapshot {
+  workspaceId: string;
+  workspaceName: string;
+  deviceId: string;
+  generatedAt: string;
+  syncEnabled: boolean;
+  syncStatus: SyncSettings["status"];
+  endpoint?: string;
+  lastSyncAt?: string;
+  pendingOperationCount: number;
+  openConflictCount: number;
+  ackedOperationCount: number;
+  failedOperationCount: number;
+  latestOperationAt?: string;
+  entityCounts: Record<string, number>;
+  privacy: {
+    includesWorkspaceContent: false;
+    includesChats: false;
+    includesApiKeys: false;
+    note: string;
+  };
+}
+
+export interface SyncOperationLogPackage {
+  format: SyncLogFormat;
+  schemaVersion: "1.0.0";
+  workspaceId: string;
+  workspaceName: string;
+  exportedAt: string;
+  deviceId: string;
+  endpoint?: string;
+  operations: SyncOperation[];
+  conflicts: SyncConflict[];
+  summary: {
+    operationCount: number;
+    conflictCount: number;
+    queuedOperationCount: number;
+    ackedOperationCount: number;
+    openConflictCount: number;
+    latestOperationAt?: string;
+  };
+  privacy: {
+    includesApiKeys: false;
+    mayIncludeEntityPatches: true;
+    note: string;
+  };
+}
+
+export interface SyncOperationLogImportResult {
+  importedOperations: number;
+  skippedOperations: number;
+  importedConflicts: number;
+  skippedConflicts: number;
+}
 
 export function countOpenSyncConflicts(envelope: SaveEnvelope): number {
   return Object.values(envelope.entities.syncConflicts).filter((conflict) => conflict.status === "open").length;
@@ -68,4 +124,148 @@ export function conflictResolutionNote(resolution: ConflictResolution): string {
   if (resolution === "local") return "Kept the local field value and marked the remote operation acknowledged.";
   if (resolution === "remote") return "Accepted the cloud field value into the local workspace.";
   return "Created a local copy so both versions can continue independently.";
+}
+
+export function buildSyncDeviceSnapshot(envelope: SaveEnvelope, generatedAt: string): SyncDeviceSnapshot {
+  const operations = Object.values(envelope.entities.syncOperations);
+  const latestOperationAt = latestSyncOperationAt(operations);
+  return {
+    workspaceId: envelope.workspace.id,
+    workspaceName: envelope.workspace.name,
+    deviceId: syncDeviceId(envelope),
+    generatedAt,
+    syncEnabled: envelope.settings.sync.enabled,
+    syncStatus: envelope.settings.sync.status,
+    endpoint: envelope.settings.sync.endpoint,
+    lastSyncAt: envelope.settings.sync.lastSyncAt,
+    pendingOperationCount: operations.filter((operation) =>
+      operation.status === "queued" || operation.status === "pushed" || operation.status === "conflicted",
+    ).length,
+    openConflictCount: countOpenSyncConflicts(envelope),
+    ackedOperationCount: operations.filter((operation) => operation.status === "acked").length,
+    failedOperationCount: operations.filter((operation) => operation.status === "failed").length,
+    latestOperationAt,
+    entityCounts: Object.fromEntries(
+      Object.entries(envelope.entities).map(([key, value]) => [key, Object.keys(value as Record<string, unknown>).length]),
+    ),
+    privacy: {
+      includesWorkspaceContent: false,
+      includesChats: false,
+      includesApiKeys: false,
+      note: "Snapshot only contains counts and sync metadata. It intentionally excludes Persona, chat text, media files and provider keys.",
+    },
+  };
+}
+
+export function createSyncOperationLogPackage(envelope: SaveEnvelope, exportedAt: string): SyncOperationLogPackage {
+  const operations = Object.values(envelope.entities.syncOperations).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  const conflicts = Object.values(envelope.entities.syncConflicts).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
+  return {
+    format: "evolvria_sync_operation_log",
+    schemaVersion: "1.0.0",
+    workspaceId: envelope.workspace.id,
+    workspaceName: envelope.workspace.name,
+    exportedAt,
+    deviceId: syncDeviceId(envelope),
+    endpoint: envelope.settings.sync.endpoint,
+    operations,
+    conflicts,
+    summary: {
+      operationCount: operations.length,
+      conflictCount: conflicts.length,
+      queuedOperationCount: operations.filter((operation) => operation.status === "queued" || operation.status === "pushed").length,
+      ackedOperationCount: operations.filter((operation) => operation.status === "acked").length,
+      openConflictCount: conflicts.filter((conflict) => conflict.status === "open").length,
+      latestOperationAt: latestSyncOperationAt(operations),
+    },
+    privacy: {
+      includesApiKeys: false,
+      mayIncludeEntityPatches: true,
+      note: "Operation patches can include titles or moderation metadata, but never include provider API keys. Do not use this as a public UGC package.",
+    },
+  };
+}
+
+export function importSyncOperationLogPackage(
+  envelope: SaveEnvelope,
+  input: unknown,
+  importedAt: string,
+): SyncOperationLogImportResult {
+  const operationLog = readSyncOperationLogPackage(input);
+  if (operationLog.workspaceId !== envelope.workspace.id) {
+    throw new Error("sync_log_workspace_mismatch");
+  }
+
+  let importedOperations = 0;
+  let skippedOperations = 0;
+  for (const operation of operationLog.operations) {
+    if (envelope.entities.syncOperations[operation.id]) {
+      skippedOperations += 1;
+      continue;
+    }
+    envelope.entities.syncOperations[operation.id] = {
+      ...operation,
+      workspaceId: envelope.workspace.id,
+    };
+    importedOperations += 1;
+  }
+
+  let importedConflicts = 0;
+  let skippedConflicts = 0;
+  for (const conflict of operationLog.conflicts) {
+    if (envelope.entities.syncConflicts[conflict.id]) {
+      skippedConflicts += 1;
+      continue;
+    }
+    envelope.entities.syncConflicts[conflict.id] = conflict;
+    importedConflicts += 1;
+  }
+
+  envelope.settings.sync = {
+    ...envelope.settings.sync,
+    enabled: true,
+    endpoint: envelope.settings.sync.endpoint ?? operationLog.endpoint,
+    lastSyncAt: importedAt,
+    status: countOpenSyncConflicts(envelope) ? "conflict" : "ready",
+    conflictCount: countOpenSyncConflicts(envelope),
+  };
+
+  return {
+    importedOperations,
+    skippedOperations,
+    importedConflicts,
+    skippedConflicts,
+  };
+}
+
+export function disableSyncRetainingLocalData(envelope: SaveEnvelope): SyncSettings {
+  envelope.settings.sync = {
+    ...envelope.settings.sync,
+    enabled: false,
+    status: "local_only",
+    conflictCount: countOpenSyncConflicts(envelope),
+  };
+  return envelope.settings.sync;
+}
+
+function readSyncOperationLogPackage(input: unknown): SyncOperationLogPackage {
+  if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error("sync_log_invalid");
+  const record = input as Partial<SyncOperationLogPackage>;
+  if (record.format !== "evolvria_sync_operation_log") throw new Error("sync_log_invalid_format");
+  if (record.schemaVersion !== "1.0.0") throw new Error("sync_log_unsupported_schema");
+  if (typeof record.workspaceId !== "string" || !record.workspaceId.trim()) throw new Error("sync_log_missing_workspace");
+  if (!Array.isArray(record.operations)) throw new Error("sync_log_missing_operations");
+  if (!Array.isArray(record.conflicts)) throw new Error("sync_log_missing_conflicts");
+  return record as SyncOperationLogPackage;
+}
+
+function syncDeviceId(envelope: SaveEnvelope): string {
+  return envelope.settings.cloudAccount?.id ?? "local-device";
+}
+
+function latestSyncOperationAt(operations: SyncOperation[]): string | undefined {
+  return operations
+    .map((operation) => operation.completedAt ?? operation.createdAt)
+    .filter(Boolean)
+    .sort((a, b) => b.localeCompare(a))[0];
 }

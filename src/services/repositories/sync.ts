@@ -1,4 +1,17 @@
-import { countOpenSyncConflicts, createFieldConflict, createSyncOperation, resolveConflictRecord, type ConflictResolution } from "@/domain/sync";
+import {
+  buildSyncDeviceSnapshot,
+  countOpenSyncConflicts,
+  createFieldConflict,
+  createSyncOperation,
+  createSyncOperationLogPackage,
+  disableSyncRetainingLocalData,
+  importSyncOperationLogPackage,
+  resolveConflictRecord,
+  type ConflictResolution,
+  type SyncDeviceSnapshot,
+  type SyncOperationLogImportResult,
+  type SyncOperationLogPackage,
+} from "@/domain/sync";
 import { createId, nowIso } from "@/domain/ids";
 import type { SaveEnvelope, SyncOperation, SyncOperationEntity, SyncOperationKind, SyncSettings } from "@/types/domain";
 
@@ -31,6 +44,11 @@ export interface SyncResolveResult {
   status: SyncStatusSnapshot;
 }
 
+export interface SyncImportLogResult extends SyncOperationLogImportResult {
+  status: SyncStatusSnapshot;
+  snapshot: SyncDeviceSnapshot;
+}
+
 export interface SyncRuntime {
   now(): string;
   id(prefix: string): string;
@@ -41,6 +59,10 @@ export interface SyncRepository {
   updateSettings(envelope: SaveEnvelope, input: { enabled: boolean; endpoint?: string }): SyncStatusSnapshot;
   queueOperation(envelope: SaveEnvelope, input: SyncQueueInput): SyncOperation;
   push(envelope: SaveEnvelope): SyncPushResult;
+  snapshot(envelope: SaveEnvelope): SyncDeviceSnapshot;
+  exportOperationLog(envelope: SaveEnvelope): SyncOperationLogPackage;
+  importOperationLog(envelope: SaveEnvelope, input: unknown): SyncImportLogResult;
+  disableRetainingLocalData(envelope: SaveEnvelope): SyncStatusSnapshot;
   createStorylineConflict(envelope: SaveEnvelope, storylineId: string): SyncConflictResult;
   resolveConflict(envelope: SaveEnvelope, conflictId: string, resolution: ConflictResolution): SyncResolveResult;
 }
@@ -123,6 +145,28 @@ export class LocalSyncRepository implements SyncRepository {
       operationIds,
       status: this.status(envelope),
     };
+  }
+
+  snapshot(envelope: SaveEnvelope): SyncDeviceSnapshot {
+    return buildSyncDeviceSnapshot(envelope, this.runtime.now());
+  }
+
+  exportOperationLog(envelope: SaveEnvelope): SyncOperationLogPackage {
+    return createSyncOperationLogPackage(envelope, this.runtime.now());
+  }
+
+  importOperationLog(envelope: SaveEnvelope, input: unknown): SyncImportLogResult {
+    const imported = importSyncOperationLogPackage(envelope, input, this.runtime.now());
+    return {
+      ...imported,
+      status: this.status(envelope),
+      snapshot: this.snapshot(envelope),
+    };
+  }
+
+  disableRetainingLocalData(envelope: SaveEnvelope): SyncStatusSnapshot {
+    disableSyncRetainingLocalData(envelope);
+    return this.status(envelope);
   }
 
   createStorylineConflict(envelope: SaveEnvelope, storylineId: string): SyncConflictResult {

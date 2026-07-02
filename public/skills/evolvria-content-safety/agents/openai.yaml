@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Content Safety"
+  short_description: "Rate and review creator content"
+  default_prompt: "Use $evolvria-content-safety to run the matching Evolvria AI workflow."

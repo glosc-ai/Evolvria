@@ -20,7 +20,7 @@
 | Character card | `CharacterProfile`：人设、声音、关系、禁忌、媒体资产 | MVP | 字段服务本地 AI 叙事，而非社交展示优先 |
 | Start persona | `StartStory`：快速 Persona、名称、代词、叙事偏好、安全边界 | MVP | 支持匿名本地身份 |
 | Chat | `ChatSession`：消息流、继续、重试、回滚、搜索、设置 | MVP | 强化存档、摘要和调试可见性 |
-| Model choice | `AIProviderSettings`：mock、OpenAI-compatible、未来 cloud-proxy | MVP | 用户自配 key 时不走平台计费 |
+| Model choice | `AIProviderSettings`：mock、AI SDK OpenAI-compatible Glosc One、local-http、未来 cloud-proxy | MVP | 用户自配 key 时不走平台计费；Glosc One 默认模型按 chat/content/narrative/image/video/voice 路由 |
 | Mana/Arcane | `CreditLedger` 预留：成本估算、预算、后续积分 | MVP/Cloud | 不使用竞品命名；MVP 不收费 |
 | Summaries / Arc | `SummaryChapter` + `Arc`：记忆压缩、阶段目标、关系变化 | MVP+ | 作为长程叙事质量核心 |
 | Visual Novel | `SceneMode`：背景、立绘、字幕、旁白、音效队列 | Beta | 先静态图层，后语音/图片生成 |
@@ -49,6 +49,7 @@
 - 统一搜索 `Storyline`、`Character`、`Scenario`。
 - 筛选：模式、标签、分级、语言、最近更新、是否可 VN、是否可 Fate Engine。
 - 排序：最近游玩、最近创建、标题、热度占位、完成度。
+- Cloud Preview：Library 可切换 `All Local`、`Public Catalog`、`Private Drafts`、`Review Queue`；只有 `visibility: public` 且 `published/approved` 的内容进入公开目录，推荐条使用本地 completion/heat/rating 打分。
 - 卡片显示：封面、标题、短简介、Casts 数、标签、分级、更新时间。
 
 ### 详情与启动
@@ -78,7 +79,9 @@
 - Character editor：人设、语气、目标、记忆、关系、禁忌、头像。
 - Scenario editor：初始地点、参与角色、触发条件、开场提示。
 - Preview：用 mock provider 试跑开场。
+- Package sharing：导出当前 Storyline 依赖实体为 manifest-backed JSON，导入时重映射成本地草稿。
 - Publish 状态：`draft`、`local_ready`、`submitted`、`published`、`rejected` 预留。
+- 本地发布闭环：Account 提交 Storyline 审核，批准后进入 Public Catalog；Storyline Detail 的举报入口会创建 moderation case，要求修改或拒绝后从 Public Catalog 隐藏。
 
 ## 数据级映射
 

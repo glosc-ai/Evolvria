@@ -68,12 +68,12 @@ When you add a native command, update **three** places: the Rust `#[tauri::comma
 ### AI narrative pipeline
 
 Provider routing is in `src/services/ai/index.ts` (`generateNarrative`):
-- `mock` (default, offline, reliable for demos/E2E) → `services/ai/mock.ts`
-- `openai-compatible` → runs only if a saved key exists
+- `mock` (offline, reliable for demos/E2E) → `services/ai/mock.ts`
+- `openai-compatible` → defaults to Glosc One (`https://one.gloscai.com/v1`) and runs only if a saved key exists; otherwise it falls back to mock
 - `local-http` → runs without a key (localhost endpoints only)
 - `cloud-proxy` → not yet implemented
 
-Prompt assembly is layered in `services/ai/context.ts` (`buildNarrativePromptBundle`): 10 ordered layers — `system_policy → product_safety → storyline_world → character_voices → persona → scenario → memory → active_arc → fate_results → output_contract` — plus recent messages and the final user message. Contract version is `evolvria-narrative-v1.0.0` (`NARRATIVE_PROMPT_CONTRACT_VERSION`); the mock provider echoes it back. Don't leak prompt text or keys into prompt previews — `redactPromptPreviewContent` exists and is tested.
+Prompt assembly is layered in `services/ai/context.ts` (`buildNarrativePromptBundle`): 11 ordered layers — `system_policy → product_safety → storyline_world → character_voices → persona → scenario → memory → active_arc → fate_results → active_skill → output_contract` — plus recent messages and the final user message. Contract version is `evolvria-narrative-v1.0.0` (`NARRATIVE_PROMPT_CONTRACT_VERSION`); the mock provider echoes it back. Don't leak prompt text or keys into prompt previews — `redactPromptPreviewContent` exists and is tested. Built-in skill files live under `public/skills/`.
 
 ### Tauri commands (Rust side)
 

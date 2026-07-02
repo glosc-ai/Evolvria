@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { CheckCircle2, Dices, FileAudio, FileImage, PenTool, Play, PlusCircle, ShieldCheck, UserPlus } from "lucide-vue-next";
+import { CheckCircle2, Dices, Download, FileAudio, FileImage, PenTool, Play, PlusCircle, ShieldCheck, Upload, UserPlus } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
 import { buildNarrativePromptBundle, redactPromptPreviewContent } from "@/services/ai/context";
 import type { ContentRating, DungeonMindConfig, MediaAsset } from "@/types/domain";
@@ -221,6 +221,31 @@ async function createDraft() {
   feedback.value = "Draft created.";
 }
 
+async function exportSelectedPackage() {
+  if (!selectedStory.value) return;
+  try {
+    const fileName = await store.exportStorylinePackage(selectedStory.value.id);
+    feedback.value = `Storyline package exported: ${fileName}.`;
+  } catch (error) {
+    feedback.value = error instanceof Error ? error.message : String(error);
+  }
+}
+
+async function importStorylinePackage(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  try {
+    const importedId = await store.importStorylinePackageFile(file);
+    selectedStoryId.value = importedId;
+    feedback.value = `Storyline package imported as local draft.`;
+  } catch (error) {
+    feedback.value = error instanceof Error ? error.message : String(error);
+  } finally {
+    input.value = "";
+  }
+}
+
 async function saveEdits() {
   await persistEdits("Draft saved.");
 }
@@ -384,32 +409,32 @@ async function pickNativeMedia() {
 async function importNativeVoiceReference() {
   if (!selectedStory.value || !nativeImportForm.path.trim()) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing voice.";
+    feedback.value = "请先恢复内容包，再导入语音。";
     return;
   }
   const characterId = nativeImportForm.voiceCharacterId || selectedCharacters.value[0]?.id;
   if (!characterId) return;
   const assetId = await store.importNativeVoiceReferenceForCharacter(selectedStory.value.id, characterId, nativeImportForm.path);
   if (!assetId) {
-    feedback.value = "Native voice import requires the Tauri desktop runtime.";
+    feedback.value = "本地语音导入需要 Tauri 桌面运行时。";
     return;
   }
   nativeImportForm.path = "";
-  feedback.value = "Native voice reference imported. Confirm license before local_ready.";
+  feedback.value = "本地语音参考已导入。请在 local_ready 前确认授权。";
 }
 
 async function pickNativeVoiceReference() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing voice.";
+    feedback.value = "请先恢复内容包，再导入语音。";
     return;
   }
   const characterId = nativeImportForm.voiceCharacterId || selectedCharacters.value[0]?.id;
   if (!characterId) return;
   const assetId = await store.pickNativeVoiceReferenceForCharacter(selectedStory.value.id, characterId);
   feedback.value = assetId
-    ? "Native voice reference picked and imported. Confirm license before local_ready."
-    : "Native voice picker requires the Tauri desktop runtime or a selected file.";
+    ? "本地语音参考已选择并导入。请在 local_ready 前确认授权。"
+    : "语音文件选择器需要 Tauri 桌面运行时或已选择的文件。";
 }
 
 async function onVoiceReferenceSelected(characterId: string, event: Event) {
@@ -417,17 +442,17 @@ async function onVoiceReferenceSelected(characterId: string, event: Event) {
   const file = input.files?.[0];
   if (!file || !selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing voice.";
+    feedback.value = "请先恢复内容包，再导入语音。";
     return;
   }
   await store.importVoiceReferenceForCharacter(selectedStory.value.id, characterId, file);
   input.value = "";
-  feedback.value = "Voice reference imported. Confirm license before local_ready.";
+  feedback.value = "语音参考已导入。请在 local_ready 前确认授权。";
 }
 
 async function confirmVoiceReference(assetId: string) {
-  await store.confirmMediaLicense(assetId, "Confirmed original or licensed voice reference for this local creator package.");
-  feedback.value = "Voice reference license confirmed.";
+  await store.confirmMediaLicense(assetId, "已确认该语音参考为本地创作者内容包的原创或授权素材。");
+  feedback.value = "语音参考授权已确认。";
 }
 
 function createMediaDraft(asset: MediaAsset): MediaDraft {
@@ -624,7 +649,7 @@ async function saveFateConfig() {
             <textarea v-model="editForm.characterProfile" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Voice tone</span>
+            <span>说话语气</span>
             <input v-model="editForm.characterTone" class="input" />
           </label>
           <label class="field-box">
@@ -669,6 +694,21 @@ async function saveFateConfig() {
         <div v-if="selectedStory" class="field-box">
           <strong>{{ selectedStory.title }}</strong>
           <span class="muted">{{ selectedStory.version.version }} / {{ selectedStory.version.status }} / {{ selectedStory.moderation.state }} / {{ selectedStory.moderation.rating }}{{ selectedStory.deletedAt ? ` / trashed ${selectedStory.deletedAt}` : "" }}</span>
+          <div class="cluster">
+            <button class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="exportSelectedPackage">
+              <Download :size="16" />
+              Export Story Package
+            </button>
+            <label class="ghost-button" style="cursor: pointer">
+              <Upload :size="16" />
+              Import Story Package
+              <input type="file" accept="application/json,.json,.evolvria.json" hidden @change="importStorylinePackage" />
+            </label>
+          </div>
+          <span v-if="store.lastStorylinePackageExportPath" class="muted">
+            Last story package: {{ store.lastStorylinePackageExportPath }}
+          </span>
+          <span v-if="store.lastImportMessage" class="muted">{{ store.lastImportMessage }}</span>
         </div>
         <div class="field-grid">
           <div v-for="issue in validationIssues" :key="`${issue.field}-${issue.message}`" class="field-box">
@@ -723,9 +763,9 @@ async function saveFateConfig() {
               </select>
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Voice target</span>
+              <span>语音绑定角色</span>
               <select v-model="nativeImportForm.voiceCharacterId" class="select">
-                <option value="">Primary character</option>
+                <option value="">主角色</option>
                 <option v-for="character in selectedCharacters" :key="character.id" :value="character.id">{{ character.name }}</option>
               </select>
             </label>
@@ -739,11 +779,11 @@ async function saveFateConfig() {
             </button>
             <button class="ghost-button" type="button" :disabled="selectedStoryDeleted || !nativeImportForm.path.trim()" @click="importNativeVoiceReference">
               <FileAudio :size="16" />
-              Import Native Voice
+              导入本地语音
             </button>
             <button class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="pickNativeVoiceReference">
               <FileAudio :size="16" />
-              Pick Native Voice
+              选择本地语音
             </button>
           </div>
           <p class="muted small">Desktop imports copy files into the workspace assets folder; browser fallback still uses non-portable file references.</p>
@@ -889,9 +929,9 @@ async function saveFateConfig() {
               <strong>{{ character.name }}</strong>
               <span class="muted">{{ character.subtitle || "No subtitle" }} · {{ character.summary }}</span>
               <template v-if="character.voice.referenceAssetId">
-                <span class="muted">Voice reference: {{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.altText }}</span>
+                <span class="muted">语音参考：{{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.altText }}</span>
                 <span class="muted">
-                  License: {{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.license.kind }}
+                  授权：{{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.license.kind }}
                   · {{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.source.label }}
                 </span>
                 <button
@@ -902,12 +942,12 @@ async function saveFateConfig() {
                   @click="confirmVoiceReference(character.voice.referenceAssetId)"
                 >
                   <ShieldCheck :size="16" />
-                  Confirm Voice License
+                  确认语音授权
                 </button>
               </template>
               <label class="ghost-button" :style="{ cursor: selectedStoryDeleted ? 'not-allowed' : 'pointer' }">
                 <FileAudio :size="16" />
-                Import Voice Reference
+                导入语音参考
                 <input type="file" accept="audio/*" hidden :disabled="selectedStoryDeleted" @change="onVoiceReferenceSelected(character.id, $event)" />
               </label>
             </div>
@@ -943,7 +983,7 @@ async function saveFateConfig() {
             <textarea v-model="addCharacterForm.profile" class="textarea" required placeholder="身份、动机、冲突、边界" />
           </label>
           <label class="field-box">
-            <span>Voice tone</span>
+            <span>说话语气</span>
             <input v-model="addCharacterForm.tone" class="input" required placeholder="说话风格" />
           </label>
           <button class="secondary-button" type="submit" :disabled="selectedStoryDeleted">

@@ -1,4 +1,4 @@
-import type { EntityStore, MediaAsset, SaveEnvelope } from "@/types/domain";
+import type { Character, EntityStore, MediaAsset, SaveEnvelope, Scenario, Storyline } from "@/types/domain";
 
 export type PackageIssueSeverity = "error" | "warning" | "info";
 
@@ -58,6 +58,7 @@ const entityKeys: Array<keyof EntityStore> = [
   "creditAdjustments",
   "moderationCases",
   "creatorEarnings",
+  "creatorPayoutRequests",
   "engagementStats",
   "syncOperations",
   "syncConflicts",
@@ -69,6 +70,75 @@ export function createWorkspacePackage(envelope: SaveEnvelope, exportedAt = new 
     format: "evolvria_workspace_package",
     manifest,
     save: envelope,
+  };
+}
+
+export function createStorylineWorkspacePackage(envelope: SaveEnvelope, storylineId: string, exportedAt = new Date().toISOString()): BrowserWorkspacePackage {
+  return createWorkspacePackage(createStorylinePackageEnvelope(envelope, storylineId), exportedAt);
+}
+
+export function createStorylinePackageEnvelope(envelope: SaveEnvelope, storylineId: string): SaveEnvelope {
+  const storyline = envelope.entities.storylines[storylineId];
+  if (!storyline) throw new Error("storyline_not_found");
+  const characterIds = new Set(storyline.cast.map((cast) => cast.characterId));
+  const scenarioIds = new Set(storyline.scenarioIds);
+  const mediaIds = new Set(storyline.mediaIds);
+  const characters = Object.fromEntries(
+    [...characterIds]
+      .map((id) => envelope.entities.characters[id])
+      .filter((character): character is Character => Boolean(character))
+      .map((character) => {
+        for (const mediaId of character.mediaIds) mediaIds.add(mediaId);
+        if (character.voice.referenceAssetId) mediaIds.add(character.voice.referenceAssetId);
+        return [character.id, character];
+      }),
+  );
+  const scenarios = Object.fromEntries(
+    [...scenarioIds]
+      .map((id) => envelope.entities.scenarios[id])
+      .filter((scenario): scenario is Scenario => Boolean(scenario))
+      .map((scenario) => [scenario.id, scenario]),
+  );
+  const mediaAssets = Object.fromEntries(
+    [...mediaIds]
+      .map((id) => envelope.entities.mediaAssets[id])
+      .filter((asset): asset is MediaAsset => Boolean(asset))
+      .map((asset) => [asset.id, asset]),
+  );
+  const dungeonMindConfigs = storyline.dungeonMindConfigId && envelope.entities.dungeonMindConfigs[storyline.dungeonMindConfigId]
+    ? { [storyline.dungeonMindConfigId]: envelope.entities.dungeonMindConfigs[storyline.dungeonMindConfigId] }
+    : {};
+  const entities: SaveEnvelope["entities"] = {
+    characters,
+    storylines: { [storyline.id]: storyline },
+    scenarios,
+    mediaAssets,
+    personas: {},
+    chats: {},
+    chatCheckpoints: {},
+    messages: {},
+    summaryChapters: {},
+    arcs: {},
+    dungeonMindConfigs,
+    fateChecks: {},
+    creditLedger: {},
+    creditAdjustments: {},
+    moderationCases: {},
+    creatorEarnings: {},
+    creatorPayoutRequests: {},
+    engagementStats: {},
+    mediaGenerationJobs: {},
+    syncOperations: {},
+    syncConflicts: {},
+  };
+  return {
+    ...envelope,
+    workspace: {
+      ...envelope.workspace,
+      id: `${envelope.workspace.id}_${storyline.id}_package`,
+      name: `${storyline.title} Package`,
+    },
+    entities,
   };
 }
 

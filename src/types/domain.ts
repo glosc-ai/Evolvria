@@ -9,7 +9,7 @@ export type ModerationState =
   | "rejected"
   | "appealed";
 export type Visibility = "private" | "unlisted" | "public";
-export type PlayMode = "chat" | "scene" | "fate" | "voice" | "image";
+export type PlayMode = "chat" | "scene" | "fate" | "voice" | "image" | "video";
 export type MessageMode = "say" | "act" | "ask" | "ooc";
 export type MessageRole = "system" | "user" | "assistant" | "narrator" | "fate" | "tool";
 export type SafetyFlag = "none" | "mature_theme" | "adult_locked" | "violence" | "copyright" | "blocked";
@@ -262,7 +262,7 @@ export interface MediaAsset {
   deletedAt?: string;
 }
 
-export type MediaGenerationKind = "voice" | "image";
+export type MediaGenerationKind = "voice" | "image" | "video";
 export type MediaGenerationStatus = "queued" | "running" | "completed" | "failed" | "blocked";
 
 export interface MediaGenerationJob {
@@ -500,7 +500,7 @@ export interface CreditLedgerEntry {
   chatId?: string;
   provider: string;
   model: string;
-  operation: "chat" | "summary" | "scene" | "image" | "voice";
+  operation: "chat" | "summary" | "scene" | "image" | "voice" | "video";
   estimatedTokens: number;
   estimatedCost: number;
   actualCost?: number;
@@ -551,6 +551,21 @@ export interface CreatorEarning {
   createdAt: string;
 }
 
+export interface CreatorPayoutRequest {
+  id: string;
+  creatorId: string;
+  earningIds: string[];
+  amount: number;
+  currency: "credit";
+  status: "requested" | "approved" | "paid" | "rejected" | "blocked";
+  riskFlags: string[];
+  note: string;
+  requestedAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+
 export interface EngagementStats {
   entityId: string;
   starts: number;
@@ -581,6 +596,7 @@ export interface EntityStore {
   creditAdjustments: Record<string, CreditAdjustment>;
   moderationCases: Record<string, ModerationCase>;
   creatorEarnings: Record<string, CreatorEarning>;
+  creatorPayoutRequests: Record<string, CreatorPayoutRequest>;
   engagementStats: Record<string, EngagementStats>;
   mediaGenerationJobs: Record<string, MediaGenerationJob>;
   syncOperations: Record<string, SyncOperation>;

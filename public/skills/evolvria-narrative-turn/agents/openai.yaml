@@ -1,0 +1,4 @@
+interface:
+  display_name: "Evolvria Narrative Turn"
+  short_description: "Advance safe story and VN turns"
+  default_prompt: "Use $evolvria-narrative-turn to run the matching Evolvria AI workflow."

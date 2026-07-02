@@ -1,11 +1,13 @@
-import type { ContentRating, EntityStore, MediaAsset, PlayMode } from "@/types/domain";
+import type { ContentRating, EntityStore, MediaAsset, ModerationState, PlayMode, Visibility } from "@/types/domain";
 
 export type LibraryKind = "all" | "storyline" | "character" | "scenario" | "media";
-export type LibrarySort = "updated" | "created" | "title" | "played" | "completion" | "heat";
+export type LibraryCatalog = "all" | "public" | "private" | "review";
+export type LibrarySort = "updated" | "created" | "title" | "played" | "completion" | "heat" | "recommended";
 
 export interface LibraryFilters {
   query?: string;
   kind?: LibraryKind;
+  catalog?: LibraryCatalog;
   rating?: "all" | ContentRating;
   mode?: "all" | PlayMode;
   language?: "all" | string;
@@ -28,6 +30,8 @@ export interface LibraryItem {
   updatedAt: string;
   route?: string;
   status?: string;
+  visibility?: Visibility;
+  moderationState?: ModerationState;
   creator?: string;
   castCount?: number;
   completion: number;
@@ -54,6 +58,8 @@ export function buildLibraryItems(entities: EntityStore): LibraryItem[] {
       updatedAt: story.updatedAt,
       route: `/storylines/${story.id}`,
       status: story.version.status,
+      visibility: story.visibility,
+      moderationState: story.moderation.state,
       creator: story.createdBy.name,
       castCount: story.cast.length,
       completion: completionScore(story.version.status, story.scenarioIds.length, story.cast.length),
@@ -79,6 +85,8 @@ export function buildLibraryItems(entities: EntityStore): LibraryItem[] {
       updatedAt: character.updatedAt,
       route: storyline ? `/storylines/${storyline.id}` : undefined,
       status: character.moderation.state,
+      visibility: character.visibility,
+      moderationState: character.moderation.state,
       creator: character.createdBy.name,
       completion: completionScore(character.moderation.state, character.defaultScenarioIds.length, character.goals.length),
       heat: heatScore(stats?.starts ?? 0, stats?.messages ?? 0, stats?.cloud?.likes ?? 0),
@@ -106,6 +114,8 @@ export function buildLibraryItems(entities: EntityStore): LibraryItem[] {
       updatedAt: scenario.updatedAt,
       route: storyline && !storyline.deletedAt ? `/start/${storyline.id}?scenario=${scenario.id}` : undefined,
       status: scenario.trigger.type,
+      visibility: storyline?.visibility,
+      moderationState: storyline?.moderation.state,
       creator: storyline?.deletedAt ? undefined : storyline?.createdBy.name,
       castCount: scenario.participatingCharacterIds.length,
       completion: scenario.opening.trim().length ? 80 : 25,
@@ -130,6 +140,8 @@ export function buildLibraryItems(entities: EntityStore): LibraryItem[] {
       updatedAt: asset.updatedAt ?? asset.createdAt,
       route: storyline ? `/storylines/${storyline.id}` : undefined,
       status: asset.safety.state,
+      visibility: storyline?.visibility ?? "private",
+      moderationState: asset.safety.state,
       creator: asset.source.label,
       completion: mediaCompletion(asset),
       heat: 0,
@@ -142,6 +154,7 @@ export function buildLibraryItems(entities: EntityStore): LibraryItem[] {
 export function filterLibraryItems(items: LibraryItem[], filters: LibraryFilters): LibraryItem[] {
   const query = filters.query?.trim().toLowerCase() ?? "";
   const kind = filters.kind ?? "all";
+  const catalog = filters.catalog ?? "all";
   const rating = filters.rating ?? "all";
   const mode = filters.mode ?? "all";
   const language = filters.language ?? "all";
@@ -151,6 +164,7 @@ export function filterLibraryItems(items: LibraryItem[], filters: LibraryFilters
 
   return items
     .filter((item) => kind === "all" || item.kind === kind)
+    .filter((item) => matchesCatalog(item, catalog))
     .filter((item) => rating === "all" || item.rating === rating)
     .filter((item) => mode === "all" || item.modes.includes(mode))
     .filter((item) => language === "all" || item.language === language)
@@ -158,6 +172,16 @@ export function filterLibraryItems(items: LibraryItem[], filters: LibraryFilters
     .filter((item) => adultUnlocked || item.rating !== "AdultLocked")
     .filter((item) => !query || searchableText(item).includes(query))
     .sort((a, b) => compareLibraryItems(a, b, sort));
+}
+
+export function publicCatalogStats(items: LibraryItem[]) {
+  const publicItems = items.filter((item) => matchesCatalog(item, "public"));
+  const reviewItems = items.filter((item) => matchesCatalog(item, "review"));
+  return {
+    publicCount: publicItems.length,
+    reviewCount: reviewItems.length,
+    recommended: [...publicItems].sort((a, b) => compareLibraryItems(a, b, "recommended")).slice(0, 6),
+  };
 }
 
 export function libraryFacetValues(items: LibraryItem[]) {
@@ -186,7 +210,21 @@ function compareLibraryItems(a: LibraryItem, b: LibraryItem, sort: LibrarySort):
   if (sort === "played") return (b.lastPlayedAt ?? b.updatedAt).localeCompare(a.lastPlayedAt ?? a.updatedAt);
   if (sort === "completion") return b.completion - a.completion || b.updatedAt.localeCompare(a.updatedAt);
   if (sort === "heat") return b.heat - a.heat || b.updatedAt.localeCompare(a.updatedAt);
+  if (sort === "recommended") return recommendationScore(b) - recommendationScore(a) || b.updatedAt.localeCompare(a.updatedAt);
   return b.updatedAt.localeCompare(a.updatedAt);
+}
+
+function matchesCatalog(item: LibraryItem, catalog: LibraryCatalog): boolean {
+  if (catalog === "all") return true;
+  if (catalog === "public") return item.visibility === "public" && (item.status === "published" || item.moderationState === "approved");
+  if (catalog === "review") return Boolean(item.moderationState && ["submitted", "needs_changes", "rejected", "appealed"].includes(item.moderationState));
+  return item.visibility !== "public";
+}
+
+function recommendationScore(item: LibraryItem): number {
+  const published = item.visibility === "public" ? 40 : 0;
+  const safe = item.rating === "SFW" ? 15 : item.rating === "M17" ? 5 : -30;
+  return published + safe + item.completion + item.heat;
 }
 
 function completionScore(status: string, playableUnits: number, supportUnits: number): number {

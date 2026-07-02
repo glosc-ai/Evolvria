@@ -1,4 +1,5 @@
 import type { MessageMode, MessageRole, NarrativeRequest } from "@/types/domain";
+import { buildSkillPromptBlock } from "@/services/ai/skill-catalog";
 
 export const NARRATIVE_PROMPT_CONTRACT_VERSION = "evolvria-narrative-v1.0.0";
 
@@ -12,6 +13,7 @@ export type NarrativeLayerName =
   | "memory"
   | "active_arc"
   | "fate_results"
+  | "active_skill"
   | "output_contract";
 
 export interface NarrativePromptLayer {
@@ -50,6 +52,7 @@ export function buildNarrativePromptBundle(request: NarrativeRequest): Narrative
     memoryLayer(request),
     activeArcLayer(request),
     fateResultsLayer(request),
+    activeSkillLayer(),
     outputContractLayer(request.mode),
   ].filter((layer): layer is NarrativePromptLayer => Boolean(layer));
 
@@ -124,7 +127,7 @@ function storylineWorldLayer(request: NarrativeRequest): NarrativePromptLayer {
 
 function characterVoiceLayer(request: NarrativeRequest): NarrativePromptLayer {
   const characters = request.characters.slice(0, maxCharacters);
-  return layer("character_voices", "Character Voice Blocks", 80, true, characters.length
+  return layer("character_voices", "角色语音块", 80, true, characters.length
     ? characters.map((character) => [
         `### ${character.name} (${character.id})`,
         character.subtitle ? `定位：${character.subtitle}` : undefined,
@@ -195,6 +198,12 @@ function fateResultsLayer(request: NarrativeRequest): NarrativePromptLayer | und
   ].join("\n")).join("\n\n"));
 }
 
+function activeSkillLayer(): NarrativePromptLayer {
+  return layer("active_skill", "Built-in AI Skill", 87, true, [
+    buildSkillPromptBlock("evolvria-narrative-turn"),
+  ]);
+}
+
 function outputContractLayer(mode: MessageMode): NarrativePromptLayer {
   return layer("output_contract", "Output Contract", 85, true, [
     `promptContractVersion: ${NARRATIVE_PROMPT_CONTRACT_VERSION}`,
@@ -214,11 +223,11 @@ function buildRecentMessages(request: NarrativeRequest): ChatPromptMessage[] {
 
 function mapRole(role: MessageRole): ChatPromptMessage["role"] {
   if (role === "user") return "user";
-  if (role === "system") return "system";
   return "assistant";
 }
 
 function formatHistoryMessage(role: MessageRole, content: string): string {
+  if (role === "system") return `Local System Note: ${content}`;
   if (role === "fate") return `Fate Result: ${content}`;
   if (role === "narrator") return `Narrator: ${content}`;
   if (role === "tool") return `Tool Result: ${content}`;

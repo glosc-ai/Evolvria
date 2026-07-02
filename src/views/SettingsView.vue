@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { reactive, ref } from "vue";
 import { useAppStore } from "@/stores/app";
+import { AI_MODEL_IDS, GLOSC_ONE_BASE_URL } from "@/domain/ai-routing";
 import type { AIProviderType } from "@/types/domain";
 
 const store = useAppStore();
@@ -46,6 +47,14 @@ async function clearApiKey() {
     feedback.value = error instanceof Error ? error.message : String(error);
   }
 }
+
+function applyGloscOneDefaults() {
+  provider.type = "openai-compatible";
+  provider.baseUrl = GLOSC_ONE_BASE_URL;
+  provider.model = AI_MODEL_IDS.chat;
+  provider.temperature = 0.75;
+  provider.maxTokens = 900;
+}
 </script>
 
 <template>
@@ -67,6 +76,7 @@ async function clearApiKey() {
             <option value="local-http">local-http</option>
           </select>
         </label>
+        <button class="ghost-button" type="button" @click="applyGloscOneDefaults">Use Glosc One Defaults</button>
         <label class="field-box">
           <span>Base URL</span>
           <input v-model="provider.baseUrl" class="input" />
@@ -116,6 +126,17 @@ async function clearApiKey() {
       </form>
 
       <aside class="panel field-grid">
+        <h3>AI SDK Routes</h3>
+        <div class="field-box">
+          <strong>Glosc One</strong>
+          <span class="muted">{{ GLOSC_ONE_BASE_URL }}</span>
+          <span class="muted">Chat {{ AI_MODEL_IDS.chat }}</span>
+          <span class="muted">Narrative {{ AI_MODEL_IDS.narrative }}</span>
+          <span class="muted">Content {{ AI_MODEL_IDS.content }}</span>
+          <span class="muted">Image {{ AI_MODEL_IDS.image }}</span>
+          <span class="muted">Video {{ AI_MODEL_IDS.video }}</span>
+          <span class="muted">语音 {{ AI_MODEL_IDS.voice }}</span>
+        </div>
         <h3>Content Safety</h3>
         <label class="field-box">
           <span>AdultLocked content</span>

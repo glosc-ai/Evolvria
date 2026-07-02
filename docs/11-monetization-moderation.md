@@ -41,7 +41,7 @@ MVP 没有真实支付：
 云端阶段可实现：
 
 - 余额：Spark、Core Credit。
-- 消费：chat、summary、scene、image、voice。
+- 消费：chat、summary、scene、image、voice、video。
 - 赠送：注册、活动、补偿。
 - 退款：失败请求、重复扣费。
 - 冻结：风控或争议。
@@ -76,7 +76,7 @@ Cloud 阶段 Creator Share 可按以下数据计算：
 | `paid` | 已支付 |
 | `reversed` | 冲正 |
 
-MVP 不展示“可赚钱”承诺，只在文档和 schema 预留。
+MVP 不展示“可赚钱”承诺，只做 Account Preview 内的本地 payout 演练：可手动添加 available earning、提交 payout request、模拟 approve/pay/reject/block，并把收益状态转为 pending/paid/available/withheld。该功能不处理真实付款、税务、KYC 或平台承诺，只验证账本和风控 UX。
 
 ## 内容分级
 
@@ -146,6 +146,10 @@ Cloud：
 
 MVP Cloud Preview 已落地本地申诉演练：`ModerationCase.appeal` 记录理由、`open/upheld/denied` 状态、处理时间和备注；Account 页面可对被处置 case 发起申诉，并模拟 upheld/denied 决策。该功能不代表真实云端人审，只用于验证数据模型和 UX。
 
+本地 Creator Profile Preview 已提供创作者主页举报入口：`/creators/:creatorId` 会展示该创作者的故事线、草稿、互动统计、审核案例和收益预览，并可创建 `targetType: "creator"` 的本地 moderation case。Cloud 阶段替换为公开 creator profile 和真实举报队列。
+
+Storyline Detail 已提供本地 `targetType: "storyline"` 举报入口。批准发布后的内容会进入 Library 的 Public Catalog Preview；举报后如果审核员在 Account Moderation Queue 中选择 `Request Changes` 或 `Reject`，目标 Storyline 会回到 `private` 并从公开目录与推荐条移除。这个流程只演练审核和下架 UX，不代表真实平台已经公开分发。
+
 ## 反作弊与收益风控
 
 Cloud 阶段需要：
@@ -157,7 +161,7 @@ Cloud 阶段需要：
 - 多账号关联风险。
 - 创作者 payout KYC/税务预留。
 
-MVP 不实现，但数据模型要能记录 `withheld` 和 `reversed`。
+MVP 不接入真实风控，但 Account Preview 已能把 payout request 标记为 `blocked`，并将关联收益转为 `withheld`；数据模型也能记录 `reversed`。
 
 ## 关键决策
 
@@ -171,4 +175,4 @@ MVP 不实现，但数据模型要能记录 `withheld` 和 `reversed`。
 - UI 中没有 Mana/Arcane 等竞品命名。
 - 每次 AI 请求都能写入成本估算或 mock usage。
 - Storyline、Character、Media 都有 moderation metadata。
-- 云端阶段商业化前，账本、退款、冻结、申诉都有数据结构支撑；MVP 已覆盖本地账本调整和 moderation appeal 预览。
+- 云端阶段商业化前，账本、退款、冻结、申诉和 payout request 都有数据结构支撑；MVP 已覆盖本地账本调整、moderation appeal、creator payout 预览、Storyline 公开目录举报和下架演练。

@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
-import { ChevronLeft, ChevronRight, Edit3, History, MessageSquare, Pause, Play, Save, SkipForward, Volume2, X } from "lucide-vue-next";
+import { ChevronLeft, ChevronRight, Edit3, Film, History, Image, MessageSquare, Pause, Play, Save, SkipForward, Volume2, X } from "lucide-vue-next";
 import { readTauriMediaDataUrl } from "@/services/media";
 import { useAppStore } from "@/stores/app";
-import type { MediaAsset, MediaGenerationJob, SceneChoice, SceneHint, SceneSprite, VoiceCue } from "@/types/domain";
+import type { MediaAsset, MediaGenerationJob, MediaGenerationKind, MediaGenerationStatus, SceneChoice, SceneHint, SceneSprite, VoiceCue } from "@/types/domain";
 
 const route = useRoute();
 const store = useAppStore();
@@ -27,7 +27,7 @@ const autoplay = ref(false);
 const showHistory = ref(false);
 const showSceneEditor = ref(false);
 const sceneFeedback = ref("");
-const displayedText = computed(() => (current.value?.content ?? "Scene Mode 会读取聊天消息和 SceneHint；继续聊天后这里会同步更新。").slice(0, visibleCharacters.value));
+const displayedText = computed(() => (current.value?.content ?? "场景模式会读取聊天消息和 SceneHint；继续聊天后这里会同步更新。").slice(0, visibleCharacters.value));
 const isTextComplete = computed(() => visibleCharacters.value >= (current.value?.content ?? "").length);
 const recentHistory = computed(() => messages.value.slice(Math.max(0, index.value - 8), index.value + 1));
 const loadingAssetIds = new Set<string>();
@@ -112,17 +112,17 @@ async function saveSceneHint() {
     camera: sceneEditForm.value.camera,
     choices: sceneEditForm.value.choices,
   });
-  sceneFeedback.value = "Scene hint saved.";
+  sceneFeedback.value = "场景提示已保存。";
   showSceneEditor.value = false;
 }
 
 async function chooseSceneChoice(choice: SceneChoice) {
   if (!chat.value || chat.value.status !== "active" || store.generating) return;
   autoplay.value = false;
-  sceneFeedback.value = `Choice sent: ${choice.label}`;
+  sceneFeedback.value = `已发送选择：${choice.label}`;
   const result = await store.sendMessage(chat.value.id, choice.message, "act");
   if (!result.ok) {
-    sceneFeedback.value = `Choice blocked: ${result.reason ?? "unknown"}`;
+    sceneFeedback.value = `选择被拦截：${result.reason ?? "未知原因"}`;
     return;
   }
   await nextTick();
@@ -138,11 +138,11 @@ async function queueVoiceGeneration() {
     chatId: chat.value.id,
     messageId: current.value.id,
     speakerId: cue?.speakerId,
-    prompt: `Generate a safe narrated voice placeholder for ${storyline.value.title}.`,
+    prompt: `为《${storyline.value.title}》生成安全的中文旁白语音占位。`,
     voiceText: cue?.text || current.value.content.slice(0, 180),
-    style: cue?.voiceModel || "scene narration",
+    style: cue?.voiceModel || "中文场景旁白",
   });
-  sceneFeedback.value = `Queued voice generation ${jobId}.`;
+  sceneFeedback.value = `已加入语音生成队列：${jobId}。`;
 }
 
 async function queueImageGeneration() {
@@ -159,12 +159,29 @@ async function queueImageGeneration() {
     ].filter(Boolean).join("\n"),
     style: "original cinematic visual-novel background, no third-party characters or logos",
   });
-  sceneFeedback.value = `Queued image generation ${jobId}.`;
+  sceneFeedback.value = `已加入图片生成队列：${jobId}。`;
+}
+
+async function queueVideoGeneration() {
+  if (!chat.value || !storyline.value || !current.value) return;
+  const jobId = await store.queueMediaGenerationJob({
+    kind: "video",
+    storylineId: storyline.value.id,
+    chatId: chat.value.id,
+    messageId: current.value.id,
+    prompt: [
+      `Short scene video for ${storyline.value.title}.`,
+      sceneHint.value?.mood ? `Mood: ${sceneHint.value.mood}.` : undefined,
+      current.value.content.slice(0, 220),
+    ].filter(Boolean).join("\n"),
+    style: "5 second original visual-novel shot, subtle camera movement, no third-party characters or logos",
+  });
+  sceneFeedback.value = `已加入视频生成队列：${jobId}。`;
 }
 
 async function runGenerationJob(job: MediaGenerationJob) {
-  const assetId = await store.runMockMediaGenerationJob(job.id);
-  sceneFeedback.value = assetId ? `Mock ${job.kind} generation completed.` : `Mock ${job.kind} generation could not run.`;
+  const assetId = await store.runMediaGenerationJob(job.id);
+  sceneFeedback.value = assetId ? `${generationKindLabel(job.kind)}生成完成。` : `${generationKindLabel(job.kind)}生成未能运行。`;
   if (assetId) {
     const asset = store.envelope.entities.mediaAssets[assetId];
     if (asset) await ensureAssetUrl(asset);
@@ -199,7 +216,7 @@ function assetUrl(asset: MediaAsset | undefined): string | undefined {
 
 function assetFallbackLabel(asset: MediaAsset | undefined): string | undefined {
   if (!asset) return undefined;
-  if (asset.relativePath.startsWith("browser://")) return "Browser-only media is not renderable in Scene Mode until imported by the Tauri desktop importer.";
+  if (asset.relativePath.startsWith("browser://")) return "浏览器临时素材无法在场景模式中渲染，请先用 Tauri 桌面导入器重新导入。";
   return assetErrors.value[asset.id];
 }
 
@@ -217,13 +234,13 @@ async function ensureSceneAssets() {
 async function ensureAssetUrl(asset: MediaAsset) {
   if (assetUrls.value[asset.id] || assetErrors.value[asset.id] || loadingAssetIds.has(asset.id)) return;
   if (!asset.relativePath.trim()) {
-    assetErrors.value = { ...assetErrors.value, [asset.id]: "No physical media file is attached to this scene asset yet." };
+    assetErrors.value = { ...assetErrors.value, [asset.id]: "这个场景素材还没有绑定实际媒体文件。" };
     return;
   }
   if (asset.relativePath.startsWith("browser://")) {
     assetErrors.value = {
       ...assetErrors.value,
-      [asset.id]: "Browser-only media is not renderable in Scene Mode until imported by the Tauri desktop importer.",
+      [asset.id]: "浏览器临时素材无法在场景模式中渲染，请先用 Tauri 桌面导入器重新导入。",
     };
     return;
   }
@@ -233,7 +250,7 @@ async function ensureAssetUrl(asset: MediaAsset) {
     if (dataUrl) {
       assetUrls.value = { ...assetUrls.value, [asset.id]: dataUrl };
     } else {
-      assetErrors.value = { ...assetErrors.value, [asset.id]: "Media preview requires the Tauri desktop runtime." };
+      assetErrors.value = { ...assetErrors.value, [asset.id]: "媒体预览需要 Tauri 桌面运行时。" };
     }
   } catch (error) {
     assetErrors.value = {
@@ -292,6 +309,26 @@ onBeforeUnmount(() => {
   if (revealTimer) window.clearInterval(revealTimer);
   if (autoplayTimer) window.clearTimeout(autoplayTimer);
 });
+
+function generationKindLabel(kind: MediaGenerationKind): string {
+  if (kind === "voice") return "语音";
+  if (kind === "image") return "图片";
+  return "视频";
+}
+
+function generationStatusLabel(status: MediaGenerationStatus): string {
+  if (status === "queued") return "排队中";
+  if (status === "running") return "生成中";
+  if (status === "completed") return "已完成";
+  if (status === "blocked") return "已拦截";
+  return "失败";
+}
+
+function voiceCueStatusLabel(status: VoiceCue["status"]): string {
+  if (status === "generated") return "已生成";
+  if (status === "failed") return "失败";
+  return "已规划";
+}
 </script>
 
 <template>
@@ -308,38 +345,38 @@ onBeforeUnmount(() => {
         <div class="scene-topbar">
           <RouterLink class="ghost-button" :to="`/chat/${chat.id}`">
             <MessageSquare :size="16" />
-            Back to Chat
+            返回聊天
           </RouterLink>
           <span class="status-pill">{{ storyline.title }}</span>
         </div>
 
-        <div class="scene-settings" aria-label="Scene settings">
+        <div class="scene-settings" aria-label="场景设置">
           <button class="ghost-button" @click="toggleAutoplay">
             <component :is="autoplay ? Pause : Play" :size="16" />
-            {{ autoplay ? "Pause Auto" : "Auto Play" }}
+            {{ autoplay ? "暂停自动播放" : "自动播放" }}
           </button>
           <label class="scene-speed">
-            <span>Text Speed</span>
+            <span>文字速度</span>
             <input v-model.number="textSpeed" type="range" min="12" max="72" step="6" />
           </label>
           <button class="ghost-button" @click="toggleHistory">
             <History :size="16" />
-            History
+            历史
           </button>
           <button class="ghost-button" @click="openSceneEditor">
             <Edit3 :size="16" />
-            Edit Scene
+            编辑场景
           </button>
           <button class="ghost-button" :disabled="index >= messages.length - 1" @click="jumpLatest">
             <SkipForward :size="16" />
-            Latest
+            最新
           </button>
         </div>
 
-        <aside v-if="showHistory" class="scene-history" aria-label="Scene history">
+        <aside v-if="showHistory" class="scene-history" aria-label="场景历史">
           <div class="message-meta">
-            <span>History</span>
-            <span>{{ recentHistory.length }} lines</span>
+            <span>历史</span>
+            <span>{{ recentHistory.length }} 行</span>
           </div>
           <button
             v-for="(message, historyIndex) in recentHistory"
@@ -352,37 +389,37 @@ onBeforeUnmount(() => {
           </button>
         </aside>
 
-        <aside v-if="showSceneEditor" class="scene-editor" aria-label="Scene hint editor">
+        <aside v-if="showSceneEditor" class="scene-editor" aria-label="场景提示编辑器">
           <div class="message-meta">
-            <span>Scene Hint</span>
-            <button class="ghost-button icon-button" type="button" aria-label="Close scene editor" @click="closeSceneEditor">
+            <span>场景提示</span>
+            <button class="ghost-button icon-button" type="button" aria-label="关闭场景编辑器" @click="closeSceneEditor">
               <X :size="16" />
             </button>
           </div>
           <label class="field-box">
-            <span>Scene mood</span>
-            <input v-model="sceneEditForm.mood" class="input" aria-label="Scene mood" placeholder="opening, tense, warm..." />
+            <span>场景情绪</span>
+            <input v-model="sceneEditForm.mood" class="input" aria-label="场景情绪" placeholder="开场、紧张、温暖..." />
           </label>
           <label class="field-box">
-            <span>Scene camera</span>
-            <select v-model="sceneEditForm.camera" class="select" aria-label="Scene camera">
+            <span>镜头</span>
+            <select v-model="sceneEditForm.camera" class="select" aria-label="场景镜头">
               <option v-for="camera in cameraOptions" :key="camera" :value="camera">{{ camera }}</option>
             </select>
           </label>
-          <div class="scene-choice-editor" aria-label="Scene choice editor">
+          <div class="scene-choice-editor" aria-label="场景选项编辑器">
             <label v-for="(_, choiceIndex) in sceneEditForm.choices" :key="choiceIndex" class="field-box">
-              <span>Choice {{ choiceIndex + 1 }}</span>
-              <input v-model="sceneEditForm.choices[choiceIndex].label" class="input" :aria-label="`Choice ${choiceIndex + 1} label`" placeholder="Short label" />
-              <textarea v-model="sceneEditForm.choices[choiceIndex].message" class="textarea compact" :aria-label="`Choice ${choiceIndex + 1} message`" placeholder="Message sent to Chat when selected" />
+              <span>选项 {{ choiceIndex + 1 }}</span>
+              <input v-model="sceneEditForm.choices[choiceIndex].label" class="input" :aria-label="`选项 ${choiceIndex + 1} 标签`" placeholder="短标签" />
+              <textarea v-model="sceneEditForm.choices[choiceIndex].message" class="textarea compact" :aria-label="`选项 ${choiceIndex + 1} 消息`" placeholder="选择后发送到聊天的内容" />
             </label>
           </div>
           <button class="primary-button" type="button" @click="saveSceneHint">
             <Save :size="16" />
-            Save Scene Hint
+            保存场景提示
           </button>
         </aside>
 
-        <div class="sprite-row" aria-label="Active characters">
+        <div class="sprite-row" aria-label="当前角色">
           <div v-for="sprite in sprites" :key="sprite.characterId" class="sprite" :class="sprite.position">
             <img
               v-if="spriteUrl(sprite)"
@@ -403,7 +440,7 @@ onBeforeUnmount(() => {
           <button class="subtitle-text" type="button" @click="revealAll">
             {{ displayedText }}
           </button>
-          <div v-if="choices.length" class="scene-choices" aria-label="Scene choices">
+          <div v-if="choices.length" class="scene-choices" aria-label="场景选项">
             <button
               v-for="choice in choices"
               :key="choice.id"
@@ -415,17 +452,17 @@ onBeforeUnmount(() => {
               {{ choice.label }}
             </button>
           </div>
-          <div v-if="voiceCues.length" class="scene-voice-cues" aria-label="Voice cues">
+          <div v-if="voiceCues.length" class="scene-voice-cues" aria-label="语音提示">
             <div v-for="(cue, cueIndex) in voiceCues" :key="`${cue.text}-${cueIndex}`" class="voice-cue">
               <Volume2 :size="15" />
               <span>
-                {{ cue.status }} · {{ cue.voiceModel || "voice planned" }}
+                {{ voiceCueStatusLabel(cue.status) }} · {{ cue.voiceModel || "计划中文语音" }}
                 <template v-if="voiceReferenceAsset(cue)">
-                  · reference attached
-                  · license {{ voiceReferenceAsset(cue)?.license.kind }}
+                  · 已附加参考音频
+                  · 授权 {{ voiceReferenceAsset(cue)?.license.kind }}
                   · {{ voiceReferenceAsset(cue)?.source.label }}
                   <template v-if="!voiceCueUrl(cue) && assetFallbackLabel(voiceReferenceAsset(cue))">
-                    · preview unavailable
+                    · 暂无预览
                   </template>
                 </template>
               </span>
@@ -435,31 +472,35 @@ onBeforeUnmount(() => {
                 controls
                 preload="metadata"
                 :src="voiceCueUrl(cue)"
-                :aria-label="`Voice preview ${cueIndex + 1}`"
+                :aria-label="`语音预览 ${cueIndex + 1}`"
               />
             </div>
           </div>
-          <div class="scene-generation-queue" aria-label="Generation queue">
+          <div class="scene-generation-queue" aria-label="生成队列">
             <div class="cluster">
               <button class="ghost-button" type="button" :disabled="chat.status !== 'active'" @click="queueVoiceGeneration">
                 <Volume2 :size="15" />
-                Queue Voice
+                排队生成语音
               </button>
               <button class="ghost-button" type="button" :disabled="chat.status !== 'active'" @click="queueImageGeneration">
-                <Save :size="15" />
-                Queue Image
+                <Image :size="15" />
+                排队生成图片
+              </button>
+              <button class="ghost-button" type="button" :disabled="chat.status !== 'active'" @click="queueVideoGeneration">
+                <Film :size="15" />
+                排队生成视频
               </button>
             </div>
             <div v-if="sceneJobs.length" class="generation-job-list">
               <div v-for="job in sceneJobs.slice(0, 4)" :key="job.id" class="generation-job">
-                <span>{{ job.kind }} · {{ job.status }} · {{ job.model }}</span>
+                <span>{{ generationKindLabel(job.kind) }} · {{ generationStatusLabel(job.status) }} · {{ job.model }}</span>
                 <button
                   v-if="job.status === 'queued' || job.status === 'failed'"
                   class="ghost-button"
                   type="button"
                   @click="runGenerationJob(job)"
                 >
-                  Run Mock
+                  运行
                 </button>
               </div>
             </div>
@@ -469,10 +510,10 @@ onBeforeUnmount(() => {
           <div class="cluster">
             <button class="ghost-button" :disabled="index <= 0" @click="previous">
               <ChevronLeft :size="16" />
-              Previous
+              上一条
             </button>
             <button class="primary-button" :disabled="index >= messages.length - 1" @click="next">
-              Next
+              下一条
               <ChevronRight :size="16" />
             </button>
           </div>
@@ -481,6 +522,6 @@ onBeforeUnmount(() => {
     </div>
   </section>
   <section v-else class="page">
-    <div class="panel">Scene not found.</div>
+    <div class="panel">未找到场景。</div>
   </section>
 </template>

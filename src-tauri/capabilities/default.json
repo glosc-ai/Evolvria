@@ -3,10 +3,5 @@
   "identifier": "default",
   "description": "Evolvria main window permissions",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "dialog:default",
-    "fs:default",
-    "opener:default"
-  ]
+  "permissions": ["core:default", "dialog:default", "fs:default", "opener:default"]
 }

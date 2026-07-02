@@ -1,4 +1,0 @@
-interface:
-  display_name: "编辑工作区文件"
-  short_description: "校验并准备 Evolvria 工作区 Markdown 或 JSON 编辑"
-  default_prompt: "Use $edit-workspace-file to validate and prepare a safe Evolvria workspace file edit."

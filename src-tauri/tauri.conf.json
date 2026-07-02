@@ -1,34 +1,33 @@
 {
-    "$schema": "https://schema.tauri.app/config/2",
-    "productName": "Evolvria",
-    "version": "0.1.0",
-    "identifier": "com.gloscai.evolvria",
-    "build": {
-        "beforeDevCommand": "yarn dev:tauri",
-        "beforeBuildCommand": "yarn build",
-        "devUrl": "http://127.0.0.1:5174",
-        "frontendDist": "../dist"
-    },
-    "app": {
-        "windows": [
-            {
-                "label": "main",
-                "create": false,
-                "title": "Evolvria",
-                "width": 1440,
-                "height": 900,
-                "minWidth": 390,
-                "minHeight": 640,
-                "resizable": true
-            }
-        ],
-        "security": {
-            "csp": null
-        }
-    },
-    "bundle": {
-        "active": true,
-        "targets": "all",
-        "icon": ["icons/icon.png"]
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Evolvria",
+  "version": "0.1.0",
+  "identifier": "ai.evolvria.desktop",
+  "build": {
+    "beforeDevCommand": "yarn dev:tauri",
+    "beforeBuildCommand": "yarn build",
+    "devUrl": "http://127.0.0.1:5174",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Evolvria",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 390,
+        "minHeight": 640,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' http://localhost:* http://127.0.0.1:* https:; img-src 'self' asset: data: blob:; style-src 'self' 'unsafe-inline'"
     }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }
 }

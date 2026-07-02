@@ -1,4 +1,0 @@
-interface:
-  display_name: "备份存档"
-  short_description: "在风险写入前创建可恢复的 AI checkpoint"
-  default_prompt: "Use $backup-save before risky Evolvria workspace, payload, or character edits."

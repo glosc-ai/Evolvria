@@ -1,223 +1,143 @@
 <script setup lang="ts">
-import { Download, FolderOpen, RefreshCcw, Trash2 } from "@lucide/vue";
-import { onMounted, ref } from "vue";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldLabel } from "@/components/ui/field";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableEmpty,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import { Textarea } from "@/components/ui/textarea";
-import { importWorldFromText, openSaveDirectory, saveWorld } from "@/services/save";
+import { computed, ref } from "vue";
+import { RouterLink } from "vue-router";
+import { Download, RotateCcw, Save, ShieldCheck, Upload } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
-import { usePlatformStore } from "@/stores/platform";
-import { useWorldStore } from "@/stores/world";
-import type { SaveEntry } from "@/services/save";
 
-const app = useAppStore();
-const platform = usePlatformStore();
-const world = useWorldStore();
-const importText = ref("");
-const deleteDialogOpen = ref(false);
-const entryToDelete = ref<SaveEntry | null>(null);
-const deletingEntry = ref(false);
+const store = useAppStore();
+const importError = ref("");
+const packageIssues = computed(() => store.lastPackageReport?.issues ?? []);
+const packageErrors = computed(() => packageIssues.value.filter((issue) => issue.severity === "error").length);
+const packageWarnings = computed(() => packageIssues.value.filter((issue) => issue.severity === "warning").length);
 
-onMounted(() => world.refreshSaveEntries());
-
-function kindLabel(kind: string): string {
-  const labels: Record<string, string> = {
-    active: "当前",
-    backup: "备份",
-    ai_checkpoint: "AI 检查点",
-  };
-  return labels[kind] ?? kind;
-}
-
-function compactPath(path: string): string {
-  const normalized = path.replace(/\\/g, "/");
-  if (normalized.startsWith("localStorage://")) return normalized.replace("localStorage://", "");
-  const parts = normalized.split("/").filter(Boolean);
-  const fileName = parts.at(-1) ?? normalized;
-  const parent = parts.at(-2);
-  if (parent === "backups" || parent === "saves") return `${parent}/${fileName}`;
-  return fileName;
-}
-
-async function exportCurrent() {
+async function importWorkspace(event: Event) {
+  const input = event.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  importError.value = "";
   try {
-    const result = await world.exportCurrentWorld();
-    app.setNotice(result.cancelled ? "已取消导出。" : `已导出：${result.path}`);
+    await store.importWorkspaceFile(file);
   } catch (error) {
-    app.setError(error instanceof Error ? error.message : "导出失败。");
+    importError.value = error instanceof Error ? error.message : String(error);
   }
-}
-
-async function openDirectory() {
-  try {
-    await openSaveDirectory();
-  } catch (error) {
-    app.setError(error instanceof Error ? error.message : "打开存档目录失败。");
-  }
-}
-
-function requestDelete(entry: SaveEntry): void {
-  entryToDelete.value = entry;
-  deleteDialogOpen.value = true;
-}
-
-function updateDeleteDialogOpen(open: boolean): void {
-  deleteDialogOpen.value = open;
-  if (open || deletingEntry.value) return;
-  window.setTimeout(() => {
-    if (!deleteDialogOpen.value && !deletingEntry.value) entryToDelete.value = null;
-  }, 0);
-}
-
-async function confirmDelete() {
-  const entry = entryToDelete.value;
-  if (!entry || deletingEntry.value) return;
-  deletingEntry.value = true;
-  try {
-    await world.deleteEntry(entry);
-    entryToDelete.value = null;
-    deleteDialogOpen.value = false;
-    app.setNotice("存档已删除。");
-  } catch (error) {
-    deleteDialogOpen.value = true;
-    app.setError(error instanceof Error ? error.message : "删除失败。");
-  } finally {
-    deletingEntry.value = false;
-  }
-}
-
-async function importFromText() {
-  try {
-    const payload = await importWorldFromText(importText.value);
-    world.payload = payload;
-    await saveWorld(payload);
-    await world.refreshSaveEntries();
-    app.setNotice("存档已导入。");
-  } catch (error) {
-    app.setError(error instanceof Error ? error.message : "导入失败。");
-  }
+  input.value = "";
 }
 </script>
 
 <template>
-  <section>
-    <div class="flex flex-wrap items-center justify-between gap-3">
-      <h1 class="font-serif text-2xl font-semibold">存档列表</h1>
-      <div class="flex gap-2">
-        <Button variant="outline" size="sm" type="button" @click="world.refreshSaveEntries">
-          <RefreshCcw data-icon="inline-start" />
-          刷新
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          type="button"
-          :disabled="!platform.capabilities.can_reveal_directories"
-          :title="platform.capabilities.can_reveal_directories ? '打开存档所在目录' : '当前运行环境不支持打开目录'"
-          @click="openDirectory"
-        >
-          <FolderOpen data-icon="inline-start" />
-          打开目录
-        </Button>
-        <Button :disabled="!world.hasWorld" type="button" @click="exportCurrent">
-          <Download data-icon="inline-start" />
-          导出
-        </Button>
+  <section class="page">
+    <div class="section-title">
+      <div>
+        <p class="eyebrow">Saves</p>
+        <h2>Workspace Backups</h2>
       </div>
     </div>
-    <Card class="mt-5 overflow-hidden">
-      <CardContent class="p-0">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>世界</TableHead>
-            <TableHead>类型</TableHead>
-            <TableHead>时间</TableHead>
-            <TableHead>文件</TableHead>
-            <TableHead class="text-right">事件</TableHead>
-            <TableHead class="text-right">状态</TableHead>
-            <TableHead class="text-right">操作</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          <TableEmpty v-if="world.saveEntries.length === 0" :colspan="7">
-            <Empty>
-              <EmptyHeader>
-                <EmptyTitle>没有存档</EmptyTitle>
-                <EmptyDescription>创建世界或导入 JSON 后会显示在这里。</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          </TableEmpty>
-          <TableRow v-for="entry in world.saveEntries" :key="entry.path">
-            <TableCell class="min-w-40 font-medium">{{ entry.world_name }}</TableCell>
-            <TableCell class="text-muted-foreground">{{ kindLabel(entry.kind) }}</TableCell>
-            <TableCell class="text-muted-foreground" :title="entry.created_at">{{ entry.created_at }}</TableCell>
-            <TableCell class="max-w-64 truncate font-mono text-xs text-muted-foreground" :title="entry.path">{{ compactPath(entry.path) }}</TableCell>
-            <TableCell class="text-right text-muted-foreground">{{ entry.event_count }}</TableCell>
-            <TableCell class="text-right">
-              <Badge :variant="entry.schema_valid ? 'secondary' : 'destructive'">{{ entry.schema_valid ? "schema OK" : "schema 异常" }}</Badge>
-            </TableCell>
-            <TableCell class="text-right">
-            <Button variant="destructive" size="sm" type="button" title="删除存档" @click="requestDelete(entry)">
-              <Trash2 data-icon="inline-start" />
-            </Button>
-            </TableCell>
-          </TableRow>
-        </TableBody>
-      </Table>
-      </CardContent>
-    </Card>
-    <Card class="mt-5">
-      <CardHeader>
-        <CardTitle>从 JSON 文本导入</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Field>
-          <FieldLabel for="import-save-json" class="sr-only">SavePayload JSON</FieldLabel>
-          <Textarea id="import-save-json" v-model="importText" class="min-h-40" placeholder="粘贴导出的 SavePayload JSON" />
-        </Field>
-      </CardContent>
-      <CardFooter>
-        <Button type="button" @click="importFromText">导入</Button>
-      </CardFooter>
-    </Card>
-    <AlertDialog :open="deleteDialogOpen" @update:open="updateDeleteDialogOpen">
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>删除存档</AlertDialogTitle>
-          <AlertDialogDescription>
-            确定删除「{{ entryToDelete?.world_name }}」的{{ entryToDelete ? kindLabel(entryToDelete.kind) : "" }}存档吗？此操作无法撤销。
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>取消</AlertDialogCancel>
-          <AlertDialogAction :disabled="deletingEntry" @click.prevent="confirmDelete">
-            {{ deletingEntry ? "删除中..." : "确认删除" }}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+
+    <div class="page-grid">
+      <div class="panel field-grid">
+        <div class="field-box">
+          <strong>{{ store.envelope.workspace.name }}</strong>
+          <span class="muted">Updated {{ new Date(store.envelope.workspace.updatedAt).toLocaleString() }}</span>
+          <span class="muted">{{ store.chats.length }} chats / {{ store.storylines.length }} storylines / {{ store.characters.length }} characters</span>
+        </div>
+        <div class="cluster">
+          <button class="secondary-button" @click="store.persist('manual_save')">
+            <Save :size="16" />
+            Save now
+          </button>
+          <button class="secondary-button" @click="store.backup('manual')">
+            <RotateCcw :size="16" />
+            Backup
+          </button>
+          <button class="primary-button" @click="store.exportCurrentWorkspace()">
+            <Download :size="16" />
+            Export
+          </button>
+          <button class="secondary-button" @click="store.verifyCurrentWorkspacePackage()">
+            <ShieldCheck :size="16" />
+            Verify Package
+          </button>
+          <label class="ghost-button" style="cursor: pointer">
+            <Upload :size="16" />
+            Import
+            <input type="file" accept="application/json,.json,.zip,.evolvria.zip" hidden @change="importWorkspace" />
+          </label>
+        </div>
+        <p v-if="store.lastExportPath" class="muted">Last export: {{ store.lastExportPath }}</p>
+        <p v-if="store.lastBackupMessage" class="muted">{{ store.lastBackupMessage }}</p>
+        <p v-if="store.lastImportMessage" class="muted">{{ store.lastImportMessage }}</p>
+        <p v-if="importError" class="error-text">
+          {{ importError === "zip_import_requires_tauri" ? "Zip import is available in the Tauri desktop app. Browser fallback imports JSON." : importError }}
+        </p>
+        <div class="field-box">
+          <strong>Recoverable backups</strong>
+          <span class="muted">Backups are stored in the Tauri workspace. Browser preview keeps fallback copies in localStorage.</span>
+          <div v-if="store.backupMetas.length" class="field-grid">
+            <div v-for="backup in store.backupMetas.slice(0, 8)" :key="backup.id" class="field-box">
+              <strong>{{ backup.reason }} · {{ backup.id }}</strong>
+              <span class="muted">
+                {{ new Date(backup.createdAt).toLocaleString() }}
+                <template v-if="backup.sizeBytes"> · {{ Math.round(backup.sizeBytes / 1024) }} KB</template>
+              </span>
+              <div class="cluster">
+                <button class="secondary-button" type="button" @click="store.restoreWorkspaceFromBackup(backup.id)">
+                  <RotateCcw :size="16" />
+                  Restore Backup
+                </button>
+              </div>
+            </div>
+          </div>
+          <span v-else class="muted">No backups yet. Create one before destructive edits or imports.</span>
+        </div>
+        <div v-if="store.lastPackageReport" class="field-box">
+          <strong>Package check {{ store.lastPackageReport.ok ? "passed" : "failed" }}</strong>
+          <span class="muted">
+            {{ store.lastPackageReport.schemaVersion }} · {{ store.lastPackageReport.format }} ·
+            {{ store.lastPackageReport.assetRefs.referenced.length }} referenced assets /
+            {{ store.lastPackageReport.assetRefs.missing.length }} missing
+          </span>
+          <span class="muted">
+            {{ packageErrors }} errors · {{ packageWarnings }} warnings ·
+            {{ store.lastPackageReport.entityCounts.storylines ?? 0 }} storylines ·
+            {{ store.lastPackageReport.entityCounts.messages ?? 0 }} messages
+          </span>
+          <div v-if="packageIssues.length" class="field-grid">
+            <div v-for="issue in packageIssues.slice(0, 6)" :key="`${issue.field}-${issue.message}`" class="field-box">
+              <strong>{{ issue.severity }}: {{ issue.field }}</strong>
+              <span class="muted">{{ issue.message }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <aside class="panel field-grid">
+        <div>
+          <h3>Archived Chats</h3>
+          <p class="muted">Archived chats are recoverable and excluded from Continue until restored.</p>
+        </div>
+        <div v-if="store.archivedChats.length" class="field-grid">
+          <div v-for="chat in store.archivedChats" :key="chat.id" class="field-box">
+            <strong>{{ chat.title }}</strong>
+            <span class="muted">{{ chat.messageIds.length }} messages · archived {{ new Date(chat.updatedAt).toLocaleString() }}</span>
+            <div class="cluster">
+              <button class="secondary-button" @click="store.restoreChat(chat.id)">
+                <RotateCcw :size="16" />
+                Restore
+              </button>
+              <RouterLink class="ghost-button" :to="`/chat/${chat.id}`">Open</RouterLink>
+            </div>
+          </div>
+        </div>
+        <div v-else class="field-box">
+          <strong>No archived chats</strong>
+          <span class="muted">Archive from a Chat session when you want to remove it from active Continue without deleting it.</span>
+        </div>
+        <div class="field-box">
+          <strong>Reset seed</strong>
+          <span class="muted">仅用于开发验收。会用原创示例内容覆盖当前浏览器 fallback workspace；Tauri 端也会写入新 seed。</span>
+          <button class="danger-button" @click="store.resetToSeed()">Reset to seed</button>
+        </div>
+      </aside>
+    </div>
   </section>
 </template>

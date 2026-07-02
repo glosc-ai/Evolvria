@@ -1,31 +1,29 @@
-import { createRouter, createWebHashHistory } from "vue-router";
-import MainMenuView from "@/views/MainMenuView.vue";
-import OnboardingView from "@/views/OnboardingView.vue";
-import NewWorldView from "@/views/NewWorldView.vue";
-import ExplorationView from "@/views/ExplorationView.vue";
-import MapView from "@/views/MapView.vue";
-import CharactersView from "@/views/CharactersView.vue";
-import LocationsView from "@/views/LocationsView.vue";
-import TimelineView from "@/views/TimelineView.vue";
-import ThreadsView from "@/views/ThreadsView.vue";
-import WorldLoreView from "@/views/WorldLoreView.vue";
+import { createRouter, createWebHistory } from "vue-router";
+import HomeView from "@/views/HomeView.vue";
+import LibraryView from "@/views/LibraryView.vue";
+import StorylineDetailView from "@/views/StorylineDetailView.vue";
+import StartStoryView from "@/views/StartStoryView.vue";
+import ChatView from "@/views/ChatView.vue";
+import CreatorStudioView from "@/views/CreatorStudioView.vue";
 import SavesView from "@/views/SavesView.vue";
 import SettingsView from "@/views/SettingsView.vue";
+import SceneModeView from "@/views/SceneModeView.vue";
+import AccountCloudView from "@/views/AccountCloudView.vue";
 
-export const router = createRouter({
-  history: createWebHashHistory(),
+const router = createRouter({
+  history: createWebHistory(),
   routes: [
-    { path: "/", name: "main_menu", component: MainMenuView },
-    { path: "/onboarding", name: "onboarding", component: OnboardingView },
-    { path: "/new-world", name: "new_world", component: NewWorldView },
-    { path: "/exploration", name: "exploration", component: ExplorationView },
-    { path: "/map", name: "map", component: MapView },
-    { path: "/locations", name: "locations", component: LocationsView },
-    { path: "/characters", name: "characters", component: CharactersView },
-    { path: "/timeline", name: "timeline", component: TimelineView },
-    { path: "/threads", name: "threads", component: ThreadsView },
-    { path: "/world-lore", name: "world_lore", component: WorldLoreView },
+    { path: "/", name: "home", component: HomeView },
+    { path: "/library", name: "library", component: LibraryView },
+    { path: "/storylines/:id", name: "storyline-detail", component: StorylineDetailView },
+    { path: "/start/:storylineId", name: "start-story", component: StartStoryView },
+    { path: "/chat/:chatId", name: "chat", component: ChatView },
+    { path: "/scene/:chatId", name: "scene-mode", component: SceneModeView },
+    { path: "/create", name: "creator-studio", component: CreatorStudioView },
     { path: "/saves", name: "saves", component: SavesView },
     { path: "/settings", name: "settings", component: SettingsView },
+    { path: "/account", name: "account-cloud", component: AccountCloudView },
   ],
 });
+
+export default router;

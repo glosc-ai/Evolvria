@@ -1,4 +1,0 @@
-interface:
-  display_name: "初始化世界"
-  short_description: "从 WorldSeed 初始化 Evolvria schema v1 世界状态"
-  default_prompt: "Use $initialize-world to initialize an Evolvria schema v1 world from the current seed."

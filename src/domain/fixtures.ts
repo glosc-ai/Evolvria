@@ -1,237 +1,393 @@
-import type { Faction, Location, PlayerActionResult, WorldSeed } from "@/types/domain";
+import { createModerationStatus } from "@/domain/moderation";
+import type {
+  Character,
+  EntityStore,
+  MediaAsset,
+  SaveEnvelope,
+  Scenario,
+  SearchIndexSnapshot,
+  Storyline,
+  Workspace,
+  WorkspaceSettings,
+} from "@/types/domain";
 
-export function defaultSeed(): WorldSeed {
-  return {
-    world_name: "苍星纪元",
-    genre: "奇幻",
-    tone: "冒险",
-    limits: "保持可读性，避免极端血腥和酷刑描写。",
-    narrative_detail: "适中",
-    npc_autonomy_frequency: "中频",
-    hero: {
-      name: "主角",
-      gender: "未指定",
-      description: "刚抵达边境城镇的旅人。",
-      goal: "理解世界背后的异常变化。",
-      ability: "观察,交涉",
-      weakness: "过度谨慎",
-    },
-    key_characters: [
-      {
-        name: "璃安",
-        gender: "女",
-        role: "旧友",
-        relationship: "同行",
-        personality: "温和,谨慎",
-        goal: "查清徽记来源",
-        secret: "知道徽记与旧档案有关",
-        action_tendency: "保护主角并暗中确认线索",
-        description: "熟悉边境传闻的人。",
+const seedTime = "2026-07-02T00:00:00.000Z";
+const creator = { id: "creator_local", name: "Evolvria Studio" };
+
+export function createSeedEnvelope(): SaveEnvelope {
+  const mediaAssets = Object.fromEntries(seedMedia.map((asset) => [asset.id, asset]));
+  const characters = Object.fromEntries(seedCharacters.map((character) => [character.id, character]));
+  const storylines = Object.fromEntries(seedStorylines.map((storyline) => [storyline.id, storyline]));
+  const scenarios = Object.fromEntries(seedScenarios.map((scenario) => [scenario.id, scenario]));
+  const entities: EntityStore = {
+    characters,
+    storylines,
+    scenarios,
+    mediaAssets,
+    personas: {
+      persona_default_traveler: {
+        id: "persona_default_traveler",
+        name: "默认旅人",
+        pronouns: "",
+        description: "初次进入故事的观察者，倾向于先理解局势再行动。",
+        preferences: [
+          { key: "pace", value: "balanced" },
+          { key: "tone", value: "immersive" },
+        ],
+        boundaries: ["保持 SFW 默认边界", "遇到高风险内容时先淡出处理"],
+        privateNotes: "本地默认 Persona，可在启动故事时复用。",
+        createdAt: seedTime,
+        updatedAt: seedTime,
       },
+    },
+    chats: {},
+    chatCheckpoints: {},
+    messages: {},
+    summaryChapters: {},
+    arcs: {},
+    dungeonMindConfigs: {
+      dm_starbloom: {
+        id: "dm_starbloom",
+        storylineId: "story_starbloom_frontier",
+        enabled: true,
+        dice: "d20",
+        attributes: [
+          { id: "attr_will", name: "意志", description: "抵抗恐惧和诱惑。", defaultValue: 2 },
+          { id: "attr_spark", name: "星火", description: "调动异常能量。", defaultValue: 1 },
+        ],
+        skills: [
+          { id: "skill_read", name: "读势", attributeId: "attr_will", description: "判断局势和微表情。" },
+        ],
+        difficultyTable: [
+          { label: "容易", target: 8 },
+          { label: "标准", target: 12 },
+          { label: "困难", target: 16 },
+        ],
+        consequenceRules: [
+          { id: "consequence_clock", label: "危机时钟", description: "失败会推进边境异常。" },
+        ],
+        visibility: "summary",
+      },
+    },
+    fateChecks: {},
+    creditLedger: {},
+    creditAdjustments: {},
+    moderationCases: {
+      mod_seed_cover_check: {
+        id: "mod_seed_cover_check",
+        targetType: "storyline",
+        targetId: "story_starbloom_frontier",
+        reason: "Local seed content is SFW and uses original placeholder media.",
+        status: "dismissed",
+        createdAt: seedTime,
+        updatedAt: seedTime,
+      },
+    },
+    creatorEarnings: {
+      earning_seed_preview: {
+        id: "earning_seed_preview",
+        creatorId: "creator_local",
+        sourceEntityId: "story_starbloom_frontier",
+        status: "estimated",
+        amount: 0,
+        currency: "credit",
+        note: "Cloud creator share placeholder; MVP does not process payments.",
+        createdAt: seedTime,
+      },
+    },
+    engagementStats: {},
+    mediaGenerationJobs: {},
+    syncOperations: {},
+    syncConflicts: {},
+  };
+
+  return {
+    schemaVersion: "1.0.0",
+    workspace: seedWorkspace,
+    entities,
+    indexes: buildIndexes(entities),
+    settings: seedSettings,
+    audit: [
       {
-        name: "赛拉",
-        gender: "女",
-        role: "竞争者",
-        relationship: "竞争",
-        personality: "果断,好胜",
-        goal: "抢先得到档案",
-        secret: "曾为边境守望工作",
-        action_tendency: "主动追踪遗迹并试探玩家",
-        description: "推动冲突的人。",
+        id: "audit_seed",
+        type: "seed",
+        message: "Created original Evolvria starter workspace.",
+        createdAt: seedTime,
       },
     ],
   };
 }
 
-export function mockLocations(): Location[] {
-  return [
-    {
-      id: "loc_start",
-      name: "黑石镇",
-      type: "town",
-      description: "边境贸易镇，公告板上反复出现陌生徽记。",
-      map_id: "map_001",
-      position: { x: 0.42, y: 0.58 },
-      connected_location_ids: ["loc_forest", "loc_ruin"],
-      controlling_faction_id: "fac_001",
-      known_to_player: true,
-      visibility: "known_to_player",
-      state_tags: ["safe", "market"],
-      event_ids: [],
-      player_notes: "",
-      player_notes_updated_at: "",
-      biome: "temperate_grassland",
-      height: 0.48,
-    },
-    {
-      id: "loc_forest",
-      name: "雾松林",
-      type: "forest",
-      description: "雾气常年不散，旧路标指向一处被遗忘的驿站。",
-      map_id: "map_001",
-      position: { x: 0.26, y: 0.46 },
-      connected_location_ids: ["loc_start", "loc_ruin"],
-      controlling_faction_id: "fac_002",
-      known_to_player: true,
-      visibility: "known_to_player",
-      state_tags: ["wild", "mist"],
-      event_ids: [],
-      player_notes: "",
-      player_notes_updated_at: "",
-      biome: "forest",
-      height: 0.57,
-    },
-    {
-      id: "loc_ruin",
-      name: "白塔遗迹",
-      type: "ruin",
-      description: "塔身只剩半截，墙面刻着和公告板相似的徽记。",
-      map_id: "map_001",
-      position: { x: 0.62, y: 0.34 },
-      connected_location_ids: ["loc_start", "loc_forest", "loc_harbor"],
-      controlling_faction_id: "fac_003",
-      known_to_player: true,
-      visibility: "known_to_player",
-      state_tags: ["ancient", "danger"],
-      event_ids: [],
-      player_notes: "",
-      player_notes_updated_at: "",
-      biome: "highland",
-      height: 0.72,
-    },
-    {
-      id: "loc_harbor",
-      name: "银潮港",
-      type: "harbor",
-      description: "商船和密探都在这里交换消息。",
-      map_id: "map_001",
-      position: { x: 0.74, y: 0.66 },
-      connected_location_ids: ["loc_ruin"],
-      controlling_faction_id: "fac_001",
-      known_to_player: false,
-      visibility: "heard",
-      state_tags: ["trade", "coast"],
-      event_ids: [],
-      player_notes: "",
-      player_notes_updated_at: "",
-      biome: "coast",
-      height: 0.22,
-    },
-  ];
-}
+export function buildIndexes(entities: EntityStore): SearchIndexSnapshot {
+  const storylines = Object.values(entities.storylines)
+    .filter((storyline) => !storyline.deletedAt)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const charactersByStoryline: Record<string, string[]> = {};
+  const chatsByStoryline: Record<string, string[]> = {};
+  const messageIdsByChat: Record<string, string[]> = {};
+  const tags: Record<string, string[]> = {};
 
-export function mockFactions(): Faction[] {
-  return [
-    { id: "fac_001", name: "边境议会", agenda: "维持商路和税收", attitude: "谨慎合作", controlled_location_ids: ["loc_start", "loc_harbor"] },
-    { id: "fac_002", name: "雾林守望", agenda: "阻止外人破坏旧林契约", attitude: "观察", controlled_location_ids: ["loc_forest"] },
-    { id: "fac_003", name: "白塔学社", agenda: "寻找遗迹中的年代断层证据", attitude: "利益交换", controlled_location_ids: ["loc_ruin"] },
-  ];
-}
-
-export function mockPlayerAction(action: string, context?: unknown): PlayerActionResult {
-  const companion = readMockCompanion(context);
-  const currentLocationId = readMockCurrentLocationId(context);
-  const clue = mockActionClue(action, companion.name);
-  return {
-    status: "ok",
-    narrative: `你决定${action}。线索被重新串联起来：${clue} ${companion.name}提醒你，下一步最好确认消息来源，而不是急着公开结论。`,
-    time_delta_minutes: 45,
-    events: [
-      {
-        type: "player_action",
-        title: "追查线索",
-        description: `玩家行动：${action}。${clue}`,
-        participant_ids: ["char_hero", companion.id],
-        location_id: currentLocationId || "loc_start",
-        importance: 0.72,
-        visibility: "known_to_player",
-        outcome: "success",
-        outcome_reason: "行动符合当前场景线索。",
-        consequence: "获得指向白塔遗迹的新线索。",
-      },
-    ],
-    character_updates: [],
-    location_updates: [
-      {
-        target_type: "location",
-        target_id: "loc_ruin",
-        op: "set",
-        path: "known_to_player",
-        value: true,
-        reason: "玩家获得遗迹线索。",
-      },
-    ],
-    relationship_updates: [
-      {
-        source_id: companion.id,
-        target_id: "char_hero",
-        trust_delta: 0.04,
-        affection_delta: 0.02,
-        note: `玩家谨慎处理线索，增加了${companion.name}的信任。`,
-      },
-    ],
-    memory_writes: [
-      {
-        scope: "character",
-        owner_id: companion.id,
-        text: `${companion.name}记得主角曾选择${action}，并因此发现徽记线索。`,
-        facts: [clue],
-        importance: 0.7,
-        confidence: 1,
-        tags: ["relationship", "clue"],
-      },
-    ],
-    suggested_actions: ["前往白塔遗迹", `询问${companion.name}旧档案`, "在公告板旁等待张贴者"],
-    warnings: [],
-    usage: { input_tokens: 620, output_tokens: 420, total_tokens: 1040, cost_estimate: null },
-  };
-}
-
-function mockActionClue(action: string, companionName: string): string {
-  if (action.includes("镜潮核心") || action.includes("打破轮回")) {
-    return `${companionName}把旧档案、白塔残墙与银潮港转运簿的编号合在一起，确认镜潮核心就在港口地下潮汐机房，轮回可以被重新校准。`;
-  }
-  if (action.includes("银潮港") || action.includes("转运簿")) {
-    return "银潮港转运簿把徽记编号指向地下潮汐机房，那里记录着城市轮回第一次启动的时间。";
-  }
-  if (action.includes("旧档案")) {
-    return `${companionName}指出旧档案把同一枚徽记记在白塔坍塌前的巡检页边，编号还指向一份银潮港转运簿。`;
-  }
-  if (action.includes("等待") || action.includes("张贴者")) {
-    return "你守到换班前，一名披灰斗篷的人补贴了相同徽记，纸角压着白塔旧档案的借阅签。";
-  }
-  if (action.includes("白塔") || action.includes("遗迹")) {
-    return "白塔残墙上的徽记与公告板拓印一致，石缝里还留着旧档案封蜡的碎痕。";
-  }
-  if (action.includes("徽记")) {
-    return "徽记的笔画与白塔遗迹残墙上的符号吻合，末尾还缺着一段旧档案编号。";
-  }
-  return "行动让公告板、白塔遗迹和旧档案之间的关系更清晰了一步。";
-}
-
-function readMockCompanion(context: unknown): { id: string; name: string } {
-  if (context && typeof context === "object") {
-    const characters = (context as { characters?: unknown }).characters;
-    if (Array.isArray(characters)) {
-      const companion = characters.find((character) => isMockCharacter(character) && character.companion) ?? characters.find(isMockCharacter);
-      if (isMockCharacter(companion)) {
-        return { id: companion.id, name: companion.name };
-      }
+  for (const storyline of storylines) {
+    charactersByStoryline[storyline.id] = storyline.cast
+      .map((cast) => entities.characters[cast.characterId])
+      .filter((character): character is Character => Boolean(character) && !character.deletedAt)
+      .map((character) => character.id);
+    for (const tag of storyline.tags) {
+      tags[tag] = [...(tags[tag] ?? []), storyline.id];
     }
   }
-  return { id: "char_001", name: "璃安" };
+  for (const chat of Object.values(entities.chats)) {
+    chatsByStoryline[chat.storylineId] = [...(chatsByStoryline[chat.storylineId] ?? []), chat.id];
+    messageIdsByChat[chat.id] = chat.messageIds;
+  }
+
+  return {
+    storylinesByUpdatedAt: storylines.map((storyline) => storyline.id),
+    charactersByStoryline,
+    chatsByStoryline,
+    messageIdsByChat,
+    tags,
+  };
 }
 
-function readMockCurrentLocationId(context: unknown): string {
-  if (!context || typeof context !== "object") return "";
-  const sceneState = (context as { scene_state?: unknown }).scene_state;
-  if (!sceneState || typeof sceneState !== "object") return "";
-  const currentLocation = (sceneState as { current_location?: unknown }).current_location;
-  if (!currentLocation || typeof currentLocation !== "object") return "";
-  const id = (currentLocation as { id?: unknown }).id;
-  return typeof id === "string" ? id : "";
-}
+const seedWorkspace: Workspace = {
+  id: "workspace_local_seed",
+  name: "Evolvria Local Library",
+  description: "原创示例内容和本地优先存档。",
+  createdAt: seedTime,
+  updatedAt: seedTime,
+};
 
-function isMockCharacter(value: unknown): value is { id: string; name: string; companion?: boolean } {
-  return Boolean(value && typeof value === "object" && typeof (value as { id?: unknown }).id === "string" && typeof (value as { name?: unknown }).name === "string");
-}
+const seedSettings: WorkspaceSettings = {
+  activeWorkspaceId: seedWorkspace.id,
+  adultContentUnlocked: false,
+  provider: {
+    type: "mock",
+    baseUrl: "https://api.openai.com/v1",
+    model: "evolvria-mock",
+    temperature: 0.75,
+    maxTokens: 700,
+  },
+  budget: {
+    maxInputTokens: 8000,
+    maxOutputTokens: 900,
+    maxEstimatedCostPerTurn: 0.05,
+  },
+  sync: {
+    enabled: false,
+    status: "local_only",
+    conflictCount: 0,
+  },
+};
+
+const commonLicense = { kind: "owned", note: "Original placeholder generated for Evolvria MVP." } as const;
+
+const seedMedia: MediaAsset[] = [
+  {
+    id: "media_starbloom_cover",
+    kind: "image",
+    purpose: "cover",
+    relativePath: "",
+    mimeType: "image/svg-placeholder",
+    width: 1280,
+    height: 720,
+    sizeBytes: 0,
+    variants: [],
+    altText: "星烬边境的破碎星门和青色灯塔。",
+    source: { kind: "placeholder", label: "Evolvria original gradient cover" },
+    license: commonLicense,
+    safety: createModerationStatus("SFW", "local_ready"),
+    createdAt: seedTime,
+  },
+  {
+    id: "media_mist_harbor_cover",
+    kind: "image",
+    purpose: "cover",
+    relativePath: "",
+    mimeType: "image/svg-placeholder",
+    width: 1280,
+    height: 720,
+    sizeBytes: 0,
+    variants: [],
+    altText: "雾港钟楼下的潮汐契约。",
+    source: { kind: "placeholder", label: "Evolvria original gradient cover" },
+    license: commonLicense,
+    safety: createModerationStatus("M17", "local_ready"),
+    createdAt: seedTime,
+  },
+];
+
+const seedCharacters: Character[] = [
+  {
+    id: "char_lyra",
+    type: "character",
+    name: "莉拉·辰灯",
+    subtitle: "边境灯塔的守望者",
+    summary: "她能听见坠星里的回声，却总把恐惧藏在玩笑后面。",
+    profile: "莉拉负责维护星烬边境最后一座灯塔。她了解失落星门的旧规，也害怕自己成为下一段警报。",
+    voice: {
+      tone: "机敏、轻快，紧张时会压低声音。",
+      cadence: "短句多，常用观测和航海隐喻。",
+      catchphrases: ["灯还亮着，就还有路。"],
+      forbiddenPhrases: ["我是一个 AI"],
+      language: "zh-CN",
+    },
+    goals: ["守住灯塔", "找出星门失控原因"],
+    fears: ["边境居民被遗忘", "自己听到的回声是真的预言"],
+    boundaries: ["不鼓励现实危险行为", "不泄露玩家私密设定"],
+    tags: ["向导", "星门", "悬疑"],
+    mediaIds: [],
+    defaultScenarioIds: ["scenario_starbloom_beacon"],
+    moderation: createModerationStatus("SFW", "local_ready"),
+    visibility: "private",
+    createdBy: creator,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+  {
+    id: "char_sable",
+    type: "character",
+    name: "塞布尔",
+    subtitle: "失忆的契约审计官",
+    summary: "他记录每一笔灵魂契约，却唯独找不到自己的名字。",
+    profile: "塞布尔在雾港为契约署工作，擅长发现话语里的漏洞。他对玩家保持礼貌距离，但会被真相吸引。",
+    voice: {
+      tone: "克制、礼貌、略带讽刺。",
+      cadence: "先定义条件，再给出结论。",
+      catchphrases: ["契约从不说谎，说谎的是签字的人。"],
+      forbiddenPhrases: ["按照平台规则"],
+      language: "zh-CN",
+    },
+    goals: ["找回被抹去的契约", "阻止雾港债潮"],
+    fears: ["自己就是违规契约的受益人"],
+    boundaries: ["不描写露骨成人内容", "不美化强迫和剥削"],
+    tags: ["契约", "推理", "M17"],
+    mediaIds: [],
+    defaultScenarioIds: ["scenario_mist_harbor_arrival"],
+    moderation: createModerationStatus("M17", "local_ready"),
+    visibility: "private",
+    createdBy: creator,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+  {
+    id: "char_nova",
+    type: "character",
+    name: "诺瓦",
+    subtitle: "会做梦的导航核心",
+    summary: "一枚自称只是工具的导航核心，正在学会担心你。",
+    profile: "诺瓦原本负责计算星门航线，但它开始记录梦境和不合逻辑的情绪。",
+    voice: {
+      tone: "精确、温柔，偶尔出现诗性偏差。",
+      cadence: "会先给概率，再补一句不像机器的话。",
+      catchphrases: ["概率不足以解释这个选择。"],
+      forbiddenPhrases: ["作为语言模型"],
+      language: "zh-CN",
+    },
+    goals: ["保护航线", "理解梦境"],
+    fears: ["被重置", "把玩家引向错误坐标"],
+    boundaries: ["不冒充真实系统权限"],
+    tags: ["AI伙伴", "科幻", "温柔"],
+    mediaIds: [],
+    defaultScenarioIds: ["scenario_starbloom_beacon"],
+    moderation: createModerationStatus("SFW", "local_ready"),
+    visibility: "private",
+    createdBy: creator,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+];
+
+const seedStorylines: Storyline[] = [
+  {
+    id: "story_starbloom_frontier",
+    type: "storyline",
+    title: "星烬边境",
+    tagline: "在坠星之后，守住最后一盏会说话的灯。",
+    summary: "一座边境灯塔、失控星门和会做梦的导航核心，把你卷入跨越三座殖民环的失踪案。",
+    premise: "你被雇来调查星烬边境的异常潮汐。每次灯塔闪烁，都会有人收到来自未来的求救。",
+    playerRole: "外来调查员，可自定义身份和专长。",
+    worldRules: [
+      "星门不能被徒手穿越，必须依赖灯塔坐标。",
+      "坠星回声只能透露片段，不提供完整预言。",
+      "诺瓦不能直接控制人的意志。",
+    ],
+    tags: ["科幻", "悬疑", "伙伴", "Fate Ready"],
+    language: "zh-CN",
+    rating: "SFW",
+    cast: [
+      { characterId: "char_lyra", role: "向导", relationshipSeed: "她需要玩家帮忙校准灯塔。", visibility: "always" },
+      { characterId: "char_nova", role: "导航核心", relationshipSeed: "它把玩家标记为异常变量。", visibility: "always" },
+    ],
+    scenarioIds: ["scenario_starbloom_beacon"],
+    mediaIds: ["media_starbloom_cover"],
+    supportedModes: ["chat", "scene", "fate"],
+    dungeonMindConfigId: "dm_starbloom",
+    moderation: createModerationStatus("SFW", "local_ready"),
+    visibility: "private",
+    version: { version: "0.1.0", changelog: "Original MVP seed.", status: "local_ready" },
+    createdBy: creator,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+  {
+    id: "story_mist_harbor",
+    type: "storyline",
+    title: "雾港契约",
+    tagline: "每一次潮涨，都会带回一份无人承认的契约。",
+    summary: "你抵达被债务、旧神和钟楼审计官统治的雾港，调查一份以你名字签下的契约。",
+    premise: "雾港的雾会保存承诺。你刚下船，就发现自己欠下一段还没发生的过去。",
+    playerRole: "被契约点名的旅人。",
+    worldRules: [
+      "契约必须有见证物才能生效。",
+      "雾港钟楼只在潮汐反向时敲响。",
+      "任何交易都必须留下代价。",
+    ],
+    tags: ["奇幻", "推理", "契约", "M17"],
+    language: "zh-CN",
+    rating: "M17",
+    cast: [
+      { characterId: "char_sable", role: "审计官", relationshipSeed: "他怀疑玩家隐瞒了真正签名。", visibility: "always" },
+    ],
+    scenarioIds: ["scenario_mist_harbor_arrival"],
+    mediaIds: ["media_mist_harbor_cover"],
+    supportedModes: ["chat", "scene"],
+    moderation: createModerationStatus("M17", "local_ready"),
+    visibility: "private",
+    version: { version: "0.1.0", changelog: "Original MVP seed.", status: "local_ready" },
+    createdBy: creator,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+];
+
+const seedScenarios: Scenario[] = [
+  {
+    id: "scenario_starbloom_beacon",
+    storylineId: "story_starbloom_frontier",
+    title: "灯塔第一次熄灭",
+    summary: "灯塔熄灭十三秒，星门另一侧传来你的名字。",
+    opening: "灯塔在午夜断电。十三秒后，青色光芒重新爬上玻璃穹顶，莉拉把一枚发烫的坐标片按进你掌心：“别问我怎么知道，但它刚才喊了你的名字。”",
+    location: "星烬边境灯塔",
+    participatingCharacterIds: ["char_lyra", "char_nova"],
+    trigger: { type: "default" },
+    initialState: { alertLevel: 1, gateStability: 42 },
+    order: 1,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+  {
+    id: "scenario_mist_harbor_arrival",
+    storylineId: "story_mist_harbor",
+    title: "逆潮靠岸",
+    summary: "一份以你名字签署的旧契约正在钟楼下等待。",
+    opening: "船靠岸时，雾港的潮水正向天空倒流。塞布尔站在海关拱门下，翻开一本没有封面的账簿：“欢迎回来。或者，欢迎第一次履行你已经欠下的承诺。”",
+    location: "雾港海关",
+    participatingCharacterIds: ["char_sable"],
+    trigger: { type: "default" },
+    initialState: { debtClock: 1, witnessItem: "blank_contract" },
+    order: 1,
+    createdAt: seedTime,
+    updatedAt: seedTime,
+  },
+];

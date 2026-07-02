@@ -1,4 +1,0 @@
-interface:
-  display_name: "触发玩家行为"
-  short_description: "解析玩家行动并生成可应用的 PlayerActionResult"
-  default_prompt: "Use $trigger-player-action to resolve the current player action into structured game results."

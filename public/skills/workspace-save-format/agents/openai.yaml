@@ -1,4 +1,0 @@
-interface:
-  display_name: "工作区存档格式"
-  short_description: "维护文件夹式存档和 AI workspace_context 规则"
-  default_prompt: "Use $workspace-save-format before changing Evolvria save layout or AI workspace context behavior."

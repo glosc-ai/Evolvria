@@ -1,4 +1,0 @@
-interface:
-  display_name: "推进世界进度"
-  short_description: "推进 Evolvria 世界时间并追加结构化进度事件"
-  default_prompt: "Use $advance-world-progress to advance NPC, faction, or world events without overwriting confirmed facts."

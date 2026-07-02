@@ -1,4 +1,0 @@
-interface:
-  display_name: "记录日志"
-  short_description: "记录脱敏 AI 调用日志、状态和 token 用量"
-  default_prompt: "Use $log-event to record a sanitized AI or skill execution log entry."

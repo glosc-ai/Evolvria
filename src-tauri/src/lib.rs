@@ -1,653 +1,870 @@
-use chrono::Utc;
-use image::{ImageBuffer, Rgba};
+use base64::{engine::general_purpose, Engine as _};
+use chrono::{DateTime, Utc};
+use image::{GenericImageView, ImageFormat, ImageReader};
+use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_dialog::DialogExt;
 use zip::write::SimpleFileOptions;
 
-const SCHEMA_VERSION: i64 = 1;
-const MAX_BACKUPS: usize = 5;
-const WORKSPACE_FORMAT: &str = "evolvria_workspace_v1";
-const MAIN_WINDOW_LABEL: &str = "main";
+const SAVE_FILE: &str = "save.json";
+const MANIFEST_FILE: &str = "manifest.json";
+const MAX_IMPORT_ENTRIES: usize = 500;
+const MAX_IMPORT_ENTRY_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_IMPORT_TOTAL_BYTES: u64 = 250 * 1024 * 1024;
+const MAX_MEDIA_IMPORT_BYTES: u64 = 50 * 1024 * 1024;
+const MAX_MEDIA_PREVIEW_BYTES: u64 = 20 * 1024 * 1024;
+const SECRET_SERVICE: &str = "ai.evolvria.app";
+const INSECURE_SECRET_FILE_ENV: &str = "EVOLVRIA_ALLOW_INSECURE_SECRET_FILE";
+const OPENAI_COMPATIBLE_KEY_ENV: &str = "EVOLVRIA_OPENAI_COMPATIBLE_API_KEY";
 
 #[derive(Debug, Serialize, Deserialize)]
-struct PlatformCapabilities {
-    os: String,
-    mobile: bool,
-    can_reveal_directories: bool,
-    can_share_files: bool,
-    can_use_file_picker: bool,
-    app_data_dir: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct SaveEntry {
-    kind: String,
-    path: String,
-    absolute_path: Option<String>,
-    world_name: String,
-    event_count: usize,
-    schema_valid: bool,
-    created_at: String,
+#[serde(rename_all = "camelCase")]
+struct WorkspaceMeta {
+    id: String,
+    name: String,
+    description: Option<String>,
+    updated_at: String,
+    path: Option<String>,
+    schema_version: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
-struct ExportWorldResult {
+#[serde(rename_all = "camelCase")]
+struct BackupMeta {
+    id: String,
+    workspace_id: String,
+    reason: String,
+    created_at: String,
+    path: String,
+    size_bytes: u64,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExportResult {
     path: String,
     cancelled: bool,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct GloscRequest {
-    base_url: String,
-    token: String,
-    model: String,
+struct SecretWriteResult {
+    backend: String,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SecretDeleteResult {
+    backend: String,
+    deleted: bool,
+    warning: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MediaAssetResult {
+    id: String,
+    kind: String,
     purpose: String,
-    payload: Value,
-    timeout_seconds: u64,
+    relative_path: String,
+    mime_type: String,
+    size_bytes: u64,
+    variants: Vec<Value>,
+    alt_text: String,
+    source: Value,
+    license: Value,
+    safety: Value,
+    created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageVerificationIssue {
+    severity: String,
+    field: String,
+    message: String,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AssetRefsReport {
+    declared: Vec<String>,
+    referenced: Vec<String>,
+    missing: Vec<String>,
+    browser_only: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PackageVerificationReport {
+    ok: bool,
+    checked_at: String,
+    format: String,
+    workspace_id: Option<String>,
+    workspace_name: Option<String>,
+    schema_version: Option<String>,
+    entity_counts: Value,
+    asset_refs: AssetRefsReport,
+    issues: Vec<PackageVerificationIssue>,
 }
 
 #[tauri::command]
-fn get_platform_capabilities(app: AppHandle) -> Result<PlatformCapabilities, String> {
-    let os = std::env::consts::OS.to_string();
-    let mobile = cfg!(any(target_os = "android", target_os = "ios"));
-    let app_data_dir = app.path().app_data_dir().ok().map(path_to_string);
-    Ok(PlatformCapabilities {
-        os,
-        mobile,
-        can_reveal_directories: !mobile,
-        can_share_files: mobile,
-        can_use_file_picker: true,
-        app_data_dir,
-    })
+fn workspace_list(app: AppHandle) -> Result<Vec<WorkspaceMeta>, String> {
+    let root = workspaces_dir(&app)?;
+    fs::create_dir_all(&root).map_err(to_string)?;
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(root).map_err(to_string)? {
+        let entry = entry.map_err(to_string)?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let save_path = path.join(SAVE_FILE);
+        if save_path.exists() {
+            if let Ok(envelope) = read_json(&save_path) {
+                entries.push(meta_from_envelope(&path, &envelope));
+            }
+        }
+    }
+    entries.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    Ok(entries)
 }
 
 #[tauri::command]
-fn load_settings(app: AppHandle) -> Result<Value, String> {
-    let path = settings_path(&app)?;
+fn workspace_create(app: AppHandle, envelope: Value) -> Result<WorkspaceMeta, String> {
+    let workspace_id = envelope_workspace_id(&envelope)?;
+    workspace_write(app, workspace_id, envelope)
+}
+
+#[tauri::command]
+fn workspace_read(app: AppHandle, workspace_id: String) -> Result<Value, String> {
+    let path = workspace_dir(&app, &workspace_id)?.join(SAVE_FILE);
     if !path.exists() {
-        return Ok(json!({}));
+        return Err("workspace_not_found".to_string());
     }
     read_json(&path)
 }
 
 #[tauri::command]
-fn save_settings(app: AppHandle, settings: Value) -> Result<bool, String> {
-    let path = settings_path(&app)?;
-    write_json_atomic(&path, &settings)?;
-    Ok(true)
+fn workspace_write(
+    app: AppHandle,
+    workspace_id: String,
+    envelope: Value,
+) -> Result<WorkspaceMeta, String> {
+    validate_workspace_id(&workspace_id)?;
+    validate_envelope(&envelope)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    fs::create_dir_all(dir.join("assets/images")).map_err(to_string)?;
+    fs::create_dir_all(dir.join("assets/audio")).map_err(to_string)?;
+    fs::create_dir_all(dir.join("assets/video")).map_err(to_string)?;
+    fs::create_dir_all(dir.join("backups")).map_err(to_string)?;
+    fs::create_dir_all(dir.join("logs")).map_err(to_string)?;
+    write_json_atomic(&dir.join(SAVE_FILE), &envelope)?;
+    let manifest = json!({
+        "format": "evolvria_workspace",
+        "schemaVersion": envelope.get("schemaVersion").and_then(Value::as_str).unwrap_or("unknown"),
+        "workspaceId": workspace_id,
+        "updatedAt": Utc::now().to_rfc3339(),
+    });
+    write_json_atomic(&dir.join(MANIFEST_FILE), &manifest)?;
+    Ok(meta_from_envelope(&dir, &envelope))
 }
 
 #[tauri::command]
-fn load_active_world(app: AppHandle) -> Result<Value, String> {
-    let payload_path = active_payload_path(&app)?;
-    if payload_path.exists() {
-        return read_json(&payload_path);
-    }
-    let legacy_path = legacy_active_save_path(&app)?;
-    if legacy_path.exists() {
-        return read_json(&legacy_path);
-    }
-    Ok(json!({}))
+fn workspace_backup(
+    app: AppHandle,
+    workspace_id: String,
+    reason: String,
+) -> Result<BackupMeta, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    create_backup_in_dir(&dir, &workspace_id, &reason)
 }
 
 #[tauri::command]
-fn save_world(app: AppHandle, payload: Value) -> Result<bool, String> {
-    validate_payload(&payload)?;
-    let workspace = active_workspace_path(&app)?;
-    let legacy_path = legacy_active_save_path(&app)?;
-    if workspace.exists() || legacy_path.exists() {
-        create_backup(&app, &workspace, &legacy_path)?;
-    }
-    write_workspace_save(&workspace, &payload)?;
-    if legacy_path.exists() {
-        fs::remove_file(legacy_path).map_err(to_string)?;
-    }
-    Ok(true)
+fn workspace_list_backups(app: AppHandle, workspace_id: String) -> Result<Vec<BackupMeta>, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    list_backups_from_dir(&dir, &workspace_id)
 }
 
 #[tauri::command]
-fn save_ai_checkpoint(app: AppHandle, payload: Value) -> Result<bool, String> {
-    validate_payload(&payload)?;
-    let path = ai_checkpoint_workspace_path(&app)?;
-    write_workspace_save(&path, &payload)?;
-    let legacy_path = legacy_ai_checkpoint_path(&app)?;
-    if legacy_path.exists() {
-        fs::remove_file(legacy_path).map_err(to_string)?;
-    }
-    Ok(true)
+fn workspace_restore_backup(
+    app: AppHandle,
+    workspace_id: String,
+    backup_id: String,
+) -> Result<Value, String> {
+    validate_workspace_id(&workspace_id)?;
+    validate_backup_id(&backup_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    restore_backup_from_dir(&dir, &workspace_id, &backup_id)
 }
 
 #[tauri::command]
-fn list_save_entries(app: AppHandle) -> Result<Vec<SaveEntry>, String> {
-    let mut entries = Vec::new();
-    let active = active_workspace_path(&app)?;
-    if active.exists() {
-        entries.push(save_entry("active", &active)?);
-    } else {
-        let legacy_active = legacy_active_save_path(&app)?;
-        if legacy_active.exists() {
-            entries.push(save_entry("active", &legacy_active)?);
+fn workspace_export_zip(
+    app: AppHandle,
+    workspace_id: String,
+    target_path: Option<String>,
+) -> Result<ExportResult, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    if !dir.join(SAVE_FILE).exists() {
+        return Err("workspace_not_found".to_string());
+    }
+    let export_path = match target_path {
+        Some(path) if !path.trim().is_empty() => PathBuf::from(path),
+        _ => {
+            let exports = app_data_dir(&app)?.join("exports");
+            fs::create_dir_all(&exports).map_err(to_string)?;
+            exports.join(format!(
+                "{}-{}.evolvria.zip",
+                workspace_id,
+                timestamp_slug()
+            ))
         }
-    }
-    let checkpoint = ai_checkpoint_workspace_path(&app)?;
-    if checkpoint.exists() {
-        entries.push(save_entry("ai_checkpoint", &checkpoint)?);
-    } else {
-        let legacy_checkpoint = legacy_ai_checkpoint_path(&app)?;
-        if legacy_checkpoint.exists() {
-            entries.push(save_entry("ai_checkpoint", &legacy_checkpoint)?);
-        }
-    }
-    let backup_dir = backup_dir(&app)?;
-    if backup_dir.exists() {
-        let mut backups = fs::read_dir(&backup_dir)
-            .map_err(to_string)?
-            .filter_map(Result::ok)
-            .map(|entry| entry.path())
-            .filter(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .is_some_and(|name| name.starts_with("active_world_"))
-            })
-            .collect::<Vec<_>>();
-        backups.sort();
-        backups.reverse();
-        for backup in backups {
-            entries.push(save_entry("backup", &backup)?);
-        }
-    }
-    Ok(entries)
-}
-
-#[tauri::command]
-fn delete_save_entry(app: AppHandle, path: String) -> Result<bool, String> {
-    let target = deletable_save_path(&app, &path)?;
-    if !target.exists() {
-        return Err("存档不存在，可能已被移动或删除。".to_string());
-    }
-    if target.is_dir() {
-        fs::remove_dir_all(target).map_err(to_string)?;
-    } else {
-        fs::remove_file(target).map_err(to_string)?;
-    }
-    Ok(true)
-}
-
-#[tauri::command]
-fn export_world(app: AppHandle, payload: Value) -> Result<ExportWorldResult, String> {
-    validate_payload(&payload)?;
-    let export_dir = export_dir(&app)?;
-    fs::create_dir_all(&export_dir).map_err(to_string)?;
-    let Some(selected_path) = app
-        .dialog()
-        .file()
-        .set_title("导出当前世界")
-        .set_directory(&export_dir)
-        .set_file_name(default_export_file_name(&payload))
-        .add_filter("Evolvria 存档", &["zip"])
-        .blocking_save_file()
-    else {
-        return Ok(ExportWorldResult {
-            path: String::new(),
-            cancelled: true,
-        });
     };
-    let mut export_path = selected_path.into_path().map_err(to_string)?;
-    if export_path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map_or(true, |extension| !extension.eq_ignore_ascii_case("zip"))
-    {
-        export_path.set_extension("zip");
-    }
-    write_world_zip(&app, &export_path, &payload)?;
-    Ok(ExportWorldResult {
+    ensure_parent(&export_path)?;
+    write_workspace_zip(&dir, &export_path)?;
+    Ok(ExportResult {
         path: path_to_string(export_path),
         cancelled: false,
     })
 }
 
-fn write_world_zip(app: &AppHandle, export_path: &Path, payload: &Value) -> Result<(), String> {
-    ensure_parent(export_path)?;
-    let file = File::create(export_path).map_err(to_string)?;
-    let mut zip = zip::ZipWriter::new(file);
-    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    for (path, content) in build_workspace_files(payload)? {
-        zip.start_file(path, options).map_err(to_string)?;
-        zip.write_all(content.as_bytes()).map_err(to_string)?;
-    }
-    write_map_assets_to_zip(&mut zip, options, &active_workspace_path(app)?)?;
-    zip.finish().map_err(to_string)?;
-    Ok(())
-}
-
-fn write_map_assets_to_zip(
-    zip: &mut zip::ZipWriter<File>,
-    options: SimpleFileOptions,
-    workspace: &Path,
-) -> Result<(), String> {
-    let map_dir = workspace.join("maps");
-    if !map_dir.exists() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(map_dir).map_err(to_string)? {
-        let entry = entry.map_err(to_string)?;
-        let path = entry.path();
-        if !path.is_file() || !is_supported_map_asset(&path) {
-            continue;
-        }
-        let Some(file_name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        let zip_path = format!("maps/{file_name}");
-        if zip_path == "maps/MAP.md" {
-            continue;
-        }
-        zip.start_file(zip_path, options).map_err(to_string)?;
-        let bytes = fs::read(path).map_err(to_string)?;
-        zip.write_all(&bytes).map_err(to_string)?;
-    }
-    Ok(())
-}
-
-fn extract_map_assets_from_zip(
-    archive: &mut zip::ZipArchive<File>,
-    workspace: &Path,
-) -> Result<(), String> {
-    let map_dir = workspace.join("maps");
-    fs::create_dir_all(&map_dir).map_err(to_string)?;
-    for index in 0..archive.len() {
-        let mut file = archive.by_index(index).map_err(to_string)?;
-        let name = file.name().to_string();
-        if !name.starts_with("maps/") || name.ends_with('/') {
-            continue;
-        }
-        let source_path = Path::new(&name);
-        if !is_supported_map_asset(source_path) {
-            continue;
-        }
-        let Some(file_name) = source_path.file_name() else {
-            continue;
-        };
-        let target = map_dir.join(file_name);
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).map_err(to_string)?;
-        fs::write(target, bytes).map_err(to_string)?;
-    }
-    Ok(())
-}
-
-fn is_supported_map_asset(path: &Path) -> bool {
-    path.extension()
-        .and_then(|extension| extension.to_str())
-        .is_some_and(|extension| matches!(extension.to_ascii_lowercase().as_str(), "png" | "jpg" | "jpeg" | "webp"))
+#[tauri::command]
+fn workspace_import_zip(app: AppHandle, source_path: String) -> Result<WorkspaceMeta, String> {
+    let source = PathBuf::from(source_path);
+    let file = File::open(&source).map_err(to_string)?;
+    let archive = zip::ZipArchive::new(file).map_err(to_string)?;
+    import_zip_archive(app, archive)
 }
 
 #[tauri::command]
-fn import_world(app: AppHandle, source_path: String) -> Result<Value, String> {
-    let file = File::open(&source_path).map_err(to_string)?;
-    let mut archive = zip::ZipArchive::new(file).map_err(to_string)?;
-    let payload: Value = {
-        let payload_name = if archive.file_names().any(|name| name == "state/payload.json") {
-            "state/payload.json"
-        } else {
-            "payload.json"
-        };
-        let mut payload_file = archive.by_name(payload_name).map_err(to_string)?;
-        let mut text = String::new();
-        payload_file.read_to_string(&mut text).map_err(to_string)?;
-        serde_json::from_str(&text).map_err(to_string)?
-    };
-    validate_payload(&payload)?;
-    save_world(app.clone(), payload.clone())?;
-    extract_map_assets_from_zip(&mut archive, &active_workspace_path(&app)?)?;
-    Ok(payload)
+fn workspace_import_zip_bytes(app: AppHandle, bytes: Vec<u8>) -> Result<WorkspaceMeta, String> {
+    let cursor = std::io::Cursor::new(bytes);
+    let archive = zip::ZipArchive::new(cursor).map_err(to_string)?;
+    import_zip_archive(app, archive)
 }
 
-#[tauri::command]
-fn import_map_image(app: AppHandle, source_path: String) -> Result<Value, String> {
-    let source = PathBuf::from(&source_path);
-    if !source.exists() {
-        return Err("地图图片不存在。".to_string());
-    }
-    let image = image::open(&source).map_err(to_string)?;
-    let resized = image.thumbnail(2048, 2048);
-    let map_dir = active_workspace_path(&app)?.join("maps");
-    fs::create_dir_all(&map_dir).map_err(to_string)?;
-    let target_path = map_dir.join("map_001.png");
-    resized.save(&target_path).map_err(to_string)?;
-    Ok(json!({
-        "status": "ok",
-        "image_path": path_to_string(target_path),
-        "width": resized.width(),
-        "height": resized.height(),
-        "original_width": image.width(),
-        "original_height": image.height(),
-        "resized_for_device": image.width() != resized.width() || image.height() != resized.height()
-    }))
-}
-
-#[tauri::command]
-fn generate_fantasy_map(
+fn import_zip_archive<R: Read + Seek>(
     app: AppHandle,
-    seed: Value,
-    locations: Vec<Value>,
-) -> Result<Value, String> {
-    let map_dir = active_workspace_path(&app)?.join("maps");
-    fs::create_dir_all(&map_dir).map_err(to_string)?;
-    let map_path = map_dir.join("map_001.png");
-    write_procedural_map(&map_path, &seed)?;
-    Ok(json!({
-        "status": "ok",
-        "image_path": path_to_string(&map_path),
-        "width": 960,
-        "height": 640,
-        "locations": locations,
-        "generator": {
-            "source_project": "Azgaar/Fantasy-Map-Generator",
-            "source_license": "MIT",
-            "mode": "procedural"
-        }
-    }))
+    mut archive: zip::ZipArchive<R>,
+) -> Result<WorkspaceMeta, String> {
+    validate_zip_entries(&mut archive)?;
+    let mut save = String::new();
+    archive
+        .by_name(SAVE_FILE)
+        .map_err(|_| "zip_missing_save".to_string())?
+        .read_to_string(&mut save)
+        .map_err(to_string)?;
+    let mut envelope: Value = serde_json::from_str(&save).map_err(to_string)?;
+    validate_envelope(&envelope)?;
+    let original_id = envelope_workspace_id(&envelope)?;
+    let imported_id = format!("{}_import_{}", original_id, timestamp_slug());
+    if let Some(workspace) = envelope.get_mut("workspace").and_then(Value::as_object_mut) {
+        workspace.insert("id".to_string(), Value::String(imported_id.clone()));
+        workspace.insert(
+            "updatedAt".to_string(),
+            Value::String(Utc::now().to_rfc3339()),
+        );
+    }
+    let dir = workspace_dir(&app, &imported_id)?;
+    let meta = workspace_write(app, imported_id, envelope)?;
+    extract_zip_assets(&mut archive, &dir)?;
+    Ok(meta)
 }
 
 #[tauri::command]
-fn generate_map_from_reference(
+fn media_import(
     app: AppHandle,
-    source_path: String,
-    seed: Value,
-    locations: Vec<Value>,
-) -> Result<Value, String> {
-    let map_dir = active_workspace_path(&app)?.join("maps");
-    fs::create_dir_all(&map_dir).map_err(to_string)?;
-    let map_path = map_dir.join("map_001.png");
-    if Path::new(&source_path).exists() {
-        let image = image::open(&source_path).map_err(to_string)?;
-        image
-            .thumbnail(960, 640)
-            .save(&map_path)
-            .map_err(to_string)?;
-    } else {
-        write_procedural_map(&map_path, &seed)?;
-    }
-    Ok(json!({
-        "status": "ok",
-        "image_path": path_to_string(&map_path),
-        "width": 960,
-        "height": 640,
-        "locations": locations,
-        "generator": {
-            "source_project": "Azgaar/Fantasy-Map-Generator",
-            "source_license": "MIT",
-            "mode": "reference_image",
-            "reference_features": {
-                "land_ratio": 0.62,
-                "water_ratio": 0.28,
-                "region_border_pixels": 128
-            }
-        }
-    }))
+    workspace_id: String,
+    path: String,
+    purpose: String,
+) -> Result<MediaAssetResult, String> {
+    validate_workspace_id(&workspace_id)?;
+    import_media_file(&app, &workspace_id, PathBuf::from(path), purpose)
 }
 
 #[tauri::command]
-async fn call_glosc(request: GloscRequest) -> Result<Value, String> {
-    let endpoint = chat_endpoint(&request.base_url);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(
-            request.timeout_seconds.max(5),
-        ))
-        .build()
-        .map_err(to_string)?;
-    let body = json!({
-        "model": request.model,
-        "messages": [
-            {"role": "system", "content": "你是 Evolvria 的叙事与世界模拟引擎。只返回合法 JSON，不要输出 JSON 以外的内容。若 payload 中包含 workspace_context，必须先遵循其中 AGENTS.md 的加载顺序和规则，再使用其他已加载文件。"},
-            {"role": "user", "content": serde_json::to_string(&json!({"purpose": request.purpose, "payload": request.payload})).map_err(to_string)?}
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.7
-    });
-    let response = client
-        .post(endpoint)
-        .bearer_auth(request.token)
-        .header("User-Agent", "Evolvria/0.1 Tauri/2")
-        .json(&body)
-        .send()
-        .await
-        .map_err(to_string)?;
-    let status = response.status();
-    let value: Value = response.json().await.map_err(to_string)?;
-    if !status.is_success() {
-        return Ok(json!({"status": "error", "error": value.to_string()}));
-    }
-    let content = value
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|choices| choices.first())
-        .and_then(|choice| choice.get("message"))
-        .and_then(|message| message.get("content"))
-        .and_then(Value::as_str)
-        .unwrap_or("{}");
-    let parsed =
-        serde_json::from_str::<Value>(content).unwrap_or_else(|_| json!({"narrative": content}));
-    Ok(json!({
-        "status": "ok",
-        "content": content,
-        "parsed": parsed,
-        "usage": {
-            "input_tokens": value.pointer("/usage/prompt_tokens").and_then(Value::as_i64).unwrap_or(0),
-            "output_tokens": value.pointer("/usage/completion_tokens").and_then(Value::as_i64).unwrap_or(0)
-        }
-    }))
-}
-
-#[tauri::command]
-async fn check_glosc_connection(
-    base_url: String,
-    token: String,
-    model: String,
-) -> Result<Value, String> {
-    if token.trim().is_empty() {
-        return Ok(json!({"ok": false, "status": "error", "error": "Glosc One 访问令牌为空。"}));
-    }
-    let endpoint = chat_endpoint(&base_url);
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(to_string)?;
-    let response = client
-        .post(endpoint)
-        .bearer_auth(token)
-        .header("User-Agent", "Evolvria/0.1 Tauri/2")
-        .json(&json!({
-            "model": if model.trim().is_empty() { "deepseek/deepseek-v4-pro" } else { model.as_str() },
-            "messages": [
-                {"role": "system", "content": "只返回合法 JSON。"},
-                {"role": "user", "content": "{\"status\":\"ok\",\"chat\":\"ok\"}"}
+async fn media_pick_and_import(
+    app: AppHandle,
+    workspace_id: String,
+    purpose: String,
+) -> Result<Option<MediaAssetResult>, String> {
+    validate_workspace_id(&workspace_id)?;
+    validate_media_purpose(&purpose)?;
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter(
+            "Supported media",
+            &[
+                "png", "jpg", "jpeg", "webp", "gif", "mp3", "wav", "ogg", "mp4", "mov", "webm",
+                "txt", "md", "json", "pdf",
             ],
-            "max_tokens": 80,
-            "temperature": 0
-        }))
-        .send()
-        .await
-        .map_err(to_string)?;
-    let status = response.status();
-    Ok(json!({
-        "ok": status.is_success(),
-        "status": if status.is_success() { "ok" } else { "error" },
-        "message": if status.is_success() { "Glosc One 连接测试通过。" } else { "Glosc One 连接测试失败。" },
-        "http_status": status.as_u16(),
-        "checked_at": Utc::now().to_rfc3339()
-    }))
+        )
+        .blocking_pick_file();
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let source = path.into_path().map_err(to_string)?;
+    import_media_file(&app, &workspace_id, source, purpose).map(Some)
+}
+
+fn import_media_file(
+    app: &AppHandle,
+    workspace_id: &str,
+    source: PathBuf,
+    purpose: String,
+) -> Result<MediaAssetResult, String> {
+    validate_media_purpose(&purpose)?;
+    if !source.is_file() {
+        return Err("media_source_not_found".to_string());
+    }
+    let metadata = fs::metadata(&source).map_err(to_string)?;
+    if metadata.len() > MAX_MEDIA_IMPORT_BYTES {
+        return Err("media_source_too_large".to_string());
+    }
+    let extension = source
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (kind, mime_type) =
+        media_metadata(&extension).ok_or_else(|| "media_unsupported_type".to_string())?;
+    let id = format!("media_{}", hash_file_name(&source, metadata.len()));
+    let relative_path = format!("assets/{}/{}.{}", kind_folder(kind), id, extension);
+    let target = workspace_dir(app, workspace_id)?.join(&relative_path);
+    ensure_parent(&target)?;
+    fs::copy(&source, &target).map_err(to_string)?;
+    Ok(MediaAssetResult {
+        id,
+        kind: kind.to_string(),
+        purpose,
+        relative_path,
+        mime_type: mime_type.to_string(),
+        size_bytes: metadata.len(),
+        variants: vec![],
+        alt_text: "Imported local asset".to_string(),
+        source: json!({ "kind": "imported", "label": "Local file import" }),
+        license: json!({ "kind": "unknown", "note": "User must confirm rights before publishing." }),
+        safety: json!({ "rating": "SFW", "state": "draft", "reasons": [], "safetyFlags": ["none"] }),
+        created_at: Utc::now().to_rfc3339(),
+    })
 }
 
 #[tauri::command]
-fn reveal_or_share_path(path: String) -> Result<bool, String> {
-    tauri_plugin_opener::open_path(path, None::<String>).map_err(to_string)?;
-    Ok(true)
+fn media_thumbnail(
+    app: AppHandle,
+    workspace_id: String,
+    asset_id: String,
+    size: Option<u32>,
+) -> Result<Value, String> {
+    validate_workspace_id(&workspace_id)?;
+    validate_entity_id(&asset_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    generate_thumbnail_from_dir(&dir, &asset_id, size.unwrap_or(320))
 }
 
 #[tauri::command]
-fn open_save_directory(app: AppHandle) -> Result<bool, String> {
-    let path = save_dir(&app)?;
-    fs::create_dir_all(&path).map_err(to_string)?;
-    tauri_plugin_opener::open_path(path_to_string(path), None::<String>).map_err(to_string)?;
-    Ok(true)
+fn media_read_data_url(
+    app: AppHandle,
+    workspace_id: String,
+    relative_path: String,
+) -> Result<String, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    read_media_data_url_from_dir(&dir, &relative_path)
 }
 
-fn settings_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("settings.json"))
+#[tauri::command]
+fn secret_set(app: AppHandle, key: String, value: String) -> Result<SecretWriteResult, String> {
+    validate_secret_key(&key)?;
+    validate_secret_value(&value)?;
+    match write_keychain_secret(&key, &value) {
+        Ok(()) => {
+            let _ = remove_secret_from_file(&fallback_secrets_path(&app)?, &key);
+            let _ = remove_secret_from_file(&legacy_secrets_path(&app)?, &key);
+            Ok(SecretWriteResult {
+                backend: "keychain".to_string(),
+                warning: None,
+            })
+        }
+        Err(error) if insecure_secret_file_allowed() => {
+            write_secret_to_file(&fallback_secrets_path(&app)?, &key, &value)?;
+            Ok(SecretWriteResult {
+                backend: "file_fallback".to_string(),
+                warning: Some(format!(
+                    "System keychain unavailable; saved to an explicitly enabled local fallback file. Keychain error: {}",
+                    error
+                )),
+            })
+        }
+        Err(error) => Err(format!(
+            "secret_keychain_unavailable: {}. Set {}=1 only if you accept local file fallback risk.",
+            error, INSECURE_SECRET_FILE_ENV
+        )),
+    }
 }
 
-fn save_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("saves"))
+#[tauri::command]
+fn secret_get(app: AppHandle, key: String) -> Result<Option<String>, String> {
+    validate_secret_key(&key)?;
+    if let Some(value) = read_secret_from_env(&key) {
+        return Ok(Some(value));
+    }
+    if let Ok(value) = read_keychain_secret(&key) {
+        return Ok(Some(value));
+    }
+    if let Some(value) = read_secret_from_file(&legacy_secrets_path(&app)?, &key)? {
+        if write_keychain_secret(&key, &value).is_ok() {
+            let _ = remove_secret_from_file(&legacy_secrets_path(&app)?, &key);
+            return Ok(Some(value));
+        }
+        if insecure_secret_file_allowed() {
+            return Ok(Some(value));
+        }
+    }
+    if insecure_secret_file_allowed() {
+        return read_secret_from_file(&fallback_secrets_path(&app)?, &key);
+    }
+    Ok(None)
 }
 
-fn export_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(app_data_dir(app)?.join("exports"))
-}
+#[tauri::command]
+fn secret_delete(app: AppHandle, key: String) -> Result<SecretDeleteResult, String> {
+    validate_secret_key(&key)?;
+    let mut warnings = Vec::new();
+    let keychain_deleted = match delete_keychain_secret(&key) {
+        Ok(deleted) => deleted,
+        Err(error) => {
+            warnings.push(format!("Keychain delete failed: {}", error));
+            false
+        }
+    };
+    let fallback_deleted = remove_secret_from_file(&fallback_secrets_path(&app)?, &key)?;
+    let legacy_deleted = remove_secret_from_file(&legacy_secrets_path(&app)?, &key)?;
 
-fn default_export_file_name(payload: &Value) -> String {
-    let world_id = payload
-        .get("world")
-        .and_then(|world| world.get("id"))
-        .and_then(Value::as_str)
-        .unwrap_or("world");
-    let safe_world_id = sanitize_file_component(world_id);
-    let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
-    format!("{safe_world_id}_{timestamp}.zip")
-}
+    if read_secret_from_env(&key).is_some() {
+        if let Some(env_name) = secret_env_var_name(&key) {
+            warnings.push(format!(
+                "{} is still set and will override saved provider keys until unset.",
+                env_name
+            ));
+        }
+    }
 
-fn sanitize_file_component(value: &str) -> String {
-    let sanitized = value
-        .chars()
-        .map(|character| {
-            if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
-                character
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
-    if sanitized.trim_matches('_').is_empty() {
-        "world".to_string()
+    let file_deleted = fallback_deleted || legacy_deleted;
+    let backend = if keychain_deleted && file_deleted {
+        "keychain_and_file".to_string()
+    } else if keychain_deleted {
+        "keychain".to_string()
+    } else if file_deleted {
+        "file_fallback".to_string()
     } else {
-        sanitized
-    }
+        "none".to_string()
+    };
+
+    Ok(SecretDeleteResult {
+        backend,
+        deleted: keychain_deleted || file_deleted,
+        warning: join_warnings(warnings),
+    })
 }
 
-fn backup_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(save_dir(app)?.join("backups"))
+#[tauri::command]
+fn log_export(app: AppHandle) -> Result<ExportResult, String> {
+    let logs = app_data_dir(&app)?.join("logs");
+    fs::create_dir_all(&logs).map_err(to_string)?;
+    let target = logs.join(format!("diagnostics-{}.txt", timestamp_slug()));
+    fs::write(
+        &target,
+        format!(
+            "Evolvria diagnostics\ncreatedAt={}\n",
+            Utc::now().to_rfc3339()
+        ),
+    )
+    .map_err(to_string)?;
+    Ok(ExportResult {
+        path: path_to_string(target),
+        cancelled: false,
+    })
 }
 
-fn active_workspace_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(save_dir(app)?.join("active_world"))
+#[tauri::command]
+fn content_package_verify(
+    app: AppHandle,
+    workspace_id: String,
+) -> Result<PackageVerificationReport, String> {
+    validate_workspace_id(&workspace_id)?;
+    let dir = workspace_dir(&app, &workspace_id)?;
+    verify_workspace_package_dir(&dir)
 }
 
-fn active_payload_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(active_workspace_path(app)?.join("state").join("payload.json"))
-}
-
-fn legacy_active_save_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(save_dir(app)?.join("active_world.json"))
-}
-
-fn ai_checkpoint_workspace_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(backup_dir(app)?.join("ai_before_request"))
-}
-
-fn legacy_ai_checkpoint_path(app: &AppHandle) -> Result<PathBuf, String> {
-    Ok(backup_dir(app)?.join("ai_before_request.json"))
-}
-
-fn deletable_save_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
-    let target = resolve_save_entry_path(app, path)?;
-    let active_workspace = active_workspace_path(app)?;
-    let legacy_active = legacy_active_save_path(app)?;
-    let ai_checkpoint = ai_checkpoint_workspace_path(app)?;
-    let legacy_ai_checkpoint = legacy_ai_checkpoint_path(app)?;
-    if same_path(&target, &active_workspace)
-        || same_path(&target, &legacy_active)
-        || same_path(&target, &ai_checkpoint)
-        || same_path(&target, &legacy_ai_checkpoint)
-    {
-        return Ok(target);
-    }
-    let backup_dir = backup_dir(app)?;
-    let is_backup = same_path(target.parent().unwrap_or_else(|| Path::new("")), &backup_dir)
-        && target
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with("active_world_"));
-    if is_backup {
-        return Ok(target);
-    }
-    Err("只能删除 Evolvria 存档目录中的存档。".to_string())
-}
-
-fn resolve_save_entry_path(app: &AppHandle, path: &str) -> Result<PathBuf, String> {
-    let target = PathBuf::from(path);
-    if target.is_absolute() {
-        return Ok(target);
-    }
-
-    let normalized = path.replace('\\', "/");
-    if let Some(file_name) = normalized.strip_prefix("backups/") {
-        if file_name.contains('/') || file_name.is_empty() {
-            return Err("只能删除 Evolvria 存档目录中的存档。".to_string());
-        }
-        return Ok(backup_dir(app)?.join(file_name));
-    }
-    if let Some(file_name) = normalized.strip_prefix("saves/") {
-        if file_name.contains('/') || file_name.is_empty() {
-            return Err("只能删除 Evolvria 存档目录中的存档。".to_string());
-        }
-        return Ok(save_dir(app)?.join(file_name));
-    }
-    if normalized == "active_world" {
-        return active_workspace_path(app);
-    }
-    if normalized == "active_world.json" {
-        return legacy_active_save_path(app);
-    }
-    if normalized == "ai_before_request" {
-        return ai_checkpoint_workspace_path(app);
-    }
-    if normalized == "ai_before_request.json" {
-        return legacy_ai_checkpoint_path(app);
-    }
-
-    Ok(target)
-}
-
-fn same_path(left: &Path, right: &Path) -> bool {
-    if left == right {
-        return true;
-    }
-    match (left.canonicalize(), right.canonicalize()) {
-        (Ok(left), Ok(right)) => left == right,
-        _ => false,
-    }
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_opener::init())
+        .invoke_handler(tauri::generate_handler![
+            workspace_list,
+            workspace_create,
+            workspace_read,
+            workspace_write,
+            workspace_backup,
+            workspace_list_backups,
+            workspace_restore_backup,
+            workspace_export_zip,
+            workspace_import_zip,
+            workspace_import_zip_bytes,
+            media_import,
+            media_pick_and_import,
+            media_thumbnail,
+            media_read_data_url,
+            secret_set,
+            secret_get,
+            secret_delete,
+            log_export,
+            content_package_verify
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running Evolvria");
 }
 
 fn app_data_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let path = app.path().app_data_dir().map_err(to_string)?;
-    fs::create_dir_all(&path).map_err(to_string)?;
-    Ok(path)
+    app.path().app_data_dir().map_err(to_string)
 }
 
-fn ensure_parent(path: &Path) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(to_string)?;
+fn workspaces_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("workspaces"))
+}
+
+fn workspace_dir(app: &AppHandle, workspace_id: &str) -> Result<PathBuf, String> {
+    validate_workspace_id(workspace_id)?;
+    Ok(workspaces_dir(app)?.join(workspace_id))
+}
+
+fn legacy_secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("secrets.json"))
+}
+
+fn fallback_secrets_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(app_data_dir(app)?.join("secrets.insecure.json"))
+}
+
+fn keychain_entry(key: &str) -> Result<Entry, String> {
+    Entry::new(SECRET_SERVICE, key).map_err(to_string)
+}
+
+fn write_keychain_secret(key: &str, value: &str) -> Result<(), String> {
+    keychain_entry(key)?.set_password(value).map_err(to_string)
+}
+
+fn read_keychain_secret(key: &str) -> Result<String, String> {
+    keychain_entry(key)?.get_password().map_err(to_string)
+}
+
+fn delete_keychain_secret(key: &str) -> Result<bool, String> {
+    match keychain_entry(key)?.delete_credential() {
+        Ok(()) => Ok(true),
+        Err(KeyringError::NoEntry) => Ok(false),
+        Err(error) => Err(to_string(error)),
+    }
+}
+
+fn read_secret_from_env(key: &str) -> Option<String> {
+    let env_name = secret_env_var_name(key)?;
+    std::env::var(env_name)
+        .ok()
+        .filter(|value| !value.is_empty())
+}
+
+fn secret_env_var_name(key: &str) -> Option<&'static str> {
+    match key {
+        "openai-compatible-api-key" => Some(OPENAI_COMPATIBLE_KEY_ENV),
+        _ => None,
+    }
+}
+
+fn insecure_secret_file_allowed() -> bool {
+    std::env::var(INSECURE_SECRET_FILE_ENV)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
+}
+
+fn read_secret_file(path: &Path) -> Result<serde_json::Map<String, Value>, String> {
+    if !path.exists() {
+        return Ok(serde_json::Map::new());
+    }
+    match read_json(path)? {
+        Value::Object(map) => Ok(map),
+        _ => Err("secrets_invalid".to_string()),
+    }
+}
+
+fn read_secret_from_file(path: &Path, key: &str) -> Result<Option<String>, String> {
+    Ok(read_secret_file(path)?
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned))
+}
+
+fn write_secret_to_file(path: &Path, key: &str, value: &str) -> Result<(), String> {
+    let mut secrets = read_secret_file(path)?;
+    secrets.insert(key.to_string(), Value::String(value.to_string()));
+    write_json_atomic(path, &Value::Object(secrets))
+}
+
+fn remove_secret_from_file(path: &Path, key: &str) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    let mut secrets = read_secret_file(path)?;
+    let removed = secrets.remove(key).is_some();
+    if !removed {
+        return Ok(false);
+    }
+    if secrets.is_empty() {
+        fs::remove_file(path).map_err(to_string)?;
+    } else {
+        write_json_atomic(path, &Value::Object(secrets))?;
+    }
+    Ok(true)
+}
+
+fn validate_workspace_id(workspace_id: &str) -> Result<(), String> {
+    let valid = workspace_id
+        .chars()
+        .all(|char| char.is_ascii_alphanumeric() || char == '_' || char == '-');
+    if workspace_id.is_empty() || workspace_id.contains("..") || !valid {
+        return Err("invalid_workspace_id".to_string());
     }
     Ok(())
+}
+
+fn validate_backup_id(backup_id: &str) -> Result<(), String> {
+    validate_entity_id(backup_id)?;
+    if !backup_id.starts_with("backup_") {
+        return Err("invalid_backup_id".to_string());
+    }
+    Ok(())
+}
+
+fn validate_entity_id(id: &str) -> Result<(), String> {
+    let valid = id
+        .chars()
+        .all(|char| char.is_ascii_alphanumeric() || char == '_' || char == '-');
+    if id.is_empty() || id.contains("..") || !valid {
+        return Err("invalid_entity_id".to_string());
+    }
+    Ok(())
+}
+
+fn create_backup_in_dir(
+    dir: &Path,
+    workspace_id: &str,
+    reason: &str,
+) -> Result<BackupMeta, String> {
+    let save_path = dir.join(SAVE_FILE);
+    if !save_path.exists() {
+        return Err("workspace_not_found".to_string());
+    }
+    let backups = dir.join("backups");
+    fs::create_dir_all(&backups).map_err(to_string)?;
+    let id = format!("backup_{}", timestamp_slug());
+    let file_name = format!("{}_{}.json", id, sanitize_file_part(reason));
+    let target = backups.join(file_name);
+    let size_bytes = fs::copy(save_path, &target).map_err(to_string)?;
+    Ok(BackupMeta {
+        id,
+        workspace_id: workspace_id.to_string(),
+        reason: reason.to_string(),
+        created_at: Utc::now().to_rfc3339(),
+        path: path_to_string(target),
+        size_bytes,
+    })
+}
+
+fn list_backups_from_dir(dir: &Path, workspace_id: &str) -> Result<Vec<BackupMeta>, String> {
+    let backups = dir.join("backups");
+    if !backups.exists() {
+        return Ok(Vec::new());
+    }
+    let mut metas = Vec::new();
+    for entry in fs::read_dir(backups).map_err(to_string)? {
+        let entry = entry.map_err(to_string)?;
+        let path = entry.path();
+        if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+            continue;
+        }
+        if let Some(meta) = backup_meta_from_path(&path, workspace_id)? {
+            metas.push(meta);
+        }
+    }
+    metas.sort_by(|a, b| {
+        b.created_at
+            .cmp(&a.created_at)
+            .then_with(|| b.id.cmp(&a.id))
+    });
+    Ok(metas)
+}
+
+fn backup_meta_from_path(path: &Path, workspace_id: &str) -> Result<Option<BackupMeta>, String> {
+    let Some(stem) = path.file_stem().and_then(|name| name.to_str()) else {
+        return Ok(None);
+    };
+    let mut parts = stem.splitn(3, '_');
+    let Some(prefix) = parts.next() else {
+        return Ok(None);
+    };
+    let Some(timestamp) = parts.next() else {
+        return Ok(None);
+    };
+    if prefix != "backup" {
+        return Ok(None);
+    }
+    let id = format!("backup_{}", timestamp);
+    validate_backup_id(&id)?;
+    let reason = parts.next().unwrap_or("manual").to_string();
+    let metadata = fs::metadata(path).map_err(to_string)?;
+    let modified = metadata.modified().map_err(to_string)?;
+    let created_at: DateTime<Utc> = modified.into();
+    Ok(Some(BackupMeta {
+        id,
+        workspace_id: workspace_id.to_string(),
+        reason,
+        created_at: created_at.to_rfc3339(),
+        path: path_to_string(path),
+        size_bytes: metadata.len(),
+    }))
+}
+
+fn find_backup_path(dir: &Path, workspace_id: &str, backup_id: &str) -> Result<PathBuf, String> {
+    let backups = list_backups_from_dir(dir, workspace_id)?;
+    backups
+        .into_iter()
+        .find(|backup| backup.id == backup_id)
+        .map(|backup| PathBuf::from(backup.path))
+        .ok_or_else(|| "backup_not_found".to_string())
+}
+
+fn restore_backup_from_dir(
+    dir: &Path,
+    workspace_id: &str,
+    backup_id: &str,
+) -> Result<Value, String> {
+    let backup_path = find_backup_path(dir, workspace_id, backup_id)?;
+    let envelope = read_json(&backup_path)?;
+    validate_envelope(&envelope)?;
+    let envelope_workspace_id = envelope_workspace_id(&envelope)?;
+    if envelope_workspace_id != workspace_id {
+        return Err("backup_workspace_mismatch".to_string());
+    }
+
+    if dir.join(SAVE_FILE).exists() {
+        create_backup_in_dir(dir, workspace_id, "pre_restore")?;
+    }
+    write_json_atomic(&dir.join(SAVE_FILE), &envelope)?;
+    let manifest = json!({
+        "format": "evolvria_workspace",
+        "schemaVersion": envelope.get("schemaVersion").and_then(Value::as_str).unwrap_or("unknown"),
+        "workspaceId": workspace_id,
+        "updatedAt": Utc::now().to_rfc3339(),
+        "restoredFromBackupId": backup_id,
+    });
+    write_json_atomic(&dir.join(MANIFEST_FILE), &manifest)?;
+    Ok(envelope)
+}
+
+fn validate_secret_key(key: &str) -> Result<(), String> {
+    let valid = key
+        .chars()
+        .all(|char| char.is_ascii_alphanumeric() || char == '_' || char == '-');
+    if key.is_empty() || !valid {
+        return Err("invalid_secret_key".to_string());
+    }
+    Ok(())
+}
+
+fn validate_secret_value(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 20_000 || value.contains('\0') {
+        return Err("invalid_secret_value".to_string());
+    }
+    Ok(())
+}
+
+fn validate_media_purpose(purpose: &str) -> Result<(), String> {
+    match purpose {
+        "cover" | "avatar" | "background" | "sprite" | "voice" | "reference" => Ok(()),
+        _ => Err("invalid_media_purpose".to_string()),
+    }
+}
+
+fn join_warnings(warnings: Vec<String>) -> Option<String> {
+    if warnings.is_empty() {
+        None
+    } else {
+        Some(warnings.join(" "))
+    }
+}
+
+fn validate_envelope(envelope: &Value) -> Result<(), String> {
+    if envelope.get("schemaVersion").and_then(Value::as_str) != Some("1.0.0") {
+        return Err("schema_mismatch".to_string());
+    }
+    envelope_workspace_id(envelope)?;
+    if envelope.get("entities").is_none() {
+        return Err("invalid_envelope_entities".to_string());
+    }
+    Ok(())
+}
+
+fn envelope_workspace_id(envelope: &Value) -> Result<String, String> {
+    let id = envelope
+        .get("workspace")
+        .and_then(|workspace| workspace.get("id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "invalid_workspace_id".to_string())?
+        .to_string();
+    validate_workspace_id(&id)?;
+    Ok(id)
+}
+
+fn meta_from_envelope(dir: &Path, envelope: &Value) -> WorkspaceMeta {
+    let workspace = envelope.get("workspace").unwrap_or(&Value::Null);
+    WorkspaceMeta {
+        id: workspace
+            .get("id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_string(),
+        name: workspace
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Untitled Workspace")
+            .to_string(),
+        description: workspace
+            .get("description")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+        updated_at: workspace
+            .get("updatedAt")
+            .and_then(Value::as_str)
+            .unwrap_or("1970-01-01T00:00:00Z")
+            .to_string(),
+        path: Some(path_to_string(dir)),
+        schema_version: envelope
+            .get("schemaVersion")
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned),
+    }
 }
 
 fn read_json(path: &Path) -> Result<Value, String> {
@@ -658,706 +875,1080 @@ fn read_json(path: &Path) -> Result<Value, String> {
 fn write_json_atomic(path: &Path, value: &Value) -> Result<(), String> {
     ensure_parent(path)?;
     let temp = path.with_extension("tmp");
-    fs::write(
-        &temp,
-        serde_json::to_string_pretty(value).map_err(to_string)?,
-    )
-    .map_err(to_string)?;
-    if path.exists() {
-        fs::remove_file(path).map_err(to_string)?;
-    }
-    fs::rename(temp, path).map_err(to_string)?;
-    Ok(())
-}
-
-fn write_text_atomic(path: &Path, text: &str) -> Result<(), String> {
-    ensure_parent(path)?;
-    let temp = path.with_extension("tmp");
+    let text = serde_json::to_string_pretty(value).map_err(to_string)?;
     fs::write(&temp, text).map_err(to_string)?;
-    if path.exists() {
-        fs::remove_file(path).map_err(to_string)?;
-    }
     fs::rename(temp, path).map_err(to_string)?;
     Ok(())
 }
 
-fn write_workspace_save(root: &Path, payload: &Value) -> Result<(), String> {
-    fs::create_dir_all(root).map_err(to_string)?;
-    for dir in ["characters", "locations", "history", "world", "memory", "threads", "state"] {
-        let path = root.join(dir);
-        if path.exists() {
-            fs::remove_dir_all(&path).map_err(to_string)?;
+fn validate_zip_entries<R: Read + Seek>(archive: &mut zip::ZipArchive<R>) -> Result<(), String> {
+    if archive.len() > MAX_IMPORT_ENTRIES {
+        return Err("zip_too_many_entries".to_string());
+    }
+
+    let mut total_size = 0_u64;
+    let mut has_save = false;
+    for index in 0..archive.len() {
+        let file = archive.by_index(index).map_err(to_string)?;
+        let raw_name = file.name();
+        let normalized = raw_name.replace('\\', "/");
+
+        if normalized.is_empty()
+            || normalized.starts_with('/')
+            || normalized.contains('\0')
+            || normalized.split('/').any(|part| part == "..")
+            || normalized
+                .split('/')
+                .next()
+                .is_some_and(|part| part.contains(':'))
+        {
+            return Err("zip_path_traversal".to_string());
+        }
+
+        if file.size() > MAX_IMPORT_ENTRY_BYTES {
+            return Err("zip_entry_too_large".to_string());
+        }
+        total_size = total_size.saturating_add(file.size());
+        if total_size > MAX_IMPORT_TOTAL_BYTES {
+            return Err("zip_total_too_large".to_string());
+        }
+
+        let allowed = normalized == SAVE_FILE
+            || normalized == MANIFEST_FILE
+            || is_import_asset_path(&normalized);
+        if !file.is_dir() && !allowed {
+            return Err("zip_unknown_entry".to_string());
+        }
+        if normalized == SAVE_FILE {
+            has_save = true;
         }
     }
-    for (relative_path, content) in build_workspace_files(payload)? {
-        write_text_atomic(&root.join(relative_path), &content)?;
+
+    if !has_save {
+        return Err("zip_missing_save".to_string());
     }
     Ok(())
 }
 
-fn build_workspace_files(payload: &Value) -> Result<Vec<(String, String)>, String> {
-    let mut files = Vec::new();
-    files.push(("AGENTS.md".to_string(), build_agents_markdown(payload)));
-    files.push((
-        "manifest.json".to_string(),
-        serde_json::to_string_pretty(&build_workspace_manifest(payload)).map_err(to_string)?,
-    ));
-    files.push(("world/OVERVIEW.md".to_string(), build_world_overview(payload)));
-    files.push(("world/RULES.md".to_string(), build_world_rules(payload)));
-    files.push(("memory/MEMORY.md".to_string(), build_memory_markdown(payload)));
-    files.push(("maps/MAP.md".to_string(), build_map_markdown(payload)));
-    files.push(("history/TIMELINE.md".to_string(), build_timeline_markdown(payload)));
-    files.push(("threads/THREADS.md".to_string(), build_threads_markdown(payload)));
-    if let Some(characters) = payload.get("characters").and_then(Value::as_array) {
-        for character in characters {
-            let id = str_at(character, "id", "character");
-            files.push((
-                format!("characters/{}.md", sanitize_file_component(&id)),
-                build_character_markdown(character, payload),
-            ));
+fn extract_zip_assets<R: Read + Seek>(
+    archive: &mut zip::ZipArchive<R>,
+    workspace_dir: &Path,
+) -> Result<(), String> {
+    for index in 0..archive.len() {
+        let mut file = archive.by_index(index).map_err(to_string)?;
+        let normalized = file.name().replace('\\', "/");
+        if file.is_dir() || !is_import_asset_path(&normalized) {
+            continue;
         }
+        let target = workspace_dir.join(&normalized);
+        ensure_parent(&target)?;
+        let mut output = File::create(&target).map_err(to_string)?;
+        std::io::copy(&mut file, &mut output).map_err(to_string)?;
     }
-    if let Some(locations) = payload.get("locations").and_then(Value::as_array) {
-        for location in locations {
-            let id = str_at(location, "id", "location");
-            files.push((
-                format!("locations/{}.md", sanitize_file_component(&id)),
-                build_location_markdown(location, payload),
-            ));
-        }
-    }
-    files.push((
-        "state/payload.json".to_string(),
-        serde_json::to_string_pretty(payload).map_err(to_string)?,
-    ));
-    Ok(files)
+    Ok(())
 }
 
-fn build_workspace_manifest(payload: &Value) -> Value {
-    let world = payload.get("world").unwrap_or(&Value::Null);
-    let character_files = payload
-        .get("characters")
-        .and_then(Value::as_array)
-        .map(|characters| {
-            characters
-                .iter()
-                .map(|character| {
-                    json!(format!(
-                        "characters/{}.md",
-                        sanitize_file_component(&str_at(character, "id", "character"))
-                    ))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let location_files = payload
-        .get("locations")
-        .and_then(Value::as_array)
-        .map(|locations| {
-            locations
-                .iter()
-                .map(|location| {
-                    json!(format!(
-                        "locations/{}.md",
-                        sanitize_file_component(&str_at(location, "id", "location"))
-                    ))
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    json!({
-        "workspace_format": WORKSPACE_FORMAT,
-        "schema_version": SCHEMA_VERSION,
-        "world_id": str_at(world, "id", "world"),
-        "display_name": str_at(world, "name", "未命名世界"),
-        "updated_at": str_at(payload, "updated_at", "未知时间"),
-        "exported_at": Utc::now().to_rfc3339(),
-        "files": {
-            "instructions": "AGENTS.md",
-            "payload": "state/payload.json",
-            "world": ["world/OVERVIEW.md", "world/RULES.md"],
-            "memory": "memory/MEMORY.md",
-            "map": "maps/MAP.md",
-            "history": "history/TIMELINE.md",
-            "threads": "threads/THREADS.md",
-            "characters": character_files,
-            "locations": location_files
+fn is_import_asset_path(path: &str) -> bool {
+    path.starts_with("assets/images/")
+        || path.starts_with("assets/audio/")
+        || path.starts_with("assets/video/")
+        || path.starts_with("assets/documents/")
+}
+
+fn write_workspace_zip(source_dir: &Path, export_path: &Path) -> Result<(), String> {
+    let file = File::create(export_path).map_err(to_string)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    add_file_to_zip(&mut zip, source_dir, &source_dir.join(SAVE_FILE), options)?;
+    let manifest_path = source_dir.join(MANIFEST_FILE);
+    if manifest_path.exists() {
+        add_file_to_zip(&mut zip, source_dir, &manifest_path, options)?;
+    }
+    let assets = source_dir.join("assets");
+    if assets.exists() {
+        add_dir_to_zip(&mut zip, source_dir, &assets, options)?;
+    }
+    zip.finish().map_err(to_string)?;
+    Ok(())
+}
+
+fn add_dir_to_zip(
+    zip: &mut zip::ZipWriter<File>,
+    root: &Path,
+    dir: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(to_string)? {
+        let entry = entry.map_err(to_string)?;
+        let path = entry.path();
+        if path.is_dir() {
+            add_dir_to_zip(zip, root, &path, options)?;
+        } else if path.is_file() {
+            add_file_to_zip(zip, root, &path, options)?;
         }
+    }
+    Ok(())
+}
+
+fn add_file_to_zip(
+    zip: &mut zip::ZipWriter<File>,
+    root: &Path,
+    path: &Path,
+    options: SimpleFileOptions,
+) -> Result<(), String> {
+    let name = path.strip_prefix(root).map_err(to_string)?;
+    let zip_name = name
+        .to_str()
+        .ok_or_else(|| "invalid_zip_path".to_string())?
+        .replace('\\', "/");
+    if zip_name.contains("..") || zip_name.starts_with('/') {
+        return Err("path_traversal".to_string());
+    }
+    zip.start_file(zip_name, options).map_err(to_string)?;
+    let bytes = fs::read(path).map_err(to_string)?;
+    zip.write_all(&bytes).map_err(to_string)?;
+    Ok(())
+}
+
+fn ensure_parent(path: &Path) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(to_string)?;
+    }
+    Ok(())
+}
+
+fn timestamp_slug() -> String {
+    Utc::now().format("%Y%m%dT%H%M%S%9fZ").to_string()
+}
+
+fn sanitize_file_part(value: &str) -> String {
+    let sanitized: String = value
+        .chars()
+        .filter(|char| char.is_ascii_alphanumeric() || *char == '-' || *char == '_')
+        .collect();
+    if sanitized.is_empty() {
+        "manual".to_string()
+    } else {
+        sanitized
+    }
+}
+
+fn hash_file_name(path: &Path, size: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher.update(size.to_le_bytes());
+    let digest = hasher.finalize();
+    format!("{:x}", digest)[..16].to_string()
+}
+
+fn media_metadata(extension: &str) -> Option<(&'static str, &'static str)> {
+    match extension.to_ascii_lowercase().as_str() {
+        "png" => Some(("image", "image/png")),
+        "jpg" | "jpeg" => Some(("image", "image/jpeg")),
+        "webp" => Some(("image", "image/webp")),
+        "gif" => Some(("image", "image/gif")),
+        "mp3" => Some(("audio", "audio/mpeg")),
+        "wav" => Some(("audio", "audio/wav")),
+        "ogg" => Some(("audio", "audio/ogg")),
+        "mp4" => Some(("video", "video/mp4")),
+        "mov" => Some(("video", "video/quicktime")),
+        "webm" => Some(("video", "video/webm")),
+        "txt" => Some(("document", "text/plain")),
+        "md" => Some(("document", "text/markdown")),
+        "json" => Some(("document", "application/json")),
+        "pdf" => Some(("document", "application/pdf")),
+        _ => None,
+    }
+}
+
+fn kind_folder(kind: &str) -> &'static str {
+    match kind {
+        "image" => "images",
+        "audio" => "audio",
+        "video" => "video",
+        _ => "documents",
+    }
+}
+
+fn generate_thumbnail_from_dir(
+    workspace_dir: &Path,
+    asset_id: &str,
+    requested_size: u32,
+) -> Result<Value, String> {
+    validate_entity_id(asset_id)?;
+    let envelope = read_json(&workspace_dir.join(SAVE_FILE))?;
+    let asset = envelope
+        .get("entities")
+        .and_then(|entities| entities.get("mediaAssets"))
+        .and_then(Value::as_object)
+        .and_then(|media| media.get(asset_id))
+        .ok_or_else(|| "media_asset_not_found".to_string())?;
+    let asset_kind = asset.get("kind").and_then(Value::as_str).unwrap_or("");
+    if asset_kind != "image" {
+        return Err("media_thumbnail_unsupported".to_string());
+    }
+    let relative_path = asset
+        .get("relativePath")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "asset_relative_path_missing".to_string())?;
+    let extension = Path::new(relative_path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (kind, _) =
+        media_metadata(&extension).ok_or_else(|| "media_unsupported_type".to_string())?;
+    if kind != "image" {
+        return Err("media_thumbnail_unsupported".to_string());
+    }
+
+    let source = resolve_existing_asset_path(workspace_dir, relative_path)?;
+    let source_size = fs::metadata(&source).map_err(to_string)?.len();
+    if source_size > MAX_MEDIA_PREVIEW_BYTES {
+        return Err("media_preview_too_large".to_string());
+    }
+    let size = requested_size.clamp(64, 1024);
+    let image = ImageReader::open(&source)
+        .map_err(to_string)?
+        .with_guessed_format()
+        .map_err(to_string)?
+        .decode()
+        .map_err(to_string)?;
+    let thumbnail = image.thumbnail(size, size);
+    let (width, height) = thumbnail.dimensions();
+    let variant_id = format!("variant_{}_{}", asset_id, size);
+    let relative_path = format!("assets/images/variants/{}.png", variant_id);
+    let target = workspace_dir.join(&relative_path);
+    ensure_parent(&target)?;
+    thumbnail
+        .save_with_format(&target, ImageFormat::Png)
+        .map_err(to_string)?;
+    let size_bytes = fs::metadata(&target).map_err(to_string)?.len();
+
+    Ok(json!({
+        "id": variant_id,
+        "relativePath": relative_path,
+        "width": width,
+        "height": height,
+        "sizeBytes": size_bytes,
+        "purpose": "thumbnail"
+    }))
+}
+
+fn read_media_data_url_from_dir(
+    workspace_dir: &Path,
+    relative_path: &str,
+) -> Result<String, String> {
+    validate_asset_relative_path(relative_path)?;
+    let extension = Path::new(relative_path)
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (kind, mime_type) =
+        media_metadata(&extension).ok_or_else(|| "media_unsupported_type".to_string())?;
+    if kind == "document" {
+        return Err("media_preview_unsupported".to_string());
+    }
+    let path = resolve_existing_asset_path(workspace_dir, relative_path)?;
+    let metadata = fs::metadata(&path).map_err(|_| "media_file_missing".to_string())?;
+    if metadata.len() > MAX_MEDIA_PREVIEW_BYTES {
+        return Err("media_preview_too_large".to_string());
+    }
+    let bytes = fs::read(path).map_err(to_string)?;
+    Ok(format!(
+        "data:{};base64,{}",
+        mime_type,
+        general_purpose::STANDARD.encode(bytes)
+    ))
+}
+
+fn resolve_existing_asset_path(
+    workspace_dir: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, String> {
+    validate_asset_relative_path(relative_path)?;
+    let root = workspace_dir.canonicalize().map_err(to_string)?;
+    let path = root.join(relative_path);
+    let metadata = fs::metadata(&path).map_err(|_| "media_file_missing".to_string())?;
+    if !metadata.is_file() {
+        return Err("media_file_missing".to_string());
+    }
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|_| "media_file_missing".to_string())?;
+    if !canonical_path.starts_with(root) {
+        return Err("invalid_asset_path".to_string());
+    }
+    Ok(canonical_path)
+}
+
+fn validate_asset_relative_path(relative_path: &str) -> Result<(), String> {
+    let normalized = relative_path.replace('\\', "/");
+    if normalized.trim().is_empty()
+        || normalized != relative_path
+        || normalized.starts_with('/')
+        || normalized.contains('\0')
+        || normalized
+            .split('/')
+            .any(|part| part.is_empty() || part == "..")
+        || normalized
+            .split('/')
+            .next()
+            .is_some_and(|part| part.contains(':'))
+        || !normalized.starts_with("assets/")
+    {
+        return Err("invalid_asset_path".to_string());
+    }
+    if !is_import_asset_path(&normalized) {
+        return Err("media_preview_unsupported".to_string());
+    }
+    Ok(())
+}
+
+fn verify_workspace_package_dir(workspace_dir: &Path) -> Result<PackageVerificationReport, String> {
+    let save_path = workspace_dir.join(SAVE_FILE);
+    if !save_path.exists() {
+        return Err("workspace_not_found".to_string());
+    }
+    let envelope = read_json(&save_path)?;
+    let mut issues = Vec::new();
+    if let Err(error) = validate_envelope(&envelope) {
+        issues.push(package_issue(
+            "error",
+            "save",
+            format!("Invalid save envelope: {}", error),
+        ));
+    }
+
+    let manifest_path = workspace_dir.join(MANIFEST_FILE);
+    let manifest = if manifest_path.exists() {
+        match read_json(&manifest_path) {
+            Ok(value) => Some(value),
+            Err(error) => {
+                issues.push(package_issue(
+                    "error",
+                    "manifest",
+                    format!("Manifest is not valid JSON: {}", error),
+                ));
+                None
+            }
+        }
+    } else {
+        issues.push(package_issue(
+            "error",
+            "manifest",
+            "manifest.json is missing.",
+        ));
+        None
+    };
+
+    let workspace = envelope.get("workspace").unwrap_or(&Value::Null);
+    let workspace_id = workspace
+        .get("id")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let workspace_name = workspace
+        .get("name")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    let schema_version = envelope
+        .get("schemaVersion")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
+    if schema_version.as_deref() != Some("1.0.0") {
+        issues.push(package_issue(
+            "error",
+            "schemaVersion",
+            "Only schemaVersion 1.0.0 is supported.",
+        ));
+    }
+
+    if let Some(manifest) = &manifest {
+        let manifest_schema = manifest.get("schemaVersion").and_then(Value::as_str);
+        if manifest_schema != schema_version.as_deref() {
+            issues.push(package_issue(
+                "error",
+                "manifest.schemaVersion",
+                "Manifest schemaVersion does not match save.json.",
+            ));
+        }
+        let manifest_workspace_id = manifest.get("workspaceId").and_then(Value::as_str);
+        if manifest_workspace_id != workspace_id.as_deref() {
+            issues.push(package_issue(
+                "error",
+                "manifest.workspaceId",
+                "Manifest workspaceId does not match save.json.",
+            ));
+        }
+    }
+
+    let entity_counts = package_entity_counts(&envelope, &mut issues);
+    let asset_refs = package_asset_refs(&envelope);
+    for missing in &asset_refs.missing {
+        issues.push(package_issue(
+            "error",
+            format!("assets.{}", missing),
+            format!(
+                "Referenced media asset {} is missing from mediaAssets.",
+                missing
+            ),
+        ));
+    }
+    verify_physical_assets(workspace_dir, &envelope, &mut issues);
+
+    let save_text = fs::read_to_string(&save_path).map_err(to_string)?;
+    if contains_secret_like_text(&save_text) {
+        issues.push(package_issue(
+            "error",
+            "secrets",
+            "Package appears to contain an API key or bearer token.",
+        ));
+    }
+
+    let ok = !issues.iter().any(|issue| issue.severity == "error");
+    Ok(PackageVerificationReport {
+        ok,
+        checked_at: Utc::now().to_rfc3339(),
+        format: "tauri_workspace_dir".to_string(),
+        workspace_id,
+        workspace_name,
+        schema_version,
+        entity_counts,
+        asset_refs,
+        issues,
     })
 }
 
-fn build_agents_markdown(payload: &Value) -> String {
-    let world = payload.get("world").unwrap_or(&Value::Null);
-    format!(
-        "# Evolvria 世界工作区\n\n世界：{}\n\n## 启动顺序\n\n每次处理世界模拟、玩家行动、NPC 行动或记忆整理请求时，先阅读本文件，再只加载任务需要的文档。不要把整个世界一次性塞进上下文；优先使用索引、摘要和当前场景相关文件。\n\n## 固定规则\n\n- 玩家已确认的事实优先级最高，不能被 AI 覆盖。\n- 任何剧情变化都必须能落到时间线、记忆、角色、地点或线索文档之一。\n- 未被玩家发现的秘密只能作为隐藏状态维护，不要在面向玩家的叙事里提前剧透。\n- 如果上下文不足，保持保守，不要编造与已存档文档冲突的设定。\n\n## 常用文件\n\n- `world/OVERVIEW.md`：世界摘要、题材、当前时间、主题。\n- `world/RULES.md`：世界规则、内容边界、叙事限制。\n- `memory/MEMORY.md`：长期记忆、重要事实、最近高权重记忆。\n- `maps/MAP.md`：地图索引、路线和地点入口。\n- `characters/*.md`：角色故事、目标、关系和玩家笔记。\n- `locations/*.md`：地图地点、状态标签、路线和玩家笔记。\n- `history/TIMELINE.md`：历史事件和最近行动。\n- `threads/THREADS.md`：未完成线索、主线、关系线。\n- `state/payload.json`：机器可读完整状态，只在需要完整校验或导入导出时使用。\n\n## 上下文预算策略\n\n短请求只加载 AGENTS.md、当前地点、参与角色、相关记忆、最近事件和开放线索。长篇总结或一致性检查才加载完整 history、characters、locations。若文档很长，先读标题、摘要和最近条目。\n",
-        str_at(world, "name", "未命名世界")
-    )
-}
-
-fn build_world_overview(payload: &Value) -> String {
-    let world = payload.get("world").unwrap_or(&Value::Null);
-    format!(
-        "# 世界概览\n\n- 名称：{}\n- 题材：{}\n- 基调：{}\n- 当前时间：{}\n- 创建时间：{}\n\n## 摘要\n\n{}\n\n## 主题\n\n{}\n",
-        str_at(world, "name", "未命名世界"),
-        str_at(world, "genre", "未知"),
-        string_array_at(world, "tone").join("、"),
-        world_time(world.get("current_time")),
-        str_at(world, "created_at", "未知"),
-        str_at(world, "summary", "暂无摘要。"),
-        bullet_list(&string_array_at(world, "themes"))
-    )
-}
-
-fn build_world_rules(payload: &Value) -> String {
-    let world = payload.get("world").unwrap_or(&Value::Null);
-    format!(
-        "# 世界规则\n\n## 规则\n\n{}\n\n## 内容边界\n\n{}\n\n- 叙事细节：{}\n- NPC 自主频率：{}\n",
-        bullet_list(&string_array_at(world, "rules")),
-        bullet_list(&string_array_at(world, "content_limits")),
-        str_at(world, "narrative_detail", "适中"),
-        str_at(world, "npc_autonomy_frequency", "中频")
-    )
-}
-
-fn build_memory_markdown(payload: &Value) -> String {
-    let mut output = format!(
-        "# 长期记忆\n\n记忆计数器：{}\n\n",
-        payload
-            .get("memory_counter")
-            .and_then(Value::as_i64)
-            .unwrap_or(0)
-    );
-    if let Some(memories) = payload.get("memories").and_then(Value::as_array) {
-        for memory in memories.iter().take(40) {
-            output.push_str(&format!(
-                "## {}\n\n- 范围：{}\n- 所属：{}\n- 重要性：{}\n- 可信度：{}\n- 标签：{}\n- 事件：{}\n\n{}\n\n事实：\n{}\n\n",
-                str_at(memory, "id", "memory"),
-                str_at(memory, "scope", "world"),
-                str_at(memory, "owner_id", ""),
-                number_at(memory, "importance"),
-                number_at(memory, "confidence"),
-                string_array_at(memory, "tags").join("、"),
-                str_at(memory, "event_id", "无"),
-                str_at(memory, "text", ""),
-                bullet_list(&string_array_at(memory, "facts"))
-            ));
-        }
+fn package_issue(
+    severity: impl Into<String>,
+    field: impl Into<String>,
+    message: impl Into<String>,
+) -> PackageVerificationIssue {
+    PackageVerificationIssue {
+        severity: severity.into(),
+        field: field.into(),
+        message: message.into(),
     }
-    output
 }
 
-fn build_map_markdown(payload: &Value) -> String {
-    let world = payload.get("world").unwrap_or(&Value::Null);
-    let map_image = world.get("map_image").unwrap_or(&Value::Null);
-    let mut output = format!(
-        "# 地图\n\n- 地图文件：{}\n- 尺寸：{} x {}\n\n## 地点索引\n\n",
-        str_at(map_image, "image_path", "未设置"),
-        number_or_string_at(map_image, "width", "?"),
-        number_or_string_at(map_image, "height", "?")
-    );
-    if let Some(locations) = payload.get("locations").and_then(Value::as_array) {
-        for location in locations {
-            output.push_str(&format!(
-                "- [{}](../locations/{}.md)：{}，{}\n",
-                str_at(location, "name", "未命名地点"),
-                sanitize_file_component(&str_at(location, "id", "location")),
-                str_at(location, "type", "地点"),
-                str_at(location, "visibility", "unknown")
-            ));
-        }
-    }
-    output.push_str("\n## 路线\n\n");
-    if let Some(routes) = world.get("map_routes").and_then(Value::as_array) {
-        for route in routes {
-            output.push_str(&format!(
-                "- {}：{} -> {}，危险 {}\n",
-                str_at(route, "name", "路线"),
-                str_at(route, "from_location_id", "?"),
-                str_at(route, "to_location_id", "?"),
-                number_at(route, "danger")
-            ));
-        }
-    }
-    output
-}
-
-fn build_timeline_markdown(payload: &Value) -> String {
-    let mut output = "# 历史事件\n\n".to_string();
-    if let Some(events) = payload.get("timeline").and_then(Value::as_array) {
-        for event in events {
-            output.push_str(&format!(
-                "## {} {}\n\n- 类型：{}\n- 时间：{}\n- 地点：{}\n- 参与者：{}\n- 可见性：{}\n- 重要性：{}\n\n{}\n\n影响：\n{}\n\n",
-                str_at(event, "id", "event"),
-                str_at(event, "title", "未命名事件"),
-                str_at(event, "type", "world_event"),
-                world_time(event.get("world_time")),
-                str_at(event, "location_id", "未知"),
-                string_array_at(event, "participant_ids").join("、"),
-                str_at(event, "visibility", "unknown"),
-                number_at(event, "importance"),
-                str_at(event, "description", ""),
-                bullet_list(&string_array_at(event, "effects"))
-            ));
-        }
-    }
-    output
-}
-
-fn build_threads_markdown(payload: &Value) -> String {
-    let mut output = "# 线索与任务\n\n".to_string();
-    if let Some(threads) = payload.get("threads").and_then(Value::as_array) {
-        for thread in threads {
-            output.push_str(&format!(
-                "## {} {}\n\n- 类型：{}\n- 状态：{}\n- 优先级：{}\n- 标签：{}\n- 起始事件：{}\n\n{}\n\n",
-                str_at(thread, "id", "thread"),
-                str_at(thread, "title", "未命名线索"),
-                str_at(thread, "kind", "main"),
-                str_at(thread, "status", "open"),
-                number_at(thread, "priority"),
-                string_array_at(thread, "tags").join("、"),
-                str_at(thread, "event_id", ""),
-                str_at(thread, "description", "")
-            ));
-        }
-    }
-    output
-}
-
-fn build_character_markdown(character: &Value, payload: &Value) -> String {
-    let location_id = str_at(character, "current_location_id", "");
-    let location_name = find_named(payload, "locations", &location_id).unwrap_or(location_id.clone());
-    format!(
-        "# {}\n\n- ID：{}\n- 性别：{}\n- 身份：{}\n- 状态：{}\n- 可见性：{}\n- 当前位置：{} ({})\n- 同行：{}\n\n## 简介\n\n{}\n\n## 性格与目标\n\n- 性格：{}\n- 目标：{}\n- 特质：{}\n- 行动倾向：{}\n\n## 玩家笔记\n\n{}\n\n## 记忆摘要\n\n{}\n",
-        str_at(character, "name", "未命名角色"),
-        str_at(character, "id", "character"),
-        str_at(character, "gender", "未指定"),
-        str_at(character, "role", ""),
-        str_at(character, "status", ""),
-        str_at(character, "visibility", "met"),
-        location_name,
-        location_id,
-        if character.get("companion").and_then(Value::as_bool).unwrap_or(false) { "是" } else { "否" },
-        str_at(character, "description", "暂无。"),
-        string_array_at(character, "personality").join("、"),
-        string_array_at(character, "goals").join("、"),
-        string_array_at(character, "traits").join("、"),
-        str_at(character, "action_tendency", "未设置"),
-        str_at(character, "player_notes", "暂无。"),
-        str_at(character, "memory_summary", "暂无。")
-    )
-}
-
-fn build_location_markdown(location: &Value, payload: &Value) -> String {
-    let id = str_at(location, "id", "location");
-    let mut event_titles = Vec::new();
-    if let Some(events) = payload.get("timeline").and_then(Value::as_array) {
-        for event in events {
-            if str_at(event, "location_id", "") == id {
-                event_titles.push(format!(
-                    "{} {}",
-                    str_at(event, "id", "event"),
-                    str_at(event, "title", "")
+fn package_entity_counts(envelope: &Value, issues: &mut Vec<PackageVerificationIssue>) -> Value {
+    let keys = [
+        "characters",
+        "storylines",
+        "scenarios",
+        "mediaAssets",
+        "personas",
+        "chats",
+        "chatCheckpoints",
+        "messages",
+        "summaryChapters",
+        "arcs",
+        "dungeonMindConfigs",
+        "fateChecks",
+        "creditLedger",
+        "creditAdjustments",
+        "moderationCases",
+        "creatorEarnings",
+        "engagementStats",
+        "syncOperations",
+        "syncConflicts",
+    ];
+    let mut counts = serde_json::Map::new();
+    let entities = envelope.get("entities").unwrap_or(&Value::Null);
+    for key in keys {
+        match entities.get(key).and_then(Value::as_object) {
+            Some(map) => {
+                counts.insert(key.to_string(), json!(map.len()));
+            }
+            None => {
+                counts.insert(key.to_string(), json!(0));
+                issues.push(package_issue(
+                    "error",
+                    format!("entities.{}", key),
+                    format!("{} must be an object map.", key),
                 ));
             }
         }
     }
-    let position = location.get("position").unwrap_or(&Value::Null);
-    format!(
-        "# {}\n\n- ID：{}\n- 类型：{}\n- 可见性：{}\n- 玩家已知：{}\n- 坐标：{}, {}\n- 控制势力：{}\n- 状态标签：{}\n\n## 描述\n\n{}\n\n## 连接地点\n\n{}\n\n## 本地事件\n\n{}\n\n## 玩家笔记\n\n{}\n",
-        str_at(location, "name", "未命名地点"),
-        id,
-        str_at(location, "type", "地点"),
-        str_at(location, "visibility", "unknown"),
-        if location.get("known_to_player").and_then(Value::as_bool).unwrap_or(false) { "是" } else { "否" },
-        number_or_string_at(position, "x", "?"),
-        number_or_string_at(position, "y", "?"),
-        str_at(location, "controlling_faction_id", "无"),
-        string_array_at(location, "state_tags").join("、"),
-        str_at(location, "description", "暂无。"),
-        bullet_list(&string_array_at(location, "connected_location_ids")),
-        bullet_list(&event_titles),
-        str_at(location, "player_notes", "暂无。")
-    )
+    Value::Object(counts)
 }
 
-fn create_backup(app: &AppHandle, active_dir: &Path, legacy_file: &Path) -> Result<(), String> {
-    let backup_dir = backup_dir(app)?;
-    fs::create_dir_all(&backup_dir).map_err(to_string)?;
-    let stamp = Utc::now().format("%Y%m%d_%H%M%S%.3f");
-    if active_dir.exists() {
-        let backup_path = backup_dir.join(format!("active_world_{stamp}"));
-        copy_dir_all(active_dir, &backup_path)?;
-    } else if legacy_file.exists() {
-        let backup_path = backup_dir.join(format!("active_world_{stamp}.json"));
-        fs::copy(legacy_file, backup_path).map_err(to_string)?;
-    } else {
-        return Ok(());
+fn package_asset_refs(envelope: &Value) -> AssetRefsReport {
+    let mut declared: Vec<String> = envelope
+        .get("entities")
+        .and_then(|entities| entities.get("mediaAssets"))
+        .and_then(Value::as_object)
+        .map(|media| media.keys().cloned().collect())
+        .unwrap_or_default();
+    declared.sort();
+    declared.dedup();
+
+    let mut referenced = Vec::new();
+    let entities = envelope.get("entities").unwrap_or(&Value::Null);
+    if let Some(storylines) = entities.get("storylines").and_then(Value::as_object) {
+        for story in storylines.values() {
+            collect_string_array(story.get("mediaIds"), &mut referenced);
+        }
     }
-    let mut backups = fs::read_dir(&backup_dir)
-        .map_err(to_string)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.starts_with("active_world_"))
+    if let Some(characters) = entities.get("characters").and_then(Value::as_object) {
+        for character in characters.values() {
+            collect_string_array(character.get("mediaIds"), &mut referenced);
+        }
+    }
+    if let Some(messages) = entities.get("messages").and_then(Value::as_object) {
+        for message in messages.values() {
+            collect_scene_hint_assets(message.get("sceneHints"), &mut referenced);
+        }
+    }
+    referenced.sort();
+    referenced.dedup();
+
+    let missing = referenced
+        .iter()
+        .filter(|id| !declared.contains(id))
+        .cloned()
+        .collect();
+
+    let browser_only = entities
+        .get("mediaAssets")
+        .and_then(Value::as_object)
+        .map(|media| {
+            let mut ids: Vec<String> = media
+                .iter()
+                .filter_map(|(id, asset)| {
+                    asset
+                        .get("relativePath")
+                        .and_then(Value::as_str)
+                        .is_some_and(|path| path.starts_with("browser://"))
+                        .then(|| id.clone())
+                })
+                .collect();
+            ids.sort();
+            ids
         })
-        .collect::<Vec<_>>();
-    backups.sort();
-    while backups.len() > MAX_BACKUPS {
-        if let Some(oldest) = backups.first() {
-            if oldest.is_dir() {
-                fs::remove_dir_all(oldest).map_err(to_string)?;
-            } else {
-                fs::remove_file(oldest).map_err(to_string)?;
+        .unwrap_or_default();
+
+    AssetRefsReport {
+        declared,
+        referenced,
+        missing,
+        browser_only,
+    }
+}
+
+fn collect_string_array(value: Option<&Value>, out: &mut Vec<String>) {
+    if let Some(items) = value.and_then(Value::as_array) {
+        for item in items {
+            if let Some(text) = item.as_str() {
+                out.push(text.to_string());
             }
         }
-        backups.remove(0);
-    }
-    Ok(())
-}
-
-fn save_entry(kind: &str, path: &Path) -> Result<SaveEntry, String> {
-    let value = read_save_payload(path).unwrap_or_else(|_| json!({}));
-    let schema_valid = validate_payload(&value).is_ok();
-    let world_name = value
-        .get("world")
-        .and_then(|world| world.get("name"))
-        .and_then(Value::as_str)
-        .unwrap_or("未命名世界")
-        .to_string();
-    let event_count = value
-        .get("timeline")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
-    let created_at = value
-        .get("updated_at")
-        .and_then(Value::as_str)
-        .unwrap_or("未知时间")
-        .to_string();
-    Ok(SaveEntry {
-        kind: kind.to_string(),
-        path: path_to_string(path),
-        absolute_path: Some(path_to_string(path)),
-        world_name,
-        event_count,
-        schema_valid,
-        created_at,
-    })
-}
-
-fn read_save_payload(path: &Path) -> Result<Value, String> {
-    if path.is_dir() {
-        read_json(&path.join("state").join("payload.json"))
-    } else {
-        read_json(path)
     }
 }
 
-fn copy_dir_all(source: &Path, target: &Path) -> Result<(), String> {
-    fs::create_dir_all(target).map_err(to_string)?;
-    for entry in fs::read_dir(source).map_err(to_string)? {
-        let entry = entry.map_err(to_string)?;
-        let file_type = entry.file_type().map_err(to_string)?;
-        let from = entry.path();
-        let to = target.join(entry.file_name());
-        if file_type.is_dir() {
-            copy_dir_all(&from, &to)?;
-        } else if file_type.is_file() {
-            ensure_parent(&to)?;
-            fs::copy(&from, &to).map_err(to_string)?;
+fn collect_scene_hint_assets(value: Option<&Value>, out: &mut Vec<String>) {
+    if let Some(hints) = value.and_then(Value::as_array) {
+        for hint in hints {
+            if let Some(id) = hint.get("backgroundAssetId").and_then(Value::as_str) {
+                out.push(id.to_string());
+            }
+            if let Some(id) = hint.get("musicAssetId").and_then(Value::as_str) {
+                out.push(id.to_string());
+            }
+            if let Some(sprites) = hint.get("characterSprites").and_then(Value::as_array) {
+                for sprite in sprites {
+                    if let Some(id) = sprite.get("mediaAssetId").and_then(Value::as_str) {
+                        out.push(id.to_string());
+                    }
+                }
+            }
+            if let Some(voices) = hint.get("voice").and_then(Value::as_array) {
+                for voice in voices {
+                    if let Some(id) = voice.get("assetId").and_then(Value::as_str) {
+                        out.push(id.to_string());
+                    }
+                }
+            }
         }
     }
-    Ok(())
 }
 
-fn str_at(value: &Value, key: &str, fallback: &str) -> String {
-    value
-        .get(key)
-        .and_then(Value::as_str)
-        .unwrap_or(fallback)
-        .to_string()
-}
-
-fn string_array_at(value: &Value, key: &str) -> Vec<String> {
-    value
-        .get(key)
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_string)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default()
-}
-
-fn bullet_list(items: &[String]) -> String {
-    if items.is_empty() {
-        "- 无".to_string()
-    } else {
-        items
-            .iter()
-            .map(|item| format!("- {item}"))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-fn number_at(value: &Value, key: &str) -> String {
-    number_or_string_at(value, key, "0")
-}
-
-fn number_or_string_at(value: &Value, key: &str, fallback: &str) -> String {
-    match value.get(key) {
-        Some(Value::Number(number)) => number.to_string(),
-        Some(Value::String(text)) => text.clone(),
-        _ => fallback.to_string(),
-    }
-}
-
-fn world_time(value: Option<&Value>) -> String {
-    let Some(time) = value else {
-        return "未知".to_string();
+fn verify_physical_assets(
+    workspace_dir: &Path,
+    envelope: &Value,
+    issues: &mut Vec<PackageVerificationIssue>,
+) {
+    let Some(media) = envelope
+        .get("entities")
+        .and_then(|entities| entities.get("mediaAssets"))
+        .and_then(Value::as_object)
+    else {
+        return;
     };
-    let label = time
-        .get("calendar_label")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let day = number_or_string_at(time, "day", "?");
-    let hour = number_or_string_at(time, "hour", "?");
-    format!("{label} 第 {day} 日 {hour} 时").trim().to_string()
-}
 
-fn find_named(payload: &Value, collection: &str, id: &str) -> Option<String> {
-    payload
-        .get(collection)
-        .and_then(Value::as_array)?
-        .iter()
-        .find(|item| item.get("id").and_then(Value::as_str) == Some(id))
-        .map(|item| str_at(item, "name", id))
-}
-
-fn validate_payload(payload: &Value) -> Result<(), String> {
-    if payload.get("schema_version").and_then(Value::as_i64) != Some(SCHEMA_VERSION) {
-        return Err("schema_version 不受支持。".to_string());
-    }
-    for key in [
-        "world",
-        "characters",
-        "locations",
-        "factions",
-        "timeline",
-        "memories",
-        "ai_logs",
-        "threads",
-        "suggested_actions",
-    ] {
-        if payload.get(key).is_none() {
-            return Err(format!("存档缺少字段：{key}"));
+    for (id, asset) in media {
+        let relative_path = asset
+            .get("relativePath")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let source_kind = asset
+            .get("source")
+            .and_then(|source| source.get("kind"))
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let size_bytes = asset.get("sizeBytes").and_then(Value::as_u64).unwrap_or(0);
+        if relative_path.trim().is_empty() {
+            if source_kind == "placeholder" && size_bytes == 0 {
+                issues.push(package_issue(
+                    "warning",
+                    format!("assets.{}.relativePath", id),
+                    "Placeholder asset has no physical file in the package.",
+                ));
+            } else {
+                issues.push(package_issue(
+                    "error",
+                    format!("assets.{}.relativePath", id),
+                    "Asset relativePath is required.",
+                ));
+            }
+            continue;
+        }
+        if relative_path.starts_with('/')
+            || relative_path.contains("..")
+            || relative_path.contains('\\')
+        {
+            issues.push(package_issue(
+                "error",
+                format!("assets.{}.relativePath", id),
+                "Asset relativePath must stay inside the workspace package.",
+            ));
+            continue;
+        }
+        if relative_path.starts_with("browser://") {
+            issues.push(package_issue(
+                "warning",
+                format!("assets.{}", id),
+                "Browser-only asset is not portable until reimported in the Tauri app.",
+            ));
+            continue;
+        }
+        if !relative_path.starts_with("assets/") {
+            issues.push(package_issue(
+                "warning",
+                format!("assets.{}.relativePath", id),
+                "Asset path should be under assets/ for portable packages.",
+            ));
+            continue;
+        }
+        let path = workspace_dir.join(relative_path);
+        if !path.exists() {
+            issues.push(package_issue(
+                "error",
+                format!("assets.{}", id),
+                "Asset file is missing from the workspace assets directory.",
+            ));
         }
     }
-    Ok(())
 }
 
-fn write_procedural_map(path: &Path, seed: &Value) -> Result<(), String> {
-    ensure_parent(path)?;
-    let seed_text = serde_json::to_string(seed).map_err(to_string)?;
-    let mut hasher = Sha256::new();
-    hasher.update(seed_text.as_bytes());
-    let hash = hasher.finalize();
-    let mut image: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::new(960, 640);
-    for (x, y, pixel) in image.enumerate_pixels_mut() {
-        let nx = x as f32 / 960.0;
-        let ny = y as f32 / 640.0;
-        let wave = ((nx * 13.0 + hash[0] as f32).sin() + (ny * 9.0 + hash[1] as f32).cos()) * 0.5;
-        let water = ny > 0.78 || nx < 0.08 || wave < -0.62;
-        *pixel = if water {
-            Rgba([41, 87, 112, 255])
-        } else if wave > 0.45 {
-            Rgba([107, 103, 77, 255])
-        } else {
-            Rgba([72, 111, 73, 255])
-        };
-    }
-    image.save(path).map_err(to_string)?;
-    Ok(())
+fn contains_secret_like_text(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    lower.contains("openai_api_key")
+        || lower.contains("bearer ")
+        || text
+            .split(|char: char| char.is_whitespace() || char == '"' || char == '\'')
+            .any(|part| part.starts_with("sk-") && part.len() >= 16)
 }
 
-fn chat_endpoint(base_url: &str) -> String {
-    let trimmed = base_url.trim_end_matches('/');
-    if trimmed.ends_with("/v1/chat/completions") {
-        trimmed.to_string()
-    } else if trimmed.ends_with("/v1") {
-        format!("{trimmed}/chat/completions")
-    } else {
-        format!("{trimmed}/v1/chat/completions")
-    }
-}
-
-fn path_to_string<P: AsRef<Path>>(path: P) -> String {
+fn path_to_string(path: impl AsRef<Path>) -> String {
     path.as_ref().to_string_lossy().to_string()
 }
 
-fn to_string<E: std::fmt::Display>(error: E) -> String {
+fn to_string(error: impl std::fmt::Display) -> String {
     error.to_string()
-}
-
-fn build_main_window(app: &AppHandle) -> tauri::Result<tauri::WebviewWindow> {
-    if let Some(config) = app
-        .config()
-        .app
-        .windows
-        .iter()
-        .find(|config| config.label == MAIN_WINDOW_LABEL)
-        .or_else(|| app.config().app.windows.first())
-    {
-        WebviewWindowBuilder::from_config(app, config)?.build()
-    } else {
-        WebviewWindowBuilder::new(app, MAIN_WINDOW_LABEL, WebviewUrl::default())
-            .title("Evolvria")
-            .inner_size(1440.0, 900.0)
-            .min_inner_size(390.0, 640.0)
-            .resizable(true)
-            .build()
-    }
-}
-
-fn show_main_window(app: &AppHandle) -> tauri::Result<()> {
-    #[cfg(target_os = "macos")]
-    {
-        app.set_activation_policy(tauri::ActivationPolicy::Regular)?;
-        let _ = app.show();
-    }
-
-    let window = if let Some(window) = app.get_webview_window(MAIN_WINDOW_LABEL) {
-        window
-    } else {
-        build_main_window(app)?
-    };
-
-    let _ = window.unminimize();
-    window.show()?;
-    let _ = window.set_focus();
-    Ok(())
-}
-
-pub fn run() {
-    tauri::Builder::default()
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![
-            get_platform_capabilities,
-            load_settings,
-            save_settings,
-            load_active_world,
-            save_world,
-            save_ai_checkpoint,
-            list_save_entries,
-            delete_save_entry,
-            export_world,
-            import_world,
-            import_map_image,
-            generate_fantasy_map,
-            generate_map_from_reference,
-            call_glosc,
-            check_glosc_connection,
-            reveal_or_share_path,
-            open_save_directory
-        ])
-        .setup(|app| {
-            show_main_window(app.handle())?;
-            Ok(())
-        })
-        .build(tauri::generate_context!())
-        .expect("failed to build Evolvria")
-        .run(|app, event| match event {
-            tauri::RunEvent::Ready => {
-                if let Err(error) = show_main_window(app) {
-                    eprintln!("failed to show Evolvria main window: {error}");
-                }
-            }
-            #[cfg(target_os = "macos")]
-            tauri::RunEvent::Reopen {
-                has_visible_windows: false,
-                ..
-            } => {
-                if let Err(error) = show_main_window(app) {
-                    eprintln!("failed to reopen Evolvria main window: {error}");
-                }
-            }
-            _ => {}
-        });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
 
     #[test]
-    fn resolves_chat_endpoint() {
+    fn rejects_path_traversal_workspace_id() {
+        assert!(validate_workspace_id("../bad").is_err());
+        assert!(validate_workspace_id("workspace_ok-1").is_ok());
+    }
+
+    #[test]
+    fn validates_envelope_shape() {
+        let envelope = json!({
+            "schemaVersion": "1.0.0",
+            "workspace": { "id": "workspace_test", "name": "Test", "updatedAt": "2026-07-02T00:00:00Z" },
+            "entities": {}
+        });
+        assert!(validate_envelope(&envelope).is_ok());
+    }
+
+    #[test]
+    fn rejects_wrong_schema() {
+        let envelope = json!({
+            "schemaVersion": "2.0.0",
+            "workspace": { "id": "workspace_test" },
+            "entities": {}
+        });
+        assert!(validate_envelope(&envelope).is_err());
+    }
+
+    #[test]
+    fn lists_and_restores_workspace_backups_from_dir() {
+        let dir = temp_test_dir("workspace_backups");
+        fs::create_dir_all(&dir).unwrap();
+        let envelope = test_envelope(json!({}));
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+
+        let backup = create_backup_in_dir(&dir, "workspace_test", "manual_test").unwrap();
+        assert!(PathBuf::from(&backup.path).exists());
+        assert!(backup.size_bytes > 0);
+
+        let mut changed = envelope.clone();
+        changed["workspace"]["name"] = json!("Changed Workspace");
+        write_json_atomic(&dir.join(SAVE_FILE), &changed).unwrap();
+        let restored = restore_backup_from_dir(&dir, "workspace_test", &backup.id).unwrap();
+        assert_eq!(restored["workspace"]["name"], "Test Workspace");
         assert_eq!(
-            chat_endpoint("https://one.gloscai.com"),
-            "https://one.gloscai.com/v1/chat/completions"
+            read_json(&dir.join(SAVE_FILE)).unwrap()["workspace"]["name"],
+            "Test Workspace"
         );
+
+        let backups = list_backups_from_dir(&dir, "workspace_test").unwrap();
+        assert!(backups.iter().any(|item| item.id == backup.id));
+        assert!(backups.iter().any(|item| item.reason == "pre_restore"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn accepts_safe_workspace_zip_entries() {
+        let bytes = make_zip(&[
+            (SAVE_FILE, br#"{"schemaVersion":"1.0.0"}"#.as_slice()),
+            (MANIFEST_FILE, b"{}"),
+            ("assets/images/cover.png", b"image"),
+        ]);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert!(validate_zip_entries(&mut archive).is_ok());
+    }
+
+    #[test]
+    fn rejects_zip_path_traversal_entries() {
+        let bytes = make_zip(&[(SAVE_FILE, b"{}"), ("../evil.json", b"bad")]);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
         assert_eq!(
-            chat_endpoint("https://one.gloscai.com/v1"),
-            "https://one.gloscai.com/v1/chat/completions"
+            validate_zip_entries(&mut archive).unwrap_err(),
+            "zip_path_traversal"
         );
     }
 
     #[test]
-    fn validates_payload_schema() {
-        let payload = json!({
-            "schema_version": 1,
-            "world": {"id": "world_001", "name": "烟测世界"},
-            "characters": [],
-            "locations": [],
-            "factions": [],
-            "timeline": [],
-            "memories": [],
-            "ai_logs": [],
-            "threads": [],
-            "suggested_actions": []
-        });
-        assert!(validate_payload(&payload).is_ok());
+    fn rejects_unknown_zip_entries() {
+        let bytes = make_zip(&[(SAVE_FILE, b"{}"), ("private/key.txt", b"bad")]);
+        let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).unwrap();
+        assert_eq!(
+            validate_zip_entries(&mut archive).unwrap_err(),
+            "zip_unknown_entry"
+        );
     }
 
     #[test]
-    fn builds_workspace_files_with_agents_entrypoint() {
-        let payload = json!({
-            "schema_version": 1,
-            "world": {
-                "id": "world_001",
-                "name": "烟测世界",
-                "summary": "测试摘要",
-                "current_time": {"day": 1, "hour": 8},
-                "map_routes": [],
-                "map_image": {}
-            },
-            "characters": [{"id": "char_hero", "name": "主角", "current_location_id": "loc_start"}],
-            "locations": [{"id": "loc_start", "name": "起点", "position": {"x": 0, "y": 0}}],
-            "factions": [],
-            "timeline": [],
-            "memories": [],
-            "ai_logs": [],
-            "threads": [],
-            "suggested_actions": [],
-            "updated_at": "2026-06-30T00:00:00Z"
-        });
-        let files = build_workspace_files(&payload).expect("workspace files");
-        let paths = files.iter().map(|(path, _)| path.as_str()).collect::<Vec<_>>();
-        assert!(paths.contains(&"AGENTS.md"));
-        assert!(paths.contains(&"state/payload.json"));
-        assert!(paths.contains(&"characters/char_hero.md"));
-        assert!(paths.contains(&"locations/loc_start.md"));
-        let agents = files
+    fn recognizes_only_workspace_asset_paths() {
+        assert!(is_import_asset_path("assets/images/cover.png"));
+        assert!(is_import_asset_path("assets/audio/voice.ogg"));
+        assert!(is_import_asset_path("assets/video/scene.webm"));
+        assert!(is_import_asset_path("assets/documents/reference.txt"));
+        assert!(!is_import_asset_path("assets/secrets/key.txt"));
+        assert!(!is_import_asset_path("private/assets/images/cover.png"));
+    }
+
+    #[test]
+    fn maps_only_supported_media_import_extensions() {
+        assert_eq!(media_metadata("png"), Some(("image", "image/png")));
+        assert_eq!(media_metadata("WAV"), Some(("audio", "audio/wav")));
+        assert_eq!(media_metadata("pdf"), Some(("document", "application/pdf")));
+        assert_eq!(media_metadata("exe"), None);
+        assert_eq!(media_metadata(""), None);
+    }
+
+    #[test]
+    fn validates_media_purpose_values() {
+        assert!(validate_media_purpose("cover").is_ok());
+        assert!(validate_media_purpose("voice").is_ok());
+        assert_eq!(
+            validate_media_purpose("../cover").unwrap_err(),
+            "invalid_media_purpose"
+        );
+        assert_eq!(
+            validate_media_purpose("shell").unwrap_err(),
+            "invalid_media_purpose"
+        );
+    }
+
+    #[test]
+    fn validates_secret_keys_and_values() {
+        assert!(validate_secret_key("openai-compatible-api-key").is_ok());
+        assert_eq!(
+            validate_secret_key("../token").unwrap_err(),
+            "invalid_secret_key"
+        );
+        assert!(validate_secret_value("sk-test").is_ok());
+        assert_eq!(
+            validate_secret_value("").unwrap_err(),
+            "invalid_secret_value"
+        );
+        assert_eq!(
+            secret_env_var_name("openai-compatible-api-key"),
+            Some(OPENAI_COMPATIBLE_KEY_ENV)
+        );
+        assert_eq!(secret_env_var_name("unknown-key"), None);
+    }
+
+    #[test]
+    fn file_secret_helpers_roundtrip_without_legacy_export_names() {
+        let dir = temp_test_dir("secret_file");
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("secrets.insecure.json");
+
+        write_secret_to_file(&path, "openai-compatible-api-key", "sk-test").unwrap();
+        assert_eq!(
+            read_secret_from_file(&path, "openai-compatible-api-key").unwrap(),
+            Some("sk-test".to_string())
+        );
+        assert!(remove_secret_from_file(&path, "openai-compatible-api-key").unwrap());
+        assert_eq!(
+            read_secret_from_file(&path, "openai-compatible-api-key").unwrap(),
+            None
+        );
+        assert!(!path.exists());
+        assert!(!remove_secret_from_file(&path, "openai-compatible-api-key").unwrap());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn reads_only_workspace_media_data_urls() {
+        let dir = temp_test_dir("media_data_url");
+        let image_dir = dir.join("assets/images");
+        fs::create_dir_all(&image_dir).unwrap();
+        fs::write(image_dir.join("cover.png"), b"png").unwrap();
+
+        let data_url = read_media_data_url_from_dir(&dir, "assets/images/cover.png").unwrap();
+        assert!(data_url.starts_with("data:image/png;base64,"));
+        assert_eq!(
+            read_media_data_url_from_dir(&dir, "../secret.png").unwrap_err(),
+            "invalid_asset_path"
+        );
+        assert_eq!(
+            read_media_data_url_from_dir(&dir, "assets/documents/ref.pdf").unwrap_err(),
+            "media_preview_unsupported"
+        );
+        assert_eq!(
+            read_media_data_url_from_dir(&dir, "assets/images/missing.png").unwrap_err(),
+            "media_file_missing"
+        );
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_media_preview_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let dir = temp_test_dir("media_symlink");
+        let outside = temp_test_dir("media_symlink_outside");
+        fs::create_dir_all(dir.join("assets/images")).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.png"), b"secret").unwrap();
+        symlink(
+            outside.join("secret.png"),
+            dir.join("assets/images/escape.png"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            read_media_data_url_from_dir(&dir, "assets/images/escape.png").unwrap_err(),
+            "invalid_asset_path"
+        );
+        let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_dir_all(outside);
+    }
+
+    #[test]
+    fn generates_image_thumbnail_variant() {
+        let dir = temp_test_dir("thumbnail");
+        let image_dir = dir.join("assets/images");
+        fs::create_dir_all(&image_dir).unwrap();
+        let image = image::RgbaImage::from_pixel(200, 100, image::Rgba([32, 64, 96, 255]));
+        image.save(image_dir.join("cover.png")).unwrap();
+        let envelope = test_envelope(json!({
+            "media_cover": {
+                "id": "media_cover",
+                "kind": "image",
+                "purpose": "cover",
+                "relativePath": "assets/images/cover.png",
+                "mimeType": "image/png",
+                "sizeBytes": 800,
+                "variants": [],
+                "altText": "Cover",
+                "source": { "kind": "owned", "label": "Test" },
+                "license": { "kind": "owned", "note": "Test" },
+                "safety": { "rating": "SFW", "state": "local_ready", "reasons": [], "safetyFlags": ["none"] },
+                "createdAt": "2026-07-02T00:00:00Z"
+            }
+        }));
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+
+        let variant = generate_thumbnail_from_dir(&dir, "media_cover", 64).unwrap();
+        assert_eq!(variant["id"], "variant_media_cover_64");
+        assert_eq!(variant["width"], 64);
+        assert_eq!(variant["height"], 32);
+        let relative_path = variant["relativePath"].as_str().unwrap();
+        assert!(relative_path.starts_with("assets/images/variants/"));
+        assert!(dir.join(relative_path).exists());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn verifies_workspace_package_dir_with_manifest_and_placeholder_warning() {
+        let dir = temp_test_dir("verify_ok");
+        fs::create_dir_all(&dir).unwrap();
+        let envelope = test_envelope(json!({
+            "media_cover": {
+                "id": "media_cover",
+                "relativePath": "",
+                "mimeType": "image/svg-placeholder",
+                "sizeBytes": 0,
+                "source": { "kind": "placeholder" }
+            }
+        }));
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+        write_json_atomic(
+            &dir.join(MANIFEST_FILE),
+            &json!({
+                "format": "evolvria_workspace",
+                "schemaVersion": "1.0.0",
+                "workspaceId": "workspace_test",
+                "updatedAt": "2026-07-02T00:00:00Z"
+            }),
+        )
+        .unwrap();
+
+        let report = verify_workspace_package_dir(&dir).unwrap();
+        assert!(report.ok);
+        assert_eq!(report.format, "tauri_workspace_dir");
+        assert_eq!(
+            report.asset_refs.referenced,
+            vec!["media_cover".to_string()]
+        );
+        assert!(report
+            .issues
             .iter()
-            .find(|(path, _)| path == "AGENTS.md")
-            .map(|(_, content)| content)
-            .unwrap();
-        assert!(agents.contains("每次处理世界模拟"));
+            .any(|issue| issue.severity == "warning"
+                && issue.field == "assets.media_cover.relativePath"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn package_verify_reports_missing_physical_assets_and_secrets() {
+        let dir = temp_test_dir("verify_missing_asset");
+        fs::create_dir_all(&dir).unwrap();
+        let mut envelope = test_envelope(json!({
+            "media_cover": {
+                "id": "media_cover",
+                "relativePath": "assets/images/missing.png",
+                "mimeType": "image/png",
+                "sizeBytes": 42,
+                "source": { "kind": "owned" }
+            }
+        }));
+        envelope["storylines"]["story_test"]["premise"] =
+            json!("Leaked sk-test-12345678901234567890");
+        write_json_atomic(&dir.join(SAVE_FILE), &envelope).unwrap();
+        write_json_atomic(
+            &dir.join(MANIFEST_FILE),
+            &json!({
+                "format": "evolvria_workspace",
+                "schemaVersion": "1.0.0",
+                "workspaceId": "workspace_test"
+            }),
+        )
+        .unwrap();
+
+        let report = verify_workspace_package_dir(&dir).unwrap();
+        assert!(!report.ok);
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.field == "assets.media_cover"));
+        assert!(report.issues.iter().any(|issue| issue.field == "secrets"));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    fn make_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let cursor = Cursor::new(Vec::new());
+        let mut writer = zip::ZipWriter::new(cursor);
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+        for (name, bytes) in entries {
+            writer.start_file(*name, options).unwrap();
+            writer.write_all(bytes).unwrap();
+        }
+        writer.finish().unwrap().into_inner()
+    }
+
+    fn temp_test_dir(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "evolvria_{}_{}",
+            name,
+            Utc::now().timestamp_nanos_opt().unwrap()
+        ))
+    }
+
+    fn test_envelope(media_assets: Value) -> Value {
+        let empty = json!({});
+        json!({
+            "schemaVersion": "1.0.0",
+            "workspace": {
+                "id": "workspace_test",
+                "name": "Test Workspace",
+                "description": "Package verifier test.",
+                "createdAt": "2026-07-02T00:00:00Z",
+                "updatedAt": "2026-07-02T00:00:00Z"
+            },
+            "entities": {
+                "characters": empty,
+                "storylines": {
+                    "story_test": {
+                        "id": "story_test",
+                        "title": "Test Story",
+                        "premise": "Clean premise",
+                        "mediaIds": ["media_cover"]
+                    }
+                },
+                "scenarios": empty,
+                "mediaAssets": media_assets,
+                "personas": empty,
+                "chats": empty,
+                "chatCheckpoints": empty,
+                "messages": empty,
+                "summaryChapters": empty,
+                "arcs": empty,
+                "dungeonMindConfigs": empty,
+                "fateChecks": empty,
+                "creditLedger": empty,
+                "creditAdjustments": empty,
+                "moderationCases": empty,
+                "creatorEarnings": empty,
+                "engagementStats": empty,
+                "syncOperations": empty,
+                "syncConflicts": empty
+            }
+        })
     }
 }

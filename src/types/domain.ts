@@ -1,344 +1,645 @@
-export const SCHEMA_VERSION = 1;
+export type ContentRating = "SFW" | "M17" | "AdultLocked";
+export type ModerationState =
+  | "draft"
+  | "local_ready"
+  | "submitted"
+  | "approved"
+  | "published"
+  | "needs_changes"
+  | "rejected"
+  | "appealed";
+export type Visibility = "private" | "unlisted" | "public";
+export type PlayMode = "chat" | "scene" | "fate" | "voice" | "image";
+export type MessageMode = "say" | "act" | "ask" | "ooc";
+export type MessageRole = "system" | "user" | "assistant" | "narrator" | "fate" | "tool";
+export type SafetyFlag = "none" | "mature_theme" | "adult_locked" | "violence" | "copyright" | "blocked";
 
-export type RouteName =
-  | "main_menu"
-  | "onboarding"
-  | "new_world"
-  | "exploration"
-  | "map"
-  | "locations"
-  | "characters"
-  | "timeline"
-  | "threads"
-  | "world_lore"
-  | "saves"
-  | "settings";
-
-export type AIPurpose =
-  | "world_expand"
-  | "player_action"
-  | "character_complete"
-  | "character_image"
-  | "npc_simulation"
-  | "memory_extract"
-  | "summary_update"
-  | "consistency_check";
-
-export interface WorldTime {
-  day: number;
-  hour: number;
-  calendar_label?: string;
+export interface Workspace {
+  id: string;
+  name: string;
+  description: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
-export interface MapPosition {
-  x: number;
-  y: number;
+export interface WorkspaceMeta {
+  id: string;
+  name: string;
+  description?: string;
+  updatedAt: string;
+  path?: string;
+  schemaVersion?: string;
 }
 
-export interface Relationship {
-  type: string;
-  trust: number;
-  affection: number;
-  tension: number;
-  notes: string;
+export interface SyncSettings {
+  enabled: boolean;
+  endpoint?: string;
+  lastSyncAt?: string;
+  status: "local_only" | "ready" | "syncing" | "conflict" | "error";
+  conflictCount: number;
+}
+
+export type AccountAgeGate = "unknown" | "adult" | "minor";
+export type AccountPermission = "sync" | "publish" | "billing" | "adult_content";
+
+export interface CloudAccountSession {
+  id: string;
+  displayName: string;
+  email?: string;
+  ageGate: AccountAgeGate;
+  permissions: AccountPermission[];
+  status: "local_preview" | "connected" | "expired";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type SyncOperationEntity = keyof EntityStore;
+export type SyncOperationKind = "create" | "update" | "delete";
+export type SyncOperationStatus = "queued" | "pushed" | "acked" | "conflicted" | "failed";
+
+export interface SyncOperation {
+  id: string;
+  workspaceId: string;
+  entityType: SyncOperationEntity;
+  entityId: string;
+  op: SyncOperationKind;
+  patch: unknown;
+  baseVersion?: string;
+  clientId: string;
+  status: SyncOperationStatus;
+  error?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface SyncConflict {
+  id: string;
+  operationId: string;
+  entityType: SyncOperationEntity;
+  entityId: string;
+  field: string;
+  localValue: unknown;
+  remoteValue: unknown;
+  status: "open" | "resolved_local" | "resolved_remote" | "copied";
+  createdAt: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+
+export interface WorkspaceSettings {
+  activeWorkspaceId: string;
+  adultContentUnlocked: boolean;
+  cloudAccount?: CloudAccountSession;
+  provider: AIProviderSettings;
+  budget: BudgetSettings;
+  sync: SyncSettings;
+}
+
+export interface BudgetSettings {
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  maxEstimatedCostPerTurn: number;
+}
+
+export type AIProviderType = "mock" | "openai-compatible" | "local-http" | "cloud-proxy";
+
+export interface AIProviderSettings {
+  type: AIProviderType;
+  baseUrl: string;
+  model: string;
+  temperature: number;
+  maxTokens: number;
+}
+
+export interface AIProviderRef {
+  type: AIProviderType;
+  model: string;
+}
+
+export interface CreatorRef {
+  id: string;
+  name: string;
+}
+
+export interface ContentVersion {
+  version: string;
+  changelog: string;
+  baseVersionId?: string;
+  status: ModerationState;
+}
+
+export interface ModerationStatus {
+  rating: ContentRating;
+  state: ModerationState;
+  reasons: string[];
+  safetyFlags: SafetyFlag[];
+  reviewedAt?: string;
+  reviewerId?: string;
+}
+
+export interface CharacterVoice {
+  tone: string;
+  cadence: string;
+  catchphrases: string[];
+  forbiddenPhrases: string[];
+  language: string;
+  referenceAssetId?: string;
 }
 
 export interface Character {
   id: string;
+  type: "character";
   name: string;
-  gender?: string;
-  role: string;
-  description: string;
-  personality: string[];
+  subtitle?: string;
+  summary: string;
+  profile: string;
+  voice: CharacterVoice;
   goals: string[];
-  secrets: string[];
-  current_location_id: string;
-  status: string;
-  traits: string[];
-  relationships: Record<string, Relationship>;
-  memory_summary: string;
-  known_event_ids: string[];
-  player_notes: string;
-  player_notes_updated_at: string;
-  appearance_description?: string;
-  portrait_prompt?: string;
-  portrait_image_url?: string;
-  portrait_updated_at?: string;
-  action_tendency?: string;
-  companion?: boolean;
-  visibility?: "met" | "heard" | "hidden";
+  fears?: string[];
+  boundaries: string[];
+  tags: string[];
+  mediaIds: string[];
+  defaultScenarioIds: string[];
+  moderation: ModerationStatus;
+  visibility: Visibility;
+  createdBy: CreatorRef;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
 }
 
-export interface Location {
+export interface StoryCast {
+  characterId: string;
+  role: string;
+  relationshipSeed: string;
+  visibility: "always" | "spoiler" | "conditional";
+}
+
+export interface Storyline {
   id: string;
-  name: string;
-  type: string;
-  description: string;
-  map_id: string;
-  region_id?: string;
-  position: MapPosition;
-  connected_location_ids: string[];
-  controlling_faction_id: string | null;
-  known_to_player: boolean;
-  visibility: "known_to_player" | "heard" | "unknown";
-  state_tags: string[];
-  event_ids: string[];
-  player_notes: string;
-  player_notes_updated_at: string;
-  biome?: string;
+  type: "storyline";
+  title: string;
+  tagline: string;
+  summary: string;
+  premise: string;
+  playerRole: string;
+  worldRules: string[];
+  tags: string[];
+  language: string;
+  rating: ContentRating;
+  cast: StoryCast[];
+  scenarioIds: string[];
+  mediaIds: string[];
+  supportedModes: PlayMode[];
+  dungeonMindConfigId?: string;
+  moderation: ModerationStatus;
+  visibility: Visibility;
+  version: ContentVersion;
+  createdBy: CreatorRef;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
+export interface ScenarioTrigger {
+  type: "default" | "tag" | "arc" | "manual";
+  value?: string;
+}
+
+export interface Scenario {
+  id: string;
+  storylineId: string;
+  title: string;
+  summary: string;
+  opening: string;
+  location?: string;
+  participatingCharacterIds: string[];
+  trigger: ScenarioTrigger;
+  initialState: Record<string, unknown>;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
+export interface MediaVariant {
+  id: string;
+  relativePath: string;
+  width?: number;
   height?: number;
+  sizeBytes?: number;
+  purpose: "thumbnail" | "preview" | "original";
 }
 
-export interface MapRegion {
+export interface AssetSource {
+  kind: "original" | "generated" | "imported" | "placeholder";
+  label: string;
+  url?: string;
+}
+
+export interface AssetLicense {
+  kind: "owned" | "cc0" | "licensed" | "unknown";
+  note: string;
+}
+
+export interface MediaAsset {
   id: string;
-  name: string;
-  type: string;
-  description: string;
-  biome: string;
-  center: MapPosition;
-  color: string;
-  controlling_faction_id: string | null;
-  location_ids: string[];
+  kind: "image" | "audio" | "video" | "document";
+  purpose: "cover" | "avatar" | "background" | "sprite" | "voice" | "reference";
+  relativePath: string;
+  mimeType: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+  sizeBytes: number;
+  variants: MediaVariant[];
+  altText: string;
+  source: AssetSource;
+  license: AssetLicense;
+  safety: ModerationStatus;
+  createdAt: string;
+  updatedAt?: string;
+  deletedAt?: string;
 }
 
-export interface Faction {
+export type MediaGenerationKind = "voice" | "image";
+export type MediaGenerationStatus = "queued" | "running" | "completed" | "failed" | "blocked";
+
+export interface MediaGenerationJob {
   id: string;
-  name: string;
-  agenda: string;
-  attitude: string;
-  controlled_location_ids: string[];
-}
-
-export interface TimelineEvent {
-  id: string;
-  type: string;
-  title: string;
-  description: string;
-  world_time: WorldTime;
-  location_id: string;
-  participant_ids: string[];
-  cause_event_ids: string[];
-  effects: string[];
-  importance: number;
-  visibility: string;
-  outcome?: string;
-  outcome_reason?: string;
-  consequence?: string;
-}
-
-export interface Memory {
-  id: string;
-  scope: string;
-  owner_id: string;
-  text: string;
-  facts: string[];
-  event_id: string;
-  importance: number;
-  confidence: number;
-  tags: string[];
-  created_world_time: WorldTime;
-}
-
-export interface Thread {
-  id: string;
-  title: string;
-  description: string;
-  kind: string;
-  status: "open" | "resolved";
-  priority: number;
-  tags: string[];
-  event_id: string;
-  progress: Array<{ event_id: string; text: string; created_at: string }>;
-}
-
-export interface StoryEnding {
-  id: string;
-  title: string;
-  summary: string;
-  achieved_goal: string;
-  world_time: WorldTime;
-  event_id: string;
-  created_at: string;
-}
-
-export interface MapRoute {
-  id: string;
-  from_location_id: string;
-  to_location_id: string;
-  name: string;
-  type: string;
-  danger: number;
-}
-
-export interface MapImage {
-  id: string;
-  name: string;
-  image_path: string;
-  data_url?: string;
-  width: number;
-  height: number;
-  original_width?: number;
-  original_height?: number;
-  max_dimension?: number;
-  resized_for_device?: boolean;
-  scale_label: string;
-  locations: string[];
-  routes: MapRoute[];
-  generator: Record<string, unknown>;
-}
-
-export interface World {
-  id: string;
-  name: string;
-  genre: string;
-  tone: string[];
-  current_time: WorldTime;
-  summary: string;
-  phase_summaries: unknown[];
-  summary_event_cursor: number;
-  rules: string[];
-  themes: string[];
-  content_limits: string[];
-  narrative_detail: string;
-  npc_autonomy_frequency: string;
-  map_image: Partial<MapImage>;
-  map_routes: MapRoute[];
-  map_regions?: MapRegion[];
-  map_locked: boolean;
-  ending?: StoryEnding;
-  created_at: string;
-  schema_version: number;
-}
-
-export interface AIUsage {
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens?: number;
-  cost_estimate?: number | null;
-}
-
-export interface AIRequestLog {
-  id: string;
-  world_id: string;
-  purpose: string;
-  prompt_hash: string;
+  kind: MediaGenerationKind;
+  storylineId: string;
+  chatId?: string;
+  messageId?: string;
+  speakerId?: string;
+  prompt: string;
+  style?: string;
+  voiceText?: string;
+  provider: string;
   model: string;
-  started_at: string;
-  finished_at: string | null;
-  status: "pending" | "ok" | "error";
-  error: string | null;
-  usage: AIUsage;
-  summary: string;
-  raw_response?: string;
-}
-
-export interface SavePayload {
-  schema_version: number;
-  world: World | Record<string, never>;
-  characters: Character[];
-  locations: Location[];
-  factions: Faction[];
-  timeline: TimelineEvent[];
-  memories: Memory[];
-  ai_logs: AIRequestLog[];
-  threads: Thread[];
-  suggested_actions: string[];
-  event_counter: number;
-  memory_counter: number;
-  location_counter: number;
-  thread_counter: number;
-  updated_at: string;
-}
-
-export interface Settings {
-  theme: "dark" | "light";
-  font_size: "small" | "medium" | "large";
-  fullscreen: boolean;
-  context_panel_width: number;
-  glosc_provider: string;
-  glosc_base_url: string;
-  glosc_token: string;
-  model: string;
-  timeout_seconds: number;
-  auto_retry: boolean;
-  confirm_ai_calls: boolean;
-  show_usage_estimate: boolean;
-  auto_save_enabled: boolean;
-  debug_logs: boolean;
-  log_level: "default" | "debug" | "deep";
-  developer_mode: boolean;
-  content_preferences: string;
-  local_token_risk_acknowledged: boolean;
-  onboarding_completed: boolean;
-}
-
-export interface WorldSeed {
-  world_name: string;
-  genre: string;
-  tone: string;
-  limits: string;
-  narrative_detail: string;
-  npc_autonomy_frequency: string;
-  hero: {
-    name: string;
-    gender: string;
-    description: string;
-    goal: string;
-    ability: string;
-    weakness: string;
-    appearance_description?: string;
-  };
-  key_characters: Array<{
-    name: string;
-    gender: string;
-    role: string;
-    relationship: string;
-    personality: string;
-    goal: string;
-    secret: string;
-    action_tendency: string;
-    description: string;
-    appearance_description?: string;
-  }>;
-}
-
-export interface StatePatch {
-  target_type: "world" | "character" | "location" | "event" | "thread";
-  target_id: string;
-  op: "set" | "append" | "remove" | "increment" | "link" | "unlink";
-  path: string;
-  value: unknown;
-  reason?: string;
-}
-
-export interface PlayerActionResult {
-  status: "ok" | "error";
-  narrative: string;
-  time_delta_minutes: number;
-  events: Array<Partial<TimelineEvent>>;
-  character_updates: StatePatch[];
-  location_updates: StatePatch[];
-  relationship_updates: Array<{
-    source_id: string;
-    target_id: string;
-    trust_delta?: number;
-    affection_delta?: number;
-    tension_delta?: number;
-    note: string;
-  }>;
-  memory_writes: Array<Partial<Memory>>;
-  suggested_actions: string[];
-  warnings: string[];
+  status: MediaGenerationStatus;
+  safetyFlags: SafetyFlag[];
+  assetId?: string;
+  ledgerEntryId?: string;
   error?: string;
-  usage?: AIUsage;
-  request_id?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
 }
 
-export interface PlatformCapabilities {
-  os: string;
-  mobile: boolean;
-  can_reveal_directories: boolean;
-  can_share_files: boolean;
-  can_use_file_picker: boolean;
-  app_data_dir?: string;
+export interface NarrativePreference {
+  key: string;
+  value: string;
+}
+
+export interface Persona {
+  id: string;
+  name: string;
+  pronouns?: string;
+  description: string;
+  preferences: NarrativePreference[];
+  boundaries: string[];
+  privateNotes?: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt?: string;
+}
+
+export interface Chat {
+  id: string;
+  storylineId: string;
+  scenarioId: string;
+  personaId: string;
+  title: string;
+  status: "active" | "archived" | "error";
+  provider: AIProviderRef;
+  activeArcId?: string;
+  messageIds: string[];
+  checkpointIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ChatCheckpoint {
+  id: string;
+  chatId: string;
+  label: string;
+  messageIndex: number;
+  messageId?: string;
+  createdAt: string;
+}
+
+export interface SceneSprite {
+  characterId: string;
+  mediaAssetId?: string;
+  position: "left" | "center" | "right";
+  expression?: string;
+}
+
+export interface VoiceCue {
+  speakerId?: string;
+  text: string;
+  voiceModel?: string;
+  assetId?: string;
+  status: "planned" | "generated" | "failed";
+}
+
+export interface SceneChoice {
+  id: string;
+  label: string;
+  message: string;
+}
+
+export interface SceneHint {
+  backgroundAssetId?: string;
+  characterSprites?: SceneSprite[];
+  camera?: "wide" | "medium" | "close";
+  mood?: string;
+  musicAssetId?: string;
+  voice?: VoiceCue[];
+  choices?: SceneChoice[];
+}
+
+export interface CostEstimate {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  currency: "local_estimate" | "credit";
+}
+
+export interface Message {
+  id: string;
+  chatId: string;
+  role: MessageRole;
+  speakerId?: string;
+  content: string;
+  mode?: MessageMode;
+  promptContractVersion?: string;
+  sceneHints?: SceneHint[];
+  relationshipDeltas?: RelationshipDelta[];
+  tokenEstimate?: number;
+  costEstimate?: CostEstimate;
+  safetyFlags: SafetyFlag[];
+  parentMessageId?: string;
+  retryOfMessageId?: string;
+  bookmarkedAt?: string;
+  bookmarkNote?: string;
+  createdAt: string;
+}
+
+export interface RelationshipDelta {
+  sourceId: string;
+  targetId: string;
+  summary: string;
+  weight: number;
+}
+
+export interface SummaryRevision {
+  id: string;
+  summary: string;
+  facts: string[];
+  relationshipDeltas: RelationshipDelta[];
+  unresolvedThreads: string[];
+  createdAt: string;
+  note?: string;
+}
+
+export interface SummaryChapter {
+  id: string;
+  chatId: string;
+  range: { fromMessageId: string; toMessageId: string };
+  title: string;
+  summary: string;
+  facts: string[];
+  relationshipDeltas: RelationshipDelta[];
+  unresolvedThreads: string[];
+  createdAt: string;
+  updatedAt?: string;
+  revisionHistory?: SummaryRevision[];
+}
+
+export interface ArcBeat {
+  id: string;
+  title: string;
+  status: "open" | "done" | "skipped";
+  evidenceMessageIds: string[];
+}
+
+export interface Arc {
+  id: string;
+  chatId: string;
+  title: string;
+  theme: string;
+  goal: string;
+  stakes: string;
+  beats: ArcBeat[];
+  status: "planned" | "active" | "resolved" | "abandoned";
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AttributeDefinition {
+  id: string;
+  name: string;
+  description: string;
+  defaultValue: number;
+}
+
+export interface SkillDefinition {
+  id: string;
+  name: string;
+  attributeId: string;
+  description: string;
+}
+
+export interface DifficultyBand {
+  label: string;
+  target: number;
+}
+
+export interface ConsequenceRule {
+  id: string;
+  label: string;
+  description: string;
+}
+
+export interface DungeonMindConfig {
+  id: string;
+  storylineId: string;
+  enabled: boolean;
+  dice: "d20" | "2d6" | "percentile" | "custom";
+  attributes: AttributeDefinition[];
+  skills: SkillDefinition[];
+  difficultyTable: DifficultyBand[];
+  consequenceRules: ConsequenceRule[];
+  visibility: "hidden" | "summary" | "full";
+}
+
+export interface FateCheck {
+  id: string;
+  chatId: string;
+  actorId: string;
+  intent: string;
+  attribute: string;
+  skill?: string;
+  difficulty: number;
+  roll: {
+    seed: string;
+    die: number;
+    modifier: number;
+    total: number;
+  };
+  outcome: "critical_success" | "success" | "partial" | "failure" | "critical_failure";
+  consequences: string[];
+  visibility: "hidden" | "summary" | "full";
+  createdAt: string;
+}
+
+export interface CreditLedgerEntry {
+  id: string;
+  chatId?: string;
+  provider: string;
+  model: string;
+  operation: "chat" | "summary" | "scene" | "image" | "voice";
+  estimatedTokens: number;
+  estimatedCost: number;
+  actualCost?: number;
+  status: "estimated" | "pending" | "settled" | "refunded" | "reversed" | "frozen";
+  adjustmentIds: string[];
+  currency: "local_estimate" | "credit";
+  createdAt: string;
+}
+
+export interface CreditAdjustment {
+  id: string;
+  ledgerEntryId: string;
+  kind: "refund" | "reversal" | "freeze" | "release";
+  amount: number;
+  reason: string;
+  createdAt: string;
+}
+
+export interface ModerationCase {
+  id: string;
+  targetType: "storyline" | "character" | "media" | "chat" | "creator";
+  targetId: string;
+  reason: string;
+  status: "open" | "reviewing" | "actioned" | "dismissed" | "appealed";
+  appeal?: ModerationAppeal;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModerationAppeal {
+  id: string;
+  reason: string;
+  status: "open" | "upheld" | "denied";
+  createdAt: string;
+  updatedAt: string;
+  resolvedAt?: string;
+  resolutionNote?: string;
+}
+
+export interface CreatorEarning {
+  id: string;
+  creatorId: string;
+  sourceEntityId: string;
+  status: "estimated" | "pending" | "available" | "withheld" | "paid" | "reversed";
+  amount: number;
+  currency: "credit";
+  note: string;
+  createdAt: string;
+}
+
+export interface EngagementStats {
+  entityId: string;
+  starts: number;
+  messages: number;
+  lastPlayedAt?: string;
+  localRating?: number;
+  cloud?: {
+    views: number;
+    likes: number;
+    favorites: number;
+  };
+}
+
+export interface EntityStore {
+  characters: Record<string, Character>;
+  storylines: Record<string, Storyline>;
+  scenarios: Record<string, Scenario>;
+  mediaAssets: Record<string, MediaAsset>;
+  personas: Record<string, Persona>;
+  chats: Record<string, Chat>;
+  chatCheckpoints: Record<string, ChatCheckpoint>;
+  messages: Record<string, Message>;
+  summaryChapters: Record<string, SummaryChapter>;
+  arcs: Record<string, Arc>;
+  dungeonMindConfigs: Record<string, DungeonMindConfig>;
+  fateChecks: Record<string, FateCheck>;
+  creditLedger: Record<string, CreditLedgerEntry>;
+  creditAdjustments: Record<string, CreditAdjustment>;
+  moderationCases: Record<string, ModerationCase>;
+  creatorEarnings: Record<string, CreatorEarning>;
+  engagementStats: Record<string, EngagementStats>;
+  mediaGenerationJobs: Record<string, MediaGenerationJob>;
+  syncOperations: Record<string, SyncOperation>;
+  syncConflicts: Record<string, SyncConflict>;
+}
+
+export interface SearchIndexSnapshot {
+  storylinesByUpdatedAt: string[];
+  charactersByStoryline: Record<string, string[]>;
+  chatsByStoryline: Record<string, string[]>;
+  messageIdsByChat: Record<string, string[]>;
+  tags: Record<string, string[]>;
+}
+
+export interface AuditEntry {
+  id: string;
+  type: string;
+  message: string;
+  createdAt: string;
+}
+
+export interface SaveEnvelope {
+  schemaVersion: "1.0.0";
+  workspace: Workspace;
+  entities: EntityStore;
+  indexes: SearchIndexSnapshot;
+  settings: WorkspaceSettings;
+  audit: AuditEntry[];
+}
+
+export interface GeneratedMessage {
+  role: MessageRole;
+  speakerId?: string;
+  content: string;
+  promptContractVersion?: string;
+  sceneHints?: SceneHint[];
+  safetyFlags?: SafetyFlag[];
+}
+
+export interface NarrativeResponse {
+  promptContractVersion?: string;
+  messages: GeneratedMessage[];
+  relationshipDeltas?: RelationshipDelta[];
+  sceneHints?: SceneHint[];
+  safetyFlags?: SafetyFlag[];
+  usage?: CostEstimate;
+}
+
+export interface NarrativeRequest {
+  storyline: Storyline;
+  scenario: Scenario;
+  persona: Persona;
+  characters: Character[];
+  messages: Message[];
+  summaryChapters?: SummaryChapter[];
+  activeArc?: Arc;
+  fateChecks?: FateCheck[];
+  provider: AIProviderSettings;
+  mode: MessageMode;
+  userInput: string;
+  adultContentUnlocked?: boolean;
 }

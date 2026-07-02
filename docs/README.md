@@ -1,55 +1,68 @@
-# Evolvria 开发文档索引
+# Evolvria 项目文档索引
 
-Evolvria 是一个 AI 驱动、本地优先的叙事/世界模拟游戏。当前实现基于 **Tauri 2 + Vue 3 + Vue Router + Pinia + Tailwind CSS**：玩家创建世界种子，系统生成 schema v1 的结构化世界，并在探索中持续维护角色、地点、事件、记忆、线索、地图和 AI 日志。
+Last reviewed: 2026-07-02 (Asia/Shanghai)
 
-文档原则：
+Evolvria 是一个自有品牌的跨平台 AI 叙事与角色互动应用。本文档集把 ISEKAI ZERO 的公开产品体验拆解为可执行的产品、设计、工程和运营规格：故事线发现、角色卡、启动身份、AI 聊天、视觉小说、Dungeon Mind 裁定、创作者工作台、积分消耗、创作者收益、内容分级和审核。复刻边界是“功能体验等效”，不是品牌、素材、代码、接口或内容复制。
 
-- 文档描述必须以当前代码为准，规划能力需明确标注“后续”。
-- 数据结构以 `src/types/domain.ts` 和 `docs/data-model.md` 为准。
-- AI、存档、平台行为变化后必须同步更新相关文档。
-- 用户可见文案、错误和日志默认使用中文。
+## 目标
 
-## 文档列表
+提供一套可直接指导开发的中文文档索引，串联竞品研究、产品需求、设计系统、Tauri 2 架构、数据模型、AI 叙事、创作者工具、审核商业化、发布测试和路线图。
 
-- [产品需求](product-requirements.md)：定位、MVP 范围、非目标和成功标准。
-- [游戏设计规格](game-design.md)：核心循环、探索、时间、角色、事件和失败判定。
-- [跨平台支持](platform-support.md)：桌面、移动、平板的当前实现和目标适配。
-- [技术架构](technical-architecture.md)：Vue/Tauri 模块职责、数据流和 native 命令。
-- [数据模型](data-model.md)：schema v1 的世界、角色、地点、事件、记忆、线索、地图和存档字段。
-- [Prompt 与响应契约](prompt-and-response-contracts.md)：AI 请求类型、远端/本地 fallback、JSON 输出和 patch 规则。
-- [AI 记忆系统](ai-memory-system.md)：当前关键词检索、记忆写入、摘要规划和冲突优先级。
-- [世界模拟系统](world-simulation.md)：时间推进、NPC tick、事件重要度和一致性约束。
-- [地图导入与标注](map-import-and-annotation.md)：当前地图 UI、结构化地点/路线和 native 图片命令边界。
-- [Glosc One API 集成](glosc-one-api-integration.md)：配置、调用、用量估算、错误降级和日志。
-- [存档与同步](save-load-and-sync.md)：当前工作区文件夹存档、备份、AI checkpoint、导出 zip 和未来同步。
-- [UI/UX 流程](ui-ux-flows.md)：路由页面、主流程、响应式导航和设置入口。
-- [视觉设计方向](visual-direction.md)：当前 Vue/Tailwind 暗色界面、字体和组件 token。
-- [测试策略](testing-strategy.md)：Vitest、Playwright、Tauri Rust 测试和手动验收。
-- [安全、隐私与内容策略](security-privacy-content.md)：Glosc Key、本地存储、日志脱敏、导出风险和内容边界。
-- [开发工作流](development-workflow.md)：命令、目录、提交前检查和文档维护。
-- [开发路线图](development-roadmap.md)：已完成能力和后续阶段。
+## 范围
 
-## 当前已实现主线
+本文只负责文档导航、复刻边界、来源和维护规则；具体规格分散在后续 16 篇文档中。所有实现默认使用 Evolvria 自有品牌、自有素材和本地优先架构。
 
-- 12 个 Vue Router 页面：首页、引导、新建世界、探索、地图、地点、人物、时间线、线索、世界观、存档、设置。
-- Pinia store 连接 UI、平台能力、设置、世界状态、AI 和存档。
-- `SavePayload` schema v1 统一保存世界、角色、地点、势力、时间线、记忆、线索、AI 日志和计数器。
-- Tauri 桌面端保存到应用数据目录；浏览器开发环境 fallback 到 `localStorage`。
-- 每次覆盖 active 工作区前保留最近 5 个备份；AI 请求前保存 `ai_before_request/` checkpoint。
-- 未配置 Glosc One 时完整使用本地 mock，不消耗远端额度。
-- 地图页支持 SVG 底图、缩放、创世地区/地点/路线显示、隐藏未知和移动；地图结构创建后锁定。
-- Tauri native 已包含地图图片导入/生成命令，但当前 Vue 地图 UI 尚未接入文件选择入口。
+## 阅读顺序
 
-## 常用命令
+1. [公开来源研究](00-source-research.md)：公开来源、页面观察、功能矩阵、合法边界。
+2. [产品需求](01-product-requirements.md)：定位、用户、MVP、非目标、成功指标。
+3. [功能映射](02-feature-parity-map.md)：竞品能力到 Evolvria 自有实现的映射。
+4. [信息架构与用户流](03-ia-and-user-flows.md)：导航、首页、探索、详情、启动、聊天、创作、账户流程。
+5. [视觉设计系统](04-visual-design-system.md)：色彩、字体、卡片、标签、媒体、图标、布局、动效。
+6. [Tauri 2 技术架构](05-tauri-2-architecture.md)：前端、Rust、存储、权限、插件、平台边界。
+7. [数据模型](06-data-model.md)：本地 schema、实体关系、索引、迁移、示例数据。
+8. [AI 叙事引擎](07-ai-narrative-engine.md)：模型、prompt 分层、记忆、摘要、Arc、失败降级。
+9. [创作者工作台](08-creator-studio.md)：角色、故事线、媒体、标签、可见性、版本、审核。
+10. [聊天、视觉小说与 Dungeon Mind](09-chat-vn-dungeon-mind.md)：聊天控制、VN、语音/图片生成、DM 骰点与规则。
+11. [后端同步 API](10-backend-sync-api.md)：本地优先 API、可选云账号、搜索、UGC、同步接口。
+12. [商业化与审核](11-monetization-moderation.md)：Mana/Arcane 替代方案、创作者收益、分级、举报/申诉。
+13. [安全、隐私与法律](12-security-privacy-legal.md)：密钥、存档、UGC、未成年人、版权和安全边界。
+14. [平台发布](13-platform-release.md)：macOS、Windows、Linux、iOS、Android 发布、签名、更新。
+15. [测试策略](14-testing-strategy.md)：单元测试、Tauri command、Playwright、内容安全、发布验收。
+16. [路线图](15-roadmap.md)：MVP、Beta、云端平台阶段。
 
-```bash
-yarn install
-yarn dev
-yarn typecheck
-yarn test
-yarn test:ui
-yarn tauri:dev
-yarn tauri:build
+## 执行边界
 
-cd src-tauri && cargo test
-```
+- 允许借鉴：功能类别、信息架构、交互模式、公开文档描述的产品规则、跨平台工程思路。
+- 必须重做：品牌名、Logo、角色、故事、封面、插画、视频、音频、UI token、示例数据、prompt 文案。
+- 禁止依赖：对方私有 API、对方线上内容库、对方用户生成内容、对方未公开业务规则。
+- 默认策略：本地优先 Tauri 2 MVP，用户自配 AI 或使用 mock provider；云端同步、UGC、收益和审核作为后续阶段。
+
+## 主要公开来源
+
+- ISEKAI ZERO 官网：https://www.isekaizero.ai/
+- ISEKAI ZERO `llms.txt`：https://www.isekaizero.ai/llms.txt
+- ISEKAI ZERO 用户指南：https://docs.isekaizero.ai/books/your-guide-to-isekai-zero
+- ISEKAI ZERO Terms & Policies：https://docs.isekaizero.ai/books/terms-policies
+- ISEKAI ZERO creator/guideline/reward pages：https://www.isekaizero.ai/creation 、https://www.isekaizero.ai/guideline 、https://www.isekaizero.ai/earn-mana
+- Tauri 2 官方文档：https://v2.tauri.app/
+
+## 文档维护规则
+
+- 产品、数据模型、AI 契约、Tauri command、审核政策或发布平台变化时，必须同步更新相关文档。
+- 外部内容只做摘要和来源链接，不复制长文、图片、视频、用户内容或页面素材。
+- 所有示例默认中文优先，并保留 `locale`、`i18n` 或 `localized` 扩展字段。
+- 每篇文档必须包含目标、范围、关键决策和验收标准。
+
+## 关键决策
+
+- 文档按“研究 -> 产品 -> 设计 -> 工程 -> 运营 -> 测试 -> 路线图”阅读。
+- 复刻只做功能体验等效，不做品牌、素材、代码、接口或内容复制。
+- MVP 以本地优先 Tauri 2 应用为目标，云端平台能力后置。
+
+## 验收标准
+
+- README 能链接到所有新增规划文档。
+- 所有文档都包含目标、范围、关键决策和验收标准。
+- 来源链接集中可见，后续文档可追溯到公开研究。
+- 文档更新不要求恢复或修改当前应用源码。

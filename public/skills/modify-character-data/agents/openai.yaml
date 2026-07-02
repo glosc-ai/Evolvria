@@ -1,4 +1,0 @@
-interface:
-  display_name: "修改角色数据"
-  short_description: "安全更新 Evolvria 角色非姓名字段、位置、笔记和画像数据"
-  default_prompt: "Use $modify-character-data to safely update non-name fields on an Evolvria character."

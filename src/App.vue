@@ -1,164 +1,77 @@
 <script setup lang="ts">
-import type { Component } from "vue";
-import {
-  BookOpen,
-  Compass,
-  Database,
-  Home,
-  Map as MapIcon,
-  MessageSquareText,
-  Moon,
-  ScrollText,
-  Settings,
-  Sun,
-  Users,
-} from "@lucide/vue";
 import { computed, onMounted } from "vue";
-import { RouterLink, RouterView, useRoute, useRouter } from "vue-router";
-import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarHeader, SidebarInset, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarProvider, SidebarSeparator, SidebarTrigger } from "@/components/ui/sidebar";
-import { Toaster } from "@/components/ui/sonner";
-import { Button } from "@/components/ui/button";
+import { RouterLink, RouterView, useRoute } from "vue-router";
+import { BookOpen, Cloud, Home, PenTool, Save, Search, Settings, Sparkles } from "lucide-vue-next";
 import { useAppStore } from "@/stores/app";
-import { usePlatformStore } from "@/stores/platform";
-import { useSettingsStore } from "@/stores/settings";
-import { useWorldStore } from "@/stores/world";
-import { useTheme } from "@/composables/useTheme";
 
-const app = useAppStore();
-const settings = useSettingsStore();
-const platform = usePlatformStore();
-const world = useWorldStore();
+const store = useAppStore();
 const route = useRoute();
-const router = useRouter();
-const { isDark, apply: applyTheme, toggle: toggleTheme } = useTheme();
 
-interface NavItem {
-  to: string;
-  label: string;
-  icon: Component;
-  enabled: boolean;
-}
-
-const navItems = computed<NavItem[]>(() => [
-  { to: "/", label: "首页", icon: Home, enabled: true },
-  { to: "/exploration", label: "探索", icon: Compass, enabled: world.hasWorld },
-  { to: "/map", label: "地图", icon: MapIcon, enabled: world.hasWorld },
-  { to: "/characters", label: "人物", icon: Users, enabled: world.hasWorld },
-  { to: "/locations", label: "地点", icon: BookOpen, enabled: world.hasWorld },
-  { to: "/timeline", label: "时间线", icon: ScrollText, enabled: world.hasWorld },
-  { to: "/threads", label: "线索", icon: MessageSquareText, enabled: world.hasWorld },
-  { to: "/world-lore", label: "世界观", icon: BookOpen, enabled: world.hasWorld },
-  { to: "/saves", label: "存档", icon: Database, enabled: true },
-  { to: "/settings", label: "设置", icon: Settings, enabled: true },
-]);
-
-function isActive(to: string): boolean {
-  return route.path === to;
-}
-
-onMounted(async () => {
-  await settings.load();
-  applyTheme();
-  await platform.load();
-  await world.load();
-  if (settings.onboardingRequired && route.name === "main_menu") {
-    await router.replace({ name: "onboarding" });
-  }
+onMounted(() => {
+  void store.init();
 });
+
+const nav = [
+  { to: "/", label: "Home", icon: Home },
+  { to: "/library", label: "Library", icon: Search },
+  { to: "/create", label: "Create", icon: PenTool },
+  { to: "/saves", label: "Saves", icon: Save },
+  { to: "/settings", label: "Settings", icon: Settings },
+  { to: "/account", label: "Cloud", icon: Cloud },
+];
+
+const activeChat = computed(() => store.activeChats[0]);
 </script>
 
 <template>
-  <SidebarProvider>
-    <Sidebar collapsible="icon">
-      <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" as-child>
-              <RouterLink to="/" class="flex items-center gap-2">
-                <div class="flex aspect-square size-8 items-center justify-center rounded-md bg-primary text-primary-foreground font-serif text-lg font-semibold">E</div>
-                <div class="flex flex-col gap-0.5 leading-none">
-                  <span class="font-serif text-base font-semibold">Evolvria</span>
-                  <span class="text-xs text-muted-foreground">AI 叙事世界</span>
-                </div>
-              </RouterLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-      </SidebarHeader>
+  <div class="app-shell">
+    <aside class="side-rail" aria-label="Primary">
+      <RouterLink class="brand-mark" to="/" aria-label="Evolvria home">
+        <Sparkles :size="22" />
+      </RouterLink>
+      <nav class="rail-nav">
+        <RouterLink
+          v-for="item in nav"
+          :key="item.to"
+          :to="item.to"
+          class="rail-link"
+          :class="{ active: route.path === item.to || (item.to !== '/' && route.path.startsWith(item.to)) }"
+          :title="item.label"
+        >
+          <component :is="item.icon" :size="20" />
+          <span>{{ item.label }}</span>
+        </RouterLink>
+      </nav>
+    </aside>
 
-      <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem v-for="item in navItems" :key="item.to">
-                <SidebarMenuButton
-                  v-if="item.enabled"
-                  :is-active="isActive(item.to)"
-                  :tooltip="item.label"
-                  as-child
-                >
-                  <RouterLink :to="item.to">
-                    <component :is="item.icon" />
-                    <span>{{ item.label }}</span>
-                  </RouterLink>
-                </SidebarMenuButton>
-                <SidebarMenuButton
-                  v-else
-                  :tooltip="`${item.label}（需先创建世界）`"
-                  disabled
-                >
-                  <component :is="item.icon" />
-                  <span>{{ item.label }}</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-      </SidebarContent>
-
-      <SidebarFooter>
-        <div v-if="world.hasWorld" class="rounded-md border border-sidebar-border bg-sidebar-accent/40 p-3 text-xs text-sidebar-foreground">
-          <div class="truncate font-medium">{{ world.world.name }}</div>
-          <div class="mt-1 text-muted-foreground">第 {{ world.world.current_time.day }} 天 {{ world.world.current_time.hour }} 时</div>
+    <main class="app-main">
+      <header class="top-bar">
+        <div>
+          <p class="eyebrow">Evolvria Local-First Narrative Studio</p>
+          <h1>{{ store.envelope.workspace.name }}</h1>
         </div>
-        <SidebarSeparator />
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton :tooltip="isDark ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
-              <Moon v-if="!isDark" />
-              <Sun v-else />
-              <span>{{ isDark ? "浅色" : "深色" }}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton tooltip="设置" as-child>
-              <RouterLink to="/settings">
-                <Settings />
-                <span>设置</span>
-              </RouterLink>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-        <p class="px-2 text-[10px] text-muted-foreground">{{ platform.capabilities.os }} · {{ platform.capabilities.mobile ? "移动端" : "桌面/浏览器" }}</p>
-      </SidebarFooter>
-    </Sidebar>
-
-    <SidebarInset>
-      <header class="safe-top sticky top-0 z-10 flex h-14 items-center gap-2 border-b border-border bg-background/80 px-4 backdrop-blur">
-        <SidebarTrigger />
-        <div class="font-serif text-sm font-medium">Evolvria</div>
-        <nav v-if="world.hasWorld" class="ml-auto flex items-center gap-3 text-sm sm:hidden">
-          <RouterLink to="/map">地图</RouterLink>
-          <RouterLink to="/characters">人物</RouterLink>
-          <RouterLink to="/timeline">时间线</RouterLink>
-        </nav>
+        <div class="top-actions">
+          <RouterLink v-if="activeChat" class="ghost-button" :to="`/chat/${activeChat.id}`">
+            <BookOpen :size="16" />
+            Continue
+          </RouterLink>
+          <span class="status-pill" :class="{ saving: store.saving }">
+            {{ store.saving ? "Saving" : "Saved" }}
+          </span>
+          <span class="status-pill provider">{{ store.envelope.settings.provider.type }}</span>
+        </div>
       </header>
 
-      <main class="mobile-bottom-offset min-h-[calc(100dvh-3.5rem)] px-4 py-5 sm:px-6 lg:px-8">
-        <RouterView />
-      </main>
-    </SidebarInset>
-  </SidebarProvider>
+      <div v-if="!store.ready" class="loading-state">Loading local workspace...</div>
+      <div v-else-if="store.error" class="error-banner">{{ store.error }}</div>
+      <RouterView v-else />
+    </main>
 
-  <Toaster position="top-right" rich-colors close-button />
+    <nav class="bottom-nav" aria-label="Mobile primary">
+      <RouterLink v-for="item in nav.slice(0, 5)" :key="item.to" :to="item.to" class="bottom-link">
+        <component :is="item.icon" :size="19" />
+        <span>{{ item.label }}</span>
+      </RouterLink>
+    </nav>
+  </div>
 </template>

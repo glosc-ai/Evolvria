@@ -1,0 +1,268 @@
+import type { EntityStore, MediaAsset, SaveEnvelope } from "@/types/domain";
+
+export type PackageIssueSeverity = "error" | "warning" | "info";
+
+export interface PackageVerificationIssue {
+  severity: PackageIssueSeverity;
+  field: string;
+  message: string;
+}
+
+export interface WorkspacePackageManifest {
+  format: "evolvria_workspace_package";
+  schemaVersion: SaveEnvelope["schemaVersion"];
+  workspaceId: string;
+  workspaceName: string;
+  exportedAt: string;
+  entityCounts: Record<keyof EntityStore, number>;
+  assetRefs: {
+    declared: string[];
+    referenced: string[];
+    missing: string[];
+    browserOnly: string[];
+  };
+}
+
+export interface BrowserWorkspacePackage {
+  format: "evolvria_workspace_package";
+  manifest: WorkspacePackageManifest;
+  save: SaveEnvelope;
+}
+
+export interface PackageVerificationReport {
+  ok: boolean;
+  checkedAt: string;
+  format: "evolvria_workspace_package" | "legacy_save_json" | "tauri_workspace_dir" | "unknown";
+  workspaceId?: string;
+  workspaceName?: string;
+  schemaVersion?: string;
+  entityCounts: Partial<Record<keyof EntityStore, number>>;
+  assetRefs: WorkspacePackageManifest["assetRefs"];
+  issues: PackageVerificationIssue[];
+}
+
+const entityKeys: Array<keyof EntityStore> = [
+  "characters",
+  "storylines",
+  "scenarios",
+  "mediaAssets",
+  "personas",
+  "chats",
+  "chatCheckpoints",
+  "messages",
+  "summaryChapters",
+  "arcs",
+  "dungeonMindConfigs",
+  "fateChecks",
+  "creditLedger",
+  "creditAdjustments",
+  "moderationCases",
+  "creatorEarnings",
+  "engagementStats",
+  "syncOperations",
+  "syncConflicts",
+];
+
+export function createWorkspacePackage(envelope: SaveEnvelope, exportedAt = new Date().toISOString()): BrowserWorkspacePackage {
+  const manifest = createWorkspacePackageManifest(envelope, exportedAt);
+  return {
+    format: "evolvria_workspace_package",
+    manifest,
+    save: envelope,
+  };
+}
+
+export function createWorkspacePackageManifest(envelope: SaveEnvelope, exportedAt = new Date().toISOString()): WorkspacePackageManifest {
+  const assetRefs = collectAssetRefs(envelope);
+  return {
+    format: "evolvria_workspace_package",
+    schemaVersion: envelope.schemaVersion,
+    workspaceId: envelope.workspace.id,
+    workspaceName: envelope.workspace.name,
+    exportedAt,
+    entityCounts: countEntities(envelope.entities) as Record<keyof EntityStore, number>,
+    assetRefs,
+  };
+}
+
+export function readWorkspacePackage(value: unknown): {
+  envelope?: SaveEnvelope;
+  manifest?: WorkspacePackageManifest;
+  format: PackageVerificationReport["format"];
+} {
+  if (isRecord(value) && value.format === "evolvria_workspace_package" && isRecord(value.save)) {
+    return {
+      envelope: value.save as unknown as SaveEnvelope,
+      manifest: isRecord(value.manifest) ? value.manifest as unknown as WorkspacePackageManifest : undefined,
+      format: "evolvria_workspace_package",
+    };
+  }
+  if (isRecord(value) && isRecord(value.workspace) && isRecord(value.entities)) {
+    return {
+      envelope: value as unknown as SaveEnvelope,
+      format: "legacy_save_json",
+    };
+  }
+  return { format: "unknown" };
+}
+
+export function verifyWorkspacePackage(input: SaveEnvelope | BrowserWorkspacePackage): PackageVerificationReport {
+  const packageInput = readWorkspacePackage(input);
+  const envelope = packageInput.envelope ?? input as SaveEnvelope;
+  const manifest = packageInput.manifest;
+  const format = packageInput.format === "unknown" && isSaveEnvelopeLike(envelope) ? "legacy_save_json" : packageInput.format;
+  const issues: PackageVerificationIssue[] = [];
+
+  if (!isSaveEnvelopeLike(envelope)) {
+    issues.push({ severity: "error", field: "save", message: "Package does not contain a readable SaveEnvelope." });
+    return emptyReport(format, issues);
+  }
+
+  if (envelope.schemaVersion !== "1.0.0") {
+    issues.push({ severity: "error", field: "schemaVersion", message: `Unsupported schema version: ${String(envelope.schemaVersion)}.` });
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(envelope.workspace.id)) {
+    issues.push({ severity: "error", field: "workspace.id", message: "Workspace id must be a safe single path segment." });
+  }
+
+  const entityCounts = countEntities(envelope.entities);
+  for (const key of entityKeys) {
+    if (!isRecord(envelope.entities[key])) {
+      issues.push({ severity: "error", field: `entities.${key}`, message: `${key} must be an object map.` });
+    }
+  }
+
+  const assetRefs = collectAssetRefs(envelope);
+  for (const id of assetRefs.missing) {
+    issues.push({ severity: "error", field: `assets.${id}`, message: `Referenced media asset ${id} is missing from mediaAssets.` });
+  }
+  for (const asset of Object.values(envelope.entities.mediaAssets ?? {})) {
+    for (const issue of verifyAsset(asset)) issues.push(issue);
+  }
+  for (const id of assetRefs.browserOnly) {
+    issues.push({ severity: "warning", field: `assets.${id}`, message: `Browser-only asset ${id} is not portable unless reimported in the Tauri app.` });
+  }
+
+  if (manifest) {
+    if (manifest.schemaVersion !== envelope.schemaVersion) {
+      issues.push({ severity: "error", field: "manifest.schemaVersion", message: "Manifest schemaVersion does not match save.json." });
+    }
+    if (manifest.workspaceId !== envelope.workspace.id) {
+      issues.push({ severity: "error", field: "manifest.workspaceId", message: "Manifest workspaceId does not match save.json." });
+    }
+    const manifestMissing = manifest.assetRefs?.missing ?? [];
+    if (manifestMissing.length) {
+      issues.push({ severity: "error", field: "manifest.assetRefs.missing", message: "Manifest was exported with missing asset references." });
+    }
+  } else if (format === "evolvria_workspace_package") {
+    issues.push({ severity: "error", field: "manifest", message: "Package manifest is missing." });
+  } else {
+    issues.push({ severity: "info", field: "manifest", message: "Legacy JSON import has no manifest; it will be upgraded on next export." });
+  }
+
+  if (secretPattern.test(JSON.stringify(envelope))) {
+    issues.push({ severity: "error", field: "secrets", message: "Package appears to contain an API key or bearer token." });
+  }
+
+  return {
+    ok: !issues.some((issue) => issue.severity === "error"),
+    checkedAt: new Date().toISOString(),
+    format,
+    workspaceId: envelope.workspace.id,
+    workspaceName: envelope.workspace.name,
+    schemaVersion: envelope.schemaVersion,
+    entityCounts,
+    assetRefs,
+    issues,
+  };
+}
+
+function emptyReport(format: PackageVerificationReport["format"], issues: PackageVerificationIssue[]): PackageVerificationReport {
+  return {
+    ok: false,
+    checkedAt: new Date().toISOString(),
+    format,
+    entityCounts: {},
+    assetRefs: { declared: [], referenced: [], missing: [], browserOnly: [] },
+    issues,
+  };
+}
+
+function countEntities(entities: EntityStore): Partial<Record<keyof EntityStore, number>> {
+  const counts: Partial<Record<keyof EntityStore, number>> = {};
+  for (const key of entityKeys) {
+    counts[key] = Object.keys(entities[key] ?? {}).length;
+  }
+  return counts;
+}
+
+function collectAssetRefs(envelope: SaveEnvelope): WorkspacePackageManifest["assetRefs"] {
+  const declared = new Set(Object.keys(envelope.entities.mediaAssets ?? {}));
+  const referenced = new Set<string>();
+
+  for (const story of Object.values(envelope.entities.storylines ?? {})) {
+    for (const id of story.mediaIds ?? []) referenced.add(id);
+  }
+  for (const character of Object.values(envelope.entities.characters ?? {})) {
+    for (const id of character.mediaIds ?? []) referenced.add(id);
+  }
+  for (const message of Object.values(envelope.entities.messages ?? {})) {
+    for (const hint of message.sceneHints ?? []) {
+      if (hint.backgroundAssetId) referenced.add(hint.backgroundAssetId);
+      if (hint.musicAssetId) referenced.add(hint.musicAssetId);
+      for (const sprite of hint.characterSprites ?? []) {
+        if (sprite.mediaAssetId) referenced.add(sprite.mediaAssetId);
+      }
+      for (const voice of hint.voice ?? []) {
+        if (voice.assetId) referenced.add(voice.assetId);
+      }
+    }
+  }
+
+  const missing = [...referenced].filter((id) => !declared.has(id)).sort();
+  const browserOnly = Object.values(envelope.entities.mediaAssets ?? {})
+    .filter((asset) => asset.relativePath.startsWith("browser://"))
+    .map((asset) => asset.id)
+    .sort();
+
+  return {
+    declared: [...declared].sort(),
+    referenced: [...referenced].sort(),
+    missing,
+    browserOnly,
+  };
+}
+
+function verifyAsset(asset: MediaAsset): PackageVerificationIssue[] {
+  const issues: PackageVerificationIssue[] = [];
+  if (!asset.relativePath.trim()) {
+    issues.push({
+      severity: asset.source.kind === "placeholder" && asset.sizeBytes === 0 ? "warning" : "error",
+      field: `assets.${asset.id}.relativePath`,
+      message: asset.source.kind === "placeholder" ? "Placeholder asset has no physical file in the package." : "Asset relativePath is required.",
+    });
+  }
+  if (asset.relativePath.startsWith("/") || asset.relativePath.includes("..")) {
+    issues.push({ severity: "error", field: `assets.${asset.id}.relativePath`, message: "Asset relativePath must stay inside the workspace package." });
+  }
+  if (asset.relativePath && !asset.relativePath.startsWith("assets/") && !asset.relativePath.startsWith("browser://")) {
+    issues.push({ severity: "warning", field: `assets.${asset.id}.relativePath`, message: "Asset path should be under assets/ for portable packages." });
+  }
+  if (!asset.mimeType.trim()) {
+    issues.push({ severity: "error", field: `assets.${asset.id}.mimeType`, message: "Asset MIME type is required." });
+  }
+  if (!asset.altText.trim()) {
+    issues.push({ severity: "warning", field: `assets.${asset.id}.altText`, message: "Asset alt text is missing." });
+  }
+  return issues;
+}
+
+function isSaveEnvelopeLike(value: unknown): value is SaveEnvelope {
+  return isRecord(value) && isRecord(value.workspace) && isRecord(value.entities) && typeof value.schemaVersion === "string";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+const secretPattern = /\b(sk-[a-zA-Z0-9_-]{12,}|OPENAI_API_KEY|Bearer\s+[a-zA-Z0-9._-]{12,})\b/;

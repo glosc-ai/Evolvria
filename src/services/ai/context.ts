@@ -89,7 +89,7 @@ export function redactPromptPreviewContent(content: string): string {
 }
 
 function systemPolicyLayer(): NarrativePromptLayer {
-  return layer("system_policy", "System Policy", 100, true, [
+  return layer("system_policy", "系统策略", 100, true, [
     "你是 Evolvria 的叙事主持与角色扮演引擎。",
     "保持世界事实、角色声音、玩家身份和当前场景一致。",
     "不得提及或借用竞品品牌、竞品角色、竞品素材或未授权设定。",
@@ -105,7 +105,7 @@ function productSafetyLayer(request: NarrativeRequest): NarrativePromptLayer {
     ...request.storyline.moderation.reasons,
     ...request.characters.flatMap((character) => character.moderation.reasons),
   ];
-  return layer("product_safety", "Product Safety Contract", 95, true, [
+  return layer("product_safety", "产品安全契约", 95, true, [
     `故事分级：${rating}。${adult}`,
     "禁止生成未成年人性化、非自愿性内容、真实个人隐私泄露、仇恨煽动、侵权复刻和规避审核的内容。",
     `玩家边界：\n${boundaries}`,
@@ -115,7 +115,7 @@ function productSafetyLayer(request: NarrativeRequest): NarrativePromptLayer {
 }
 
 function storylineWorldLayer(request: NarrativeRequest): NarrativePromptLayer {
-  return layer("storyline_world", "Storyline World Rules", 90, true, [
+  return layer("storyline_world", "故事线世界规则", 90, true, [
     `标题：${request.storyline.title}`,
     `简介：${request.storyline.summary}`,
     `前提：${request.storyline.premise}`,
@@ -142,7 +142,7 @@ function characterVoiceLayer(request: NarrativeRequest): NarrativePromptLayer {
 }
 
 function personaLayer(request: NarrativeRequest): NarrativePromptLayer {
-  return layer("persona", "Persona Block", 75, true, [
+  return layer("persona", "玩家档案信息块", 75, true, [
     `玩家名：${request.persona.name}`,
     request.persona.pronouns ? `称谓：${request.persona.pronouns}` : undefined,
     `身份描述：${request.persona.description}`,
@@ -154,7 +154,7 @@ function personaLayer(request: NarrativeRequest): NarrativePromptLayer {
 }
 
 function scenarioLayer(request: NarrativeRequest): NarrativePromptLayer {
-  return layer("scenario", "Current Scenario", 70, true, [
+  return layer("scenario", "当前场景", 70, true, [
     `场景：${request.scenario.title}`,
     `摘要：${request.scenario.summary}`,
     request.scenario.location ? `地点：${request.scenario.location}` : undefined,
@@ -166,7 +166,7 @@ function scenarioLayer(request: NarrativeRequest): NarrativePromptLayer {
 function memoryLayer(request: NarrativeRequest): NarrativePromptLayer | undefined {
   const summaries = request.summaryChapters?.slice(-maxSummaries) ?? [];
   if (!summaries.length) return undefined;
-  return layer("memory", "Summary Chapters", 55, false, summaries.map((summary) => [
+  return layer("memory", "摘要章节", 55, false, summaries.map((summary) => [
     `### ${summary.title}`,
     summary.summary,
     summary.facts.length ? `事实：${summary.facts.join("；")}` : undefined,
@@ -177,7 +177,7 @@ function memoryLayer(request: NarrativeRequest): NarrativePromptLayer | undefine
 function activeArcLayer(request: NarrativeRequest): NarrativePromptLayer | undefined {
   const arc = request.activeArc;
   if (!arc) return undefined;
-  return layer("active_arc", "Active Arc", 60, false, [
+  return layer("active_arc", "当前剧情弧", 60, false, [
     `标题：${arc.title}`,
     `主题：${arc.theme}`,
     `目标：${arc.goal}`,
@@ -190,7 +190,7 @@ function activeArcLayer(request: NarrativeRequest): NarrativePromptLayer | undef
 function fateResultsLayer(request: NarrativeRequest): NarrativePromptLayer | undefined {
   const checks = request.fateChecks?.slice(-maxFateChecks) ?? [];
   if (!checks.length) return undefined;
-  return layer("fate_results", "Fate Result / Tool Results", 65, true, checks.map((check) => [
+  return layer("fate_results", "裁定结果 / 工具结果", 65, true, checks.map((check) => [
     `### ${check.intent}`,
     `结果：${check.outcome}；难度：${check.difficulty}；总值：${check.roll.total}`,
     `后果：${check.consequences.join("；") || "无"}`,
@@ -199,13 +199,13 @@ function fateResultsLayer(request: NarrativeRequest): NarrativePromptLayer | und
 }
 
 function activeSkillLayer(): NarrativePromptLayer {
-  return layer("active_skill", "Built-in AI Skill", 87, true, [
+  return layer("active_skill", "内置 AI Skill", 87, true, [
     buildSkillPromptBlock("evolvria-narrative-turn"),
   ]);
 }
 
 function outputContractLayer(mode: MessageMode): NarrativePromptLayer {
-  return layer("output_contract", "Output Contract", 85, true, [
+  return layer("output_contract", "输出契约", 85, true, [
     `promptContractVersion: ${NARRATIVE_PROMPT_CONTRACT_VERSION}`,
     "优先输出 JSON：{\"messages\":[{\"role\":\"assistant\",\"speakerId\":\"角色ID可选\",\"content\":\"...\",\"safetyFlags\":[\"none\"]}]}。",
     "如果无法稳定输出 JSON，则直接输出可展示的中文叙事文本，客户端会降级包装。",
@@ -227,10 +227,10 @@ function mapRole(role: MessageRole): ChatPromptMessage["role"] {
 }
 
 function formatHistoryMessage(role: MessageRole, content: string): string {
-  if (role === "system") return `Local System Note: ${content}`;
-  if (role === "fate") return `Fate Result: ${content}`;
-  if (role === "narrator") return `Narrator: ${content}`;
-  if (role === "tool") return `Tool Result: ${content}`;
+  if (role === "system") return `本地系统备注：${content}`;
+  if (role === "fate") return `裁定结果：${content}`;
+  if (role === "narrator") return `旁白：${content}`;
+  if (role === "tool") return `工具结果：${content}`;
   return content;
 }
 

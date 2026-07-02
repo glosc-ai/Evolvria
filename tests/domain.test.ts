@@ -324,7 +324,7 @@ describe("Evolvria domain", () => {
       mediaAssets: [media],
     });
 
-    expect(issues.some((issue) => issue.message.includes("alt text"))).toBe(true);
+    expect(issues.some((issue) => issue.message.includes("替代文本"))).toBe(true);
     expect(issues.some((issue) => issue.message.includes("素材来源"))).toBe(true);
     expect(issues.some((issue) => issue.message.includes("明确版权许可"))).toBe(true);
   });
@@ -871,7 +871,7 @@ describe("Evolvria domain", () => {
     expect(openAiMessages[0].content).toContain(`Prompt-Contract-Version: ${NARRATIVE_PROMPT_CONTRACT_VERSION}`);
     expect(openAiMessages[0].content).toContain("Skill: evolvria-narrative-turn");
     expect(openAiMessages.slice(1).every((message) => message.role !== "system")).toBe(true);
-    expect(openAiMessages.some((message) => message.content.includes("Local System Note: 预算提示"))).toBe(true);
+    expect(openAiMessages.some((message) => message.content.includes("本地系统备注：预算提示"))).toBe(true);
     expect(openAiMessages.at(-1)?.content).toContain("玩家动作");
   });
 
@@ -1023,7 +1023,7 @@ describe("Evolvria domain", () => {
     const remoteResolve = syncRepository.resolveConflict(envelope, conflictResult.conflictId, "remote");
     expect(remoteResolve.resolved).toBe(true);
     expect(remoteResolve.status.status).toBe("ready");
-    expect(envelope.entities.storylines.story_starbloom_frontier.title).toContain("Cloud Revision");
+    expect(envelope.entities.storylines.story_starbloom_frontier.title).toContain("云端修订");
 
     const copyConflict = syncRepository.createStorylineConflict(envelope, "story_starbloom_frontier");
     const beforeStorylineCount = Object.keys(envelope.entities.storylines).length;
@@ -1123,7 +1123,7 @@ describe("Evolvria domain", () => {
     const storylinePackage = createStorylineWorkspacePackage(envelope, "story_starbloom_frontier", "2026-07-02T00:00:00.000Z");
     const report = verifyWorkspacePackage(storylinePackage);
 
-    expect(storylinePackage.manifest.workspaceName).toBe("星烬边境 Package");
+    expect(storylinePackage.manifest.workspaceName).toBe("星烬边境 内容包");
     expect(storylinePackage.manifest.entityCounts.storylines).toBe(1);
     expect(storylinePackage.manifest.entityCounts.characters).toBe(2);
     expect(storylinePackage.manifest.entityCounts.chats).toBe(0);

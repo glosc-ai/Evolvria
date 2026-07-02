@@ -26,7 +26,7 @@ export function validateStorylinePackage(input: {
     issues.push({ field: "worldRules", severity: "error", message: "至少需要一条明确世界规则。" });
   }
   if (!scenarios.length) {
-    issues.push({ field: "scenarios", severity: "error", message: "至少需要一个可启动 Scenario。" });
+    issues.push({ field: "scenarios", severity: "error", message: "至少需要一个可启动场景。" });
   }
   if (!characters.length && !storyline.tags.includes("纯旁白")) {
     issues.push({ field: "cast", severity: "error", message: "至少需要一个角色，除非明确标记纯旁白故事。" });
@@ -47,10 +47,10 @@ export function validateStorylinePackage(input: {
   }
   for (const character of characters) {
     if (!character.profile.trim() || character.profile.length < 20) {
-      issues.push({ field: `character:${character.id}`, severity: "warning", message: `${character.name} 的 profile 过短。` });
+      issues.push({ field: `character:${character.id}`, severity: "warning", message: `${character.name} 的档案过短。` });
     }
     if (!character.voice.tone.trim()) {
-      issues.push({ field: `voice:${character.id}`, severity: "error", message: `${character.name} 缺少 voice.tone。` });
+      issues.push({ field: `voice:${character.id}`, severity: "error", message: `${character.name} 缺少语音语气。` });
     }
     for (const issue of validateTextSafety(`character:${character.id}`, [
       character.name,
@@ -81,7 +81,7 @@ export function validateStorylinePackage(input: {
       issues.push({ field: `media:${assetId}`, severity: "error", message: "故事线引用了不存在的媒体资产。" });
     } else {
       if (!asset.altText.trim()) {
-        issues.push({ field: `media:${assetId}`, severity: "error", message: `${asset.id} 缺少 alt text。` });
+        issues.push({ field: `media:${assetId}`, severity: "error", message: `${asset.id} 缺少替代文本。` });
       }
       if (!asset.source.label.trim()) {
         issues.push({ field: `media:${assetId}`, severity: "error", message: `${asset.altText || asset.id} 缺少素材来源。` });
@@ -103,7 +103,7 @@ function validateTextSafety(field: string, parts: string[], adultUnlocked: boole
   const flags = precheckContent(parts.filter(Boolean).join("\n"), adultUnlocked);
   const issues: ValidationIssue[] = [];
   if (flags.includes("copyright")) {
-    issues.push({ field, severity: "error", message: "内容包含版权或竞品引用风险，不能进入 local_ready。" });
+    issues.push({ field, severity: "error", message: "内容包含版权或竞品引用风险，不能进入本地就绪。" });
   }
   if (flags.includes("blocked")) {
     issues.push({ field, severity: "error", message: "内容包含当前分级不允许的成人锁定风险。" });

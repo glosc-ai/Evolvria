@@ -136,7 +136,7 @@ export function createStorylinePackageEnvelope(envelope: SaveEnvelope, storyline
     workspace: {
       ...envelope.workspace,
       id: `${envelope.workspace.id}_${storyline.id}_package`,
-      name: `${storyline.title} Package`,
+      name: `${storyline.title} 内容包`,
     },
     entities,
   };
@@ -184,54 +184,54 @@ export function verifyWorkspacePackage(input: SaveEnvelope | BrowserWorkspacePac
   const issues: PackageVerificationIssue[] = [];
 
   if (!isSaveEnvelopeLike(envelope)) {
-    issues.push({ severity: "error", field: "save", message: "Package does not contain a readable SaveEnvelope." });
+    issues.push({ severity: "error", field: "save", message: "内容包不包含可读取的存档信封。" });
     return emptyReport(format, issues);
   }
 
   if (envelope.schemaVersion !== "1.0.0") {
-    issues.push({ severity: "error", field: "schemaVersion", message: `Unsupported schema version: ${String(envelope.schemaVersion)}.` });
+    issues.push({ severity: "error", field: "schemaVersion", message: `不支持的 schema 版本：${String(envelope.schemaVersion)}。` });
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(envelope.workspace.id)) {
-    issues.push({ severity: "error", field: "workspace.id", message: "Workspace id must be a safe single path segment." });
+    issues.push({ severity: "error", field: "workspace.id", message: "工作区 ID 必须是安全的单段路径。" });
   }
 
   const entityCounts = countEntities(envelope.entities);
   for (const key of entityKeys) {
     if (!isRecord(envelope.entities[key])) {
-      issues.push({ severity: "error", field: `entities.${key}`, message: `${key} must be an object map.` });
+      issues.push({ severity: "error", field: `entities.${key}`, message: `${key} 必须是对象映射。` });
     }
   }
 
   const assetRefs = collectAssetRefs(envelope);
   for (const id of assetRefs.missing) {
-    issues.push({ severity: "error", field: `assets.${id}`, message: `Referenced media asset ${id} is missing from mediaAssets.` });
+    issues.push({ severity: "error", field: `assets.${id}`, message: `被引用的媒体素材 ${id} 不存在于 mediaAssets。` });
   }
   for (const asset of Object.values(envelope.entities.mediaAssets ?? {})) {
     for (const issue of verifyAsset(asset)) issues.push(issue);
   }
   for (const id of assetRefs.browserOnly) {
-    issues.push({ severity: "warning", field: `assets.${id}`, message: `Browser-only asset ${id} is not portable unless reimported in the Tauri app.` });
+    issues.push({ severity: "warning", field: `assets.${id}`, message: `浏览器临时素材 ${id} 需要在 Tauri 应用中重新导入后才可移植。` });
   }
 
   if (manifest) {
     if (manifest.schemaVersion !== envelope.schemaVersion) {
-      issues.push({ severity: "error", field: "manifest.schemaVersion", message: "Manifest schemaVersion does not match save.json." });
+      issues.push({ severity: "error", field: "manifest.schemaVersion", message: "清单 schemaVersion 与 save.json 不匹配。" });
     }
     if (manifest.workspaceId !== envelope.workspace.id) {
-      issues.push({ severity: "error", field: "manifest.workspaceId", message: "Manifest workspaceId does not match save.json." });
+      issues.push({ severity: "error", field: "manifest.workspaceId", message: "清单 workspaceId 与 save.json 不匹配。" });
     }
     const manifestMissing = manifest.assetRefs?.missing ?? [];
     if (manifestMissing.length) {
-      issues.push({ severity: "error", field: "manifest.assetRefs.missing", message: "Manifest was exported with missing asset references." });
+      issues.push({ severity: "error", field: "manifest.assetRefs.missing", message: "清单导出时存在缺失的素材引用。" });
     }
   } else if (format === "evolvria_workspace_package") {
-    issues.push({ severity: "error", field: "manifest", message: "Package manifest is missing." });
+    issues.push({ severity: "error", field: "manifest", message: "内容包缺少清单。" });
   } else {
-    issues.push({ severity: "info", field: "manifest", message: "Legacy JSON import has no manifest; it will be upgraded on next export." });
+    issues.push({ severity: "info", field: "manifest", message: "旧版 JSON 导入没有清单；下次导出时会自动升级。" });
   }
 
   if (secretPattern.test(JSON.stringify(envelope))) {
-    issues.push({ severity: "error", field: "secrets", message: "Package appears to contain an API key or bearer token." });
+    issues.push({ severity: "error", field: "secrets", message: "内容包似乎包含 API key 或 bearer token。" });
   }
 
   return {
@@ -309,20 +309,20 @@ function verifyAsset(asset: MediaAsset): PackageVerificationIssue[] {
     issues.push({
       severity: asset.source.kind === "placeholder" && asset.sizeBytes === 0 ? "warning" : "error",
       field: `assets.${asset.id}.relativePath`,
-      message: asset.source.kind === "placeholder" ? "Placeholder asset has no physical file in the package." : "Asset relativePath is required.",
+      message: asset.source.kind === "placeholder" ? "占位素材在内容包中没有实体文件。" : "素材 relativePath 为必填。",
     });
   }
   if (asset.relativePath.startsWith("/") || asset.relativePath.includes("..")) {
-    issues.push({ severity: "error", field: `assets.${asset.id}.relativePath`, message: "Asset relativePath must stay inside the workspace package." });
+    issues.push({ severity: "error", field: `assets.${asset.id}.relativePath`, message: "素材 relativePath 必须位于工作区内容包内。" });
   }
   if (asset.relativePath && !asset.relativePath.startsWith("assets/") && !asset.relativePath.startsWith("browser://")) {
-    issues.push({ severity: "warning", field: `assets.${asset.id}.relativePath`, message: "Asset path should be under assets/ for portable packages." });
+    issues.push({ severity: "warning", field: `assets.${asset.id}.relativePath`, message: "为保证内容包可移植，素材路径应位于 assets/ 下。" });
   }
   if (!asset.mimeType.trim()) {
-    issues.push({ severity: "error", field: `assets.${asset.id}.mimeType`, message: "Asset MIME type is required." });
+    issues.push({ severity: "error", field: `assets.${asset.id}.mimeType`, message: "素材 MIME type 为必填。" });
   }
   if (!asset.altText.trim()) {
-    issues.push({ severity: "warning", field: `assets.${asset.id}.altText`, message: "Asset alt text is missing." });
+    issues.push({ severity: "warning", field: `assets.${asset.id}.altText`, message: "素材缺少替代文本。" });
   }
   return issues;
 }

@@ -21,7 +21,7 @@ export interface DuplicateStorylineResult {
   };
 }
 
-const localCreator: CreatorRef = { id: "creator_local", name: "Local Creator" };
+const localCreator: CreatorRef = { id: "creator_local", name: "本地创作者" };
 
 export function duplicateStorylinePackage(
   entities: EntityStore,
@@ -114,7 +114,7 @@ export function duplicateStorylinePackage(
     version: {
       version: `${source.version.version}+local-draft`,
       status: "draft",
-      changelog: "Duplicated as local draft.",
+      changelog: "已复制为本地草稿。",
       baseVersionId: source.version.version,
     },
     createdBy: creator,

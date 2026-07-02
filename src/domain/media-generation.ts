@@ -33,7 +33,7 @@ export function createMediaGenerationJob(input: MediaGenerationJobInput, created
     model: input.model,
     status: safetyFlags.includes("blocked") ? "blocked" : "queued",
     safetyFlags,
-    error: safetyFlags.includes("blocked") ? "Blocked by local safety precheck." : undefined,
+    error: safetyFlags.includes("blocked") ? "已被本地安全预检拦截。" : undefined,
     createdAt,
     updatedAt: createdAt,
   };

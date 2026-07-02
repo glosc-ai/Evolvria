@@ -14,8 +14,8 @@ export function createModerationStatus(rating: ContentRating = "SFW", state: Mod
 }
 
 export function moderationLabel(status: ModerationStatus): string {
-  if (status.state === "rejected") return "Rejected";
-  if (status.state === "needs_changes") return "Needs changes";
+  if (status.state === "rejected") return "已拒绝";
+  if (status.state === "needs_changes") return "需修改";
   return status.rating;
 }
 

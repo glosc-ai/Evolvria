@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
 import { RouterLink, useRoute } from "vue-router";
 import { ChevronLeft, ChevronRight, Edit3, Film, History, Image, MessageSquare, Pause, Play, Save, SkipForward, Volume2, X } from "lucide-vue-next";
+import { messageModeLabel, messageRoleLabel } from "@/lib/display";
 import { readTauriMediaDataUrl } from "@/services/media";
 import { useAppStore } from "@/stores/app";
 import type { MediaAsset, MediaGenerationJob, MediaGenerationKind, MediaGenerationStatus, SceneChoice, SceneHint, SceneSprite, VoiceCue } from "@/types/domain";
@@ -329,6 +330,12 @@ function voiceCueStatusLabel(status: VoiceCue["status"]): string {
   if (status === "failed") return "失败";
   return "已规划";
 }
+
+function cameraLabel(camera: CameraOption): string {
+  if (camera === "wide") return "远景";
+  if (camera === "close") return "近景";
+  return "中景";
+}
 </script>
 
 <template>
@@ -340,7 +347,7 @@ function voiceCueStatusLabel(status: VoiceCue["status"]): string {
           class="scene-bg-media"
           :src="backgroundAssetUrl"
           :alt="backgroundAsset?.altText || `${storyline.title} scene background`"
-          aria-label="Scene background asset"
+          aria-label="场景背景素材"
         />
         <div class="scene-topbar">
           <RouterLink class="ghost-button" :to="`/chat/${chat.id}`">
@@ -384,7 +391,7 @@ function voiceCueStatusLabel(status: VoiceCue["status"]): string {
             class="history-line"
             @click="index = Math.max(0, index - recentHistory.length + 1 + historyIndex)"
           >
-            <strong>{{ message.role }}<template v-if="message.mode"> / {{ message.mode }}</template></strong>
+            <strong>{{ messageRoleLabel(message.role) }}<template v-if="message.mode"> / {{ messageModeLabel(message.mode) }}</template></strong>
             <span>{{ message.content }}</span>
           </button>
         </aside>
@@ -403,7 +410,7 @@ function voiceCueStatusLabel(status: VoiceCue["status"]): string {
           <label class="field-box">
             <span>镜头</span>
             <select v-model="sceneEditForm.camera" class="select" aria-label="场景镜头">
-              <option v-for="camera in cameraOptions" :key="camera" :value="camera">{{ camera }}</option>
+              <option v-for="camera in cameraOptions" :key="camera" :value="camera">{{ cameraLabel(camera) }}</option>
             </select>
           </label>
           <div class="scene-choice-editor" aria-label="场景选项编辑器">
@@ -425,16 +432,16 @@ function voiceCueStatusLabel(status: VoiceCue["status"]): string {
               v-if="spriteUrl(sprite)"
               class="sprite-media"
               :src="spriteUrl(sprite)"
-              :alt="spriteAsset(sprite)?.altText || `${store.getCharacter(sprite.characterId)?.name ?? 'Character'} sprite`"
-              :aria-label="`${store.getCharacter(sprite.characterId)?.name ?? 'Character'} sprite asset`"
+              :alt="spriteAsset(sprite)?.altText || `${store.getCharacter(sprite.characterId)?.name ?? '角色'}立绘`"
+              :aria-label="`${store.getCharacter(sprite.characterId)?.name ?? '角色'}立绘素材`"
             />
-            <span>{{ store.getCharacter(sprite.characterId)?.name ?? "Unknown" }}</span>
+            <span>{{ store.getCharacter(sprite.characterId)?.name ?? "未知" }}</span>
           </div>
         </div>
 
         <div class="subtitle-box">
           <div class="message-meta">
-            <span>{{ current?.role ?? "narrator" }}</span>
+            <span>{{ current ? messageRoleLabel(current.role) : "旁白" }}</span>
             <span>{{ index + 1 }} / {{ messages.length }}</span>
           </div>
           <button class="subtitle-text" type="button" @click="revealAll">

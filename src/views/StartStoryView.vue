@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { useRouter, useRoute } from "vue-router";
+import { labelFor } from "@/lib/display";
 import { useAppStore } from "@/stores/app";
 
 const route = useRoute();
@@ -60,60 +61,60 @@ function splitList(value: string): string[] {
   <section v-if="storyline" class="page">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Start</p>
+        <p class="eyebrow">开始</p>
         <h2>{{ storyline.title }}</h2>
       </div>
     </div>
     <div class="page-grid">
       <form class="panel field-grid" @submit.prevent="start">
-        <div class="mode-tabs" role="tablist" aria-label="Persona source">
-          <button type="button" :class="{ active: personaMode === 'new' }" @click="personaMode = 'new'">New Persona</button>
-          <button type="button" :class="{ active: personaMode === 'saved' }" :disabled="!personas.length" @click="personaMode = 'saved'">Saved Persona</button>
+        <div class="mode-tabs" role="tablist" aria-label="玩家档案来源">
+          <button type="button" :class="{ active: personaMode === 'new' }" @click="personaMode = 'new'">新玩家档案</button>
+          <button type="button" :class="{ active: personaMode === 'saved' }" :disabled="!personas.length" @click="personaMode = 'saved'">已保存玩家档案</button>
         </div>
         <template v-if="personaMode === 'new'">
           <label class="field-box">
-            <span>Persona name</span>
+            <span>玩家档案名称</span>
             <input v-model="form.name" class="input" required />
           </label>
           <label class="field-box">
-            <span>Pronouns</span>
+            <span>代词</span>
             <input v-model="form.pronouns" class="input" placeholder="可选" />
           </label>
           <label class="field-box">
-            <span>Persona description</span>
+            <span>玩家档案描述</span>
             <textarea v-model="form.description" class="textarea" :placeholder="storyline.playerRole" />
           </label>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Pace preference</span>
+              <span>节奏偏好</span>
               <select v-model="form.pace" class="select">
-                <option value="slow">Slow burn</option>
-                <option value="balanced">Balanced</option>
-                <option value="fast">Fast drama</option>
+                <option value="slow">慢热</option>
+                <option value="balanced">平衡</option>
+                <option value="fast">快速推进</option>
               </select>
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Tone preference</span>
+              <span>氛围偏好</span>
               <select v-model="form.tone" class="select">
-                <option value="immersive">Immersive</option>
-                <option value="cozy">Cozy</option>
-                <option value="tense">Tense</option>
-                <option value="mystery">Mystery</option>
+                <option value="immersive">沉浸</option>
+                <option value="cozy">温暖</option>
+                <option value="tense">紧张</option>
+                <option value="mystery">悬疑</option>
               </select>
             </label>
           </div>
           <label class="field-box">
-            <span>Boundaries</span>
+            <span>边界</span>
             <textarea v-model="form.boundaries" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Private notes</span>
-            <textarea v-model="form.privateNotes" class="textarea" placeholder="只保存在本地 Persona，不参与公开发布。" />
+            <span>私密备注</span>
+            <textarea v-model="form.privateNotes" class="textarea" placeholder="只保存在本地玩家档案，不参与公开发布。" />
           </label>
         </template>
         <template v-else>
           <label class="field-box">
-            <span>Saved Persona</span>
+            <span>已保存玩家档案</span>
             <select v-model="selectedPersonaId" class="select">
               <option v-for="persona in personas" :key="persona.id" :value="persona.id">{{ persona.name }}</option>
             </select>
@@ -127,25 +128,25 @@ function splitList(value: string): string[] {
           </div>
         </template>
         <label class="field-box">
-          <span>Scenario</span>
+          <span>场景</span>
           <select v-model="form.scenarioId" class="select">
             <option value="">默认场景</option>
             <option v-for="scenario in scenarios" :key="scenario.id" :value="scenario.id">{{ scenario.title }}</option>
           </select>
         </label>
-        <button class="primary-button" type="submit">Start Chat</button>
+        <button class="primary-button" type="submit">开始聊天</button>
       </form>
       <aside class="panel">
-        <h3>Safety & Cost</h3>
-        <p class="muted">默认使用 {{ store.envelope.settings.provider.type }} provider。AdultLocked 内容保持锁定。</p>
-        <p class="muted">启动会保存 Persona 选择、Chat 和开场消息；公开发布不会包含 Persona 私密信息。</p>
+        <h3>安全与成本</h3>
+        <p class="muted">默认使用 {{ labelFor(store.envelope.settings.provider.type) }} 提供方。成人锁定内容保持锁定。</p>
+        <p class="muted">启动会保存玩家档案选择、聊天和开场消息；公开发布不会包含玩家档案私密信息。</p>
         <div class="field-box" style="margin-top: 12px">
-          <strong>Provider</strong>
-          <span class="muted">{{ store.envelope.settings.provider.model }} / max {{ store.envelope.settings.provider.maxTokens }} tokens</span>
+          <strong>提供方</strong>
+          <span class="muted">{{ store.envelope.settings.provider.model }} / 最多 {{ store.envelope.settings.provider.maxTokens }} tokens</span>
         </div>
         <div class="field-box" style="margin-top: 12px">
-          <strong>Saved Personas</strong>
-          <span class="muted">{{ personas.length }} reusable local persona(s)</span>
+          <strong>已保存玩家档案</strong>
+          <span class="muted">{{ personas.length }} 个可复用本地玩家档案</span>
         </div>
       </aside>
     </div>

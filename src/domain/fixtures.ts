@@ -36,7 +36,7 @@ export function createSeedEnvelope(): SaveEnvelope {
           { key: "tone", value: "immersive" },
         ],
         boundaries: ["保持 SFW 默认边界", "遇到高风险内容时先淡出处理"],
-        privateNotes: "本地默认 Persona，可在启动故事时复用。",
+        privateNotes: "本地默认玩家档案，可在启动故事时复用。",
         createdAt: seedTime,
         updatedAt: seedTime,
       },
@@ -78,7 +78,7 @@ export function createSeedEnvelope(): SaveEnvelope {
         id: "mod_seed_cover_check",
         targetType: "storyline",
         targetId: "story_starbloom_frontier",
-        reason: "Local seed content is SFW and uses original placeholder media.",
+        reason: "本地种子内容为 SFW，并使用原创占位媒体。",
         status: "dismissed",
         createdAt: seedTime,
         updatedAt: seedTime,
@@ -92,7 +92,7 @@ export function createSeedEnvelope(): SaveEnvelope {
         status: "estimated",
         amount: 0,
         currency: "credit",
-        note: "Cloud creator share placeholder; MVP does not process payments.",
+        note: "云端创作者分成占位；MVP 不处理支付。",
         createdAt: seedTime,
       },
     },
@@ -113,7 +113,7 @@ export function createSeedEnvelope(): SaveEnvelope {
       {
         id: "audit_seed",
         type: "seed",
-        message: "Created original Evolvria starter workspace.",
+        message: "已创建 Evolvria 原创起始工作区。",
         createdAt: seedTime,
       },
     ],
@@ -154,7 +154,7 @@ export function buildIndexes(entities: EntityStore): SearchIndexSnapshot {
 
 const seedWorkspace: Workspace = {
   id: "workspace_local_seed",
-  name: "Evolvria Local Library",
+  name: "Evolvria 本地内容库",
   description: "原创示例内容和本地优先存档。",
   createdAt: seedTime,
   updatedAt: seedTime,
@@ -176,7 +176,7 @@ const seedSettings: WorkspaceSettings = {
   },
 };
 
-const commonLicense = { kind: "owned", note: "Original placeholder generated for Evolvria MVP." } as const;
+const commonLicense = { kind: "owned", note: "为 Evolvria MVP 生成的原创占位素材。" } as const;
 
 const seedMedia: MediaAsset[] = [
   {
@@ -190,7 +190,7 @@ const seedMedia: MediaAsset[] = [
     sizeBytes: 0,
     variants: [],
     altText: "星烬边境的破碎星门和青色灯塔。",
-    source: { kind: "placeholder", label: "Evolvria original gradient cover" },
+    source: { kind: "placeholder", label: "Evolvria 原创渐变封面" },
     license: commonLicense,
     safety: createModerationStatus("SFW", "local_ready"),
     createdAt: seedTime,
@@ -206,7 +206,7 @@ const seedMedia: MediaAsset[] = [
     sizeBytes: 0,
     variants: [],
     altText: "雾港钟楼下的潮汐契约。",
-    source: { kind: "placeholder", label: "Evolvria original gradient cover" },
+    source: { kind: "placeholder", label: "Evolvria 原创渐变封面" },
     license: commonLicense,
     safety: createModerationStatus("M17", "local_ready"),
     createdAt: seedTime,
@@ -308,7 +308,7 @@ const seedStorylines: Storyline[] = [
       "坠星回声只能透露片段，不提供完整预言。",
       "诺瓦不能直接控制人的意志。",
     ],
-    tags: ["科幻", "悬疑", "伙伴", "Fate Ready"],
+    tags: ["科幻", "悬疑", "伙伴", "Fate 就绪"],
     language: "zh-CN",
     rating: "SFW",
     cast: [
@@ -321,7 +321,7 @@ const seedStorylines: Storyline[] = [
     dungeonMindConfigId: "dm_starbloom",
     moderation: createModerationStatus("SFW", "local_ready"),
     visibility: "private",
-    version: { version: "0.1.0", changelog: "Original MVP seed.", status: "local_ready" },
+    version: { version: "0.1.0", changelog: "原创 MVP 种子内容。", status: "local_ready" },
     createdBy: creator,
     createdAt: seedTime,
     updatedAt: seedTime,
@@ -350,7 +350,7 @@ const seedStorylines: Storyline[] = [
     supportedModes: ["chat", "scene"],
     moderation: createModerationStatus("M17", "local_ready"),
     visibility: "private",
-    version: { version: "0.1.0", changelog: "Original MVP seed.", status: "local_ready" },
+    version: { version: "0.1.0", changelog: "原创 MVP 种子内容。", status: "local_ready" },
     createdBy: creator,
     createdAt: seedTime,
     updatedAt: seedTime,

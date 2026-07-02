@@ -139,7 +139,7 @@ export function createChatCheckpoint(chatId: string, previousMessages: Message[]
   return {
     id: createId("checkpoint"),
     chatId,
-    label: lastMessage ? `Before message ${previousMessages.length + 1}` : "Chat start",
+    label: lastMessage ? `消息 ${previousMessages.length + 1} 之前` : "聊天开始",
     messageIndex: previousMessages.length,
     messageId: lastMessage?.id,
     createdAt: nowIso(),
@@ -229,21 +229,37 @@ export function formatChatExcerptMarkdown(input: {
   const lines = [
     `# ${input.title}`,
     "",
-    input.storylineTitle ? `Storyline: ${input.storylineTitle}` : undefined,
-    input.personaName ? `Persona: ${input.personaName}` : undefined,
-    `ExportedAt: ${nowIso()}`,
+    input.storylineTitle ? `故事线：${input.storylineTitle}` : undefined,
+    input.personaName ? `玩家档案：${input.personaName}` : undefined,
+    `导出时间：${nowIso()}`,
     "",
-    "## Messages",
+    "## 消息",
     "",
   ].filter((line): line is string => line !== undefined);
   for (const message of input.messages) {
-    const mode = message.mode ? ` / ${message.mode}` : "";
-    lines.push(`### ${message.role}${mode}`);
+    const mode = message.mode ? ` / ${messageModeLabel(message.mode)}` : "";
+    lines.push(`### ${messageRoleLabel(message.role)}${mode}`);
     lines.push("");
     lines.push(message.content);
     lines.push("");
   }
   return `${lines.join("\n").trim()}\n`;
+}
+
+function messageRoleLabel(role: Message["role"]): string {
+  if (role === "system") return "系统";
+  if (role === "user") return "玩家";
+  if (role === "assistant") return "角色";
+  if (role === "narrator") return "旁白";
+  if (role === "fate") return "裁定";
+  return "工具";
+}
+
+function messageModeLabel(mode: NonNullable<Message["mode"]>): string {
+  if (mode === "say") return "说话";
+  if (mode === "act") return "行动";
+  if (mode === "ask") return "询问";
+  return "旁白外";
 }
 
 export function mergeNarrativeResponse(chat: Chat, response: NarrativeResponse, retryOfMessageId?: string): {

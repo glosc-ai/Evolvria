@@ -193,7 +193,7 @@ export class LocalSyncRepository implements SyncRepository {
       entityId: storylineId,
       field: "title",
       localValue: storyline.title,
-      remoteValue: `${storyline.title} - Cloud Revision`,
+      remoteValue: `${storyline.title} - 云端修订`,
       createdAt,
     });
     envelope.settings.sync = {
@@ -274,14 +274,14 @@ function duplicateStorylineFromConflict(
   envelope.entities.storylines[id] = {
     ...storyline,
     id,
-    title: typeof localValue === "string" ? `${localValue} (Local Copy)` : `${storyline.title} (Local Copy)`,
+    title: typeof localValue === "string" ? `${localValue}（本地副本）` : `${storyline.title}（本地副本）`,
     visibility: "private",
     moderation: { ...storyline.moderation, state: "draft" },
     version: {
       ...storyline.version,
       version: `${storyline.version.version}+local-copy`,
       status: "draft",
-      changelog: "Created from a sync conflict copy resolution.",
+      changelog: "由同步冲突复制解决创建。",
       baseVersionId: storyline.version.version,
     },
     createdAt,

@@ -46,7 +46,7 @@ export function createSummaryChapter(chatId: string, messages: Message[], chapte
       fromMessageId: first?.id ?? "none",
       toMessageId: last?.id ?? "none",
     },
-    title: `Chapter ${chapterNumber ?? Math.max(1, Math.ceil(narratable.length / 12))}: ${deriveTitle(last?.content ?? "")}`,
+    title: `第 ${chapterNumber ?? Math.max(1, Math.ceil(narratable.length / 12))} 章：${deriveTitle(last?.content ?? "")}`,
     summary: buildSummaryText(userActions, assistantFacts),
     facts: assistantFacts.map((message) => compactFact(message.content)),
     relationshipDeltas,
@@ -89,7 +89,7 @@ export function editSummaryChapter(chapter: SummaryChapter, input: SummaryEditIn
     updatedAt: editedAt,
     revisionHistory: [
       ...(chapter.revisionHistory ?? []),
-      summaryRevisionFromChapter(chapter, editedAt, input.note || "Manual edit"),
+      summaryRevisionFromChapter(chapter, editedAt, input.note || "手动编辑"),
     ].slice(-12),
   };
 }
@@ -107,7 +107,7 @@ export function revertSummaryChapter(chapter: SummaryChapter, revisionId?: strin
     updatedAt: revertedAt,
     revisionHistory: [
       ...revisions,
-      summaryRevisionFromChapter(chapter, revertedAt, "Revert checkpoint"),
+      summaryRevisionFromChapter(chapter, revertedAt, "回退检查点"),
     ].slice(-12),
   };
 }
@@ -159,7 +159,7 @@ export function createInitialArc(chatId: string, title: string, evidenceMessageI
   return {
     id: createId("arc"),
     chatId,
-    title: `Arc: ${title}`,
+    title: `剧情弧：${title}`,
     theme: "发现、信任与第一道选择",
     goal: "确认当前异常的来源，并建立第一个可靠盟友。",
     stakes: "如果拖延，场景中的危机时钟会推进。",

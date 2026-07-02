@@ -367,8 +367,8 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
         id: `restore:${asset.id}`,
         kind: "restore_missing_asset",
         severity: "error",
-        title: `Restore missing asset ${asset.id}`,
-        detail: `${asset.relativePath || "empty path"} is declared in workspace metadata but is not available as a portable asset file.`,
+        title: `恢复缺失素材 ${asset.id}`,
+        detail: `${asset.relativePath || "空路径"} 已在工作区元数据中声明，但不可作为可移植素材文件使用。`,
         assetId: asset.id,
         relativePath: asset.relativePath,
         estimatedRecoverableBytes: 0,
@@ -381,8 +381,8 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
         id: `reimport:${asset.id}`,
         kind: "reimport_browser_asset",
         severity: "warning",
-        title: `Reimport browser-only asset ${asset.id}`,
-        detail: `${asset.relativePath} is only a browser preview reference. Reimport it in the Tauri app before publishing or packaging.`,
+        title: `重新导入浏览器临时素材 ${asset.id}`,
+        detail: `${asset.relativePath} 只是浏览器预览引用。发布或打包前请在 Tauri 应用中重新导入。`,
         assetId: asset.id,
         relativePath: asset.relativePath,
         estimatedRecoverableBytes: 0,
@@ -395,8 +395,8 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
         id: `placeholder:${asset.id}`,
         kind: "replace_placeholder_asset",
         severity: "warning",
-        title: `Replace placeholder asset ${asset.id}`,
-        detail: "Referenced placeholder covers are acceptable for MVP demos but should be replaced before a polished public package.",
+        title: `替换占位素材 ${asset.id}`,
+        detail: "被引用的占位封面可用于 MVP 演示，但在正式公开内容包前应替换。",
         assetId: asset.id,
         relativePath: asset.relativePath,
         estimatedRecoverableBytes: 0,
@@ -409,8 +409,8 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
         id: `unreferenced:${asset.id}`,
         kind: "review_unreferenced_asset",
         severity: "info",
-        title: `Review unreferenced asset ${asset.id}`,
-        detail: "The asset is declared but not referenced by Storyline, Character, or SceneHint data. Keep it only if it is a draft reserve.",
+        title: `检查未引用素材 ${asset.id}`,
+        detail: "该素材已声明，但未被故事线、角色或 SceneHint 数据引用。仅在作为草稿备用素材时保留。",
         assetId: asset.id,
         relativePath: asset.relativePath,
         estimatedRecoverableBytes: asset.physicalSizeBytes ?? asset.declaredSizeBytes,
@@ -424,8 +424,8 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
         id: `compress:${asset.id}`,
         kind: "compress_large_asset",
         severity: "info",
-        title: `Compress large asset ${asset.id}`,
-        detail: `${asset.relativePath} is ${formatBytesForPlan(sizeBytes)}. Consider thumbnail, preview, or lower bitrate variants before publishing.`,
+        title: `压缩大型素材 ${asset.id}`,
+        detail: `${asset.relativePath} 为 ${formatBytesForPlan(sizeBytes)}。发布前可考虑生成缩略图、预览或低码率变体。`,
         assetId: asset.id,
         relativePath: asset.relativePath,
         estimatedRecoverableBytes: Math.round(sizeBytes * 0.3),
@@ -439,10 +439,10 @@ export function buildAssetMaintenancePlan(inventory: WorkspaceAssetInventory, la
       id: `untracked:${file.relativePath}`,
       kind: "import_or_remove_untracked_file",
       severity: file.supported ? "warning" : "info",
-      title: `Review untracked file ${file.relativePath}`,
+      title: `检查未追踪文件 ${file.relativePath}`,
       detail: file.supported
-        ? "This file is inside assets/ but is not connected to any MediaAsset metadata. Import it or remove it from the package."
-        : "This unsupported file is inside assets/ but is not package-tracked. Remove it unless it is intentionally reserved.",
+        ? "此文件位于 assets/ 内，但未连接到任何媒体素材元数据。请导入它，或从内容包中移除。"
+        : "此不支持的文件位于 assets/ 内，但未被内容包追踪。除非刻意保留，否则请移除。",
       relativePath: file.relativePath,
       estimatedRecoverableBytes: file.sizeBytes,
       publishBlocker: false,
@@ -493,7 +493,7 @@ export async function saveSecret(key: string, value: string): Promise<SecretWrit
     localStorage.setItem(`${secretPrefix}${key}`, value);
     return {
       backend: "browser_local_storage",
-      warning: "Browser preview stores provider keys in localStorage. Use the Tauri app for system keychain storage.",
+      warning: "浏览器预览会将提供方密钥存入 localStorage。请使用 Tauri 应用写入系统 Keychain。",
     };
   }
   return result;
@@ -514,7 +514,7 @@ export async function deleteSecret(key: string): Promise<SecretDeleteResult> {
   return {
     backend: "browser_local_storage",
     deleted,
-    warning: "Browser preview provider key was cleared from localStorage. Tauri desktop keys live in the system keychain.",
+    warning: "浏览器预览提供方密钥已从 localStorage 清除。Tauri 桌面密钥位于系统 Keychain。",
   };
 }
 

@@ -11,7 +11,7 @@ const apiKey = ref("");
 const feedback = ref("");
 
 async function saveSettings() {
-  feedback.value = "Saving settings...";
+  feedback.value = "正在保存设置...";
   try {
     const secretResult = await store.updateProvider(
       {
@@ -30,19 +30,19 @@ async function saveSettings() {
       maxEstimatedCostPerTurn: Number(budget.maxEstimatedCostPerTurn),
     });
     feedback.value = secretResult
-      ? `Settings saved. API key backend: ${secretResult.backend}${secretResult.warning ? ` (${secretResult.warning})` : ""}`
-      : "Settings saved.";
+      ? `设置已保存。API Key 后端：${secretResult.backend}${secretResult.warning ? ` (${secretResult.warning})` : ""}`
+      : "设置已保存。";
   } catch (error) {
     feedback.value = error instanceof Error ? error.message : String(error);
   }
 }
 
 async function clearApiKey() {
-  feedback.value = "Clearing provider key...";
+  feedback.value = "正在清除提供方密钥...";
   try {
     apiKey.value = "";
     const result = await store.clearProviderKey();
-    feedback.value = `Provider key ${result.deleted ? "cleared" : "was not saved"}. Backend: ${result.backend}${result.warning ? ` (${result.warning})` : ""}`;
+    feedback.value = `提供方密钥${result.deleted ? "已清除" : "此前未保存"}。后端：${result.backend}${result.warning ? ` (${result.warning})` : ""}`;
   } catch (error) {
     feedback.value = error instanceof Error ? error.message : String(error);
   }
@@ -61,92 +61,92 @@ function applyGloscOneDefaults() {
   <section class="page">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Settings</p>
-        <h2>AI Provider & Safety</h2>
+        <p class="eyebrow">设置</p>
+        <h2>AI 提供方与安全</h2>
       </div>
     </div>
 
     <div class="page-grid">
       <form class="panel field-grid" @submit.prevent="saveSettings">
         <label class="field-box">
-          <span>Provider</span>
+          <span>提供方</span>
           <select v-model="provider.type" class="select">
-            <option value="mock">mock</option>
-            <option value="openai-compatible">openai-compatible</option>
-            <option value="local-http">local-http</option>
+            <option value="mock">模拟</option>
+            <option value="openai-compatible">OpenAI 兼容</option>
+            <option value="local-http">本地 HTTP</option>
           </select>
         </label>
-        <button class="ghost-button" type="button" @click="applyGloscOneDefaults">Use Glosc One Defaults</button>
+        <button class="ghost-button" type="button" @click="applyGloscOneDefaults">使用 Glosc One 默认配置</button>
         <label class="field-box">
-          <span>Base URL</span>
+          <span>基础 URL</span>
           <input v-model="provider.baseUrl" class="input" />
         </label>
         <label class="field-box">
-          <span>Model</span>
+          <span>模型</span>
           <input v-model="provider.model" class="input" />
         </label>
         <label class="field-box">
           <span>API Key</span>
-          <input v-model="apiKey" class="input" type="password" placeholder="不会写入 workspace 导出包" />
-          <span class="muted">Tauri 桌面版优先写入系统 Keychain；浏览器预览只适合临时测试。</span>
+          <input v-model="apiKey" class="input" type="password" placeholder="不会写入工作区导出包" />
+          <span class="muted">Tauri 桌面版优先写入系统密钥链；浏览器预览只适合临时测试。</span>
         </label>
         <div class="row">
           <label class="field-box" style="flex: 1">
-            <span>Temperature</span>
+            <span>温度</span>
             <input v-model.number="provider.temperature" class="input" type="number" min="0" max="2" step="0.05" />
           </label>
           <label class="field-box" style="flex: 1">
-            <span>Max tokens</span>
+            <span>最大 tokens</span>
             <input v-model.number="provider.maxTokens" class="input" type="number" min="128" max="4096" step="64" />
           </label>
         </div>
         <div class="field-box">
-          <strong>Budget Guardrails</strong>
+          <strong>预算护栏</strong>
           <span class="muted">本地预估，不扣费；超过上限时阻止发送。</span>
         </div>
         <div class="row">
           <label class="field-box" style="flex: 1">
-            <span>Max input tokens</span>
+            <span>最大输入 tokens</span>
             <input v-model.number="budget.maxInputTokens" class="input" type="number" min="1" step="128" />
           </label>
           <label class="field-box" style="flex: 1">
-            <span>Max output tokens</span>
+            <span>最大输出 tokens</span>
             <input v-model.number="budget.maxOutputTokens" class="input" type="number" min="1" step="64" />
           </label>
         </div>
         <label class="field-box">
-          <span>Max estimated cost per turn</span>
+          <span>单轮最大预估成本</span>
           <input v-model.number="budget.maxEstimatedCostPerTurn" class="input" type="number" min="0" step="0.000001" />
         </label>
         <div class="row">
-          <button class="primary-button" type="button" @click="saveSettings">Save Settings</button>
-          <button class="ghost-button" type="button" @click="clearApiKey">Clear API Key</button>
+          <button class="primary-button" type="button" @click="saveSettings">保存设置</button>
+          <button class="ghost-button" type="button" @click="clearApiKey">清除 API Key</button>
         </div>
         <p v-if="feedback" class="muted">{{ feedback }}</p>
       </form>
 
       <aside class="panel field-grid">
-        <h3>AI SDK Routes</h3>
+        <h3>AI SDK 路由</h3>
         <div class="field-box">
           <strong>Glosc One</strong>
           <span class="muted">{{ GLOSC_ONE_BASE_URL }}</span>
-          <span class="muted">Chat {{ AI_MODEL_IDS.chat }}</span>
-          <span class="muted">Narrative {{ AI_MODEL_IDS.narrative }}</span>
-          <span class="muted">Content {{ AI_MODEL_IDS.content }}</span>
-          <span class="muted">Image {{ AI_MODEL_IDS.image }}</span>
-          <span class="muted">Video {{ AI_MODEL_IDS.video }}</span>
+          <span class="muted">聊天 {{ AI_MODEL_IDS.chat }}</span>
+          <span class="muted">叙事 {{ AI_MODEL_IDS.narrative }}</span>
+          <span class="muted">内容审核 {{ AI_MODEL_IDS.content }}</span>
+          <span class="muted">图片 {{ AI_MODEL_IDS.image }}</span>
+          <span class="muted">视频 {{ AI_MODEL_IDS.video }}</span>
           <span class="muted">语音 {{ AI_MODEL_IDS.voice }}</span>
         </div>
-        <h3>Content Safety</h3>
+        <h3>内容安全</h3>
         <label class="field-box">
-          <span>AdultLocked content</span>
+          <span>成人锁定内容</span>
           <select
             class="select"
             :value="store.envelope.settings.adultContentUnlocked ? 'on' : 'off'"
             @change="store.updateAdultUnlock(($event.target as HTMLSelectElement).value === 'on')"
           >
-            <option value="off">Locked by default</option>
-            <option value="on">Unlocked locally</option>
+            <option value="off">默认锁定</option>
+            <option value="on">本地解锁</option>
           </select>
         </label>
         <p class="muted">

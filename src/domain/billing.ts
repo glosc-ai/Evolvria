@@ -80,7 +80,7 @@ export function createCreatorPayoutRequest(
     currency: "credit",
     status: "requested",
     riskFlags: amount >= 50 ? ["manual_review_required"] : [],
-    note: input.note.trim() || "Local payout preview request.",
+    note: input.note.trim() || "本地提现预览申请。",
     requestedAt: input.requestedAt,
     updatedAt: input.requestedAt,
   };
@@ -93,7 +93,7 @@ export function applyPayoutRequestToEarnings(
   return Object.fromEntries(Object.entries(earnings).map(([id, earning]) => [
     id,
     request.earningIds.includes(id) && earning.status === "available"
-      ? { ...earning, status: "pending", note: `${earning.note} Payout preview ${request.id} requested.` }
+      ? { ...earning, status: "pending", note: `${earning.note} 已申请提现预览 ${request.id}。` }
       : earning,
   ]));
 }
@@ -116,11 +116,19 @@ export function resolveCreatorPayoutRequest(
     status,
     updatedAt: resolvedAt,
     resolvedAt,
-    resolutionNote: note.trim() || `Local payout ${status}.`,
+    resolutionNote: note.trim() || `本地提现${payoutStatusLabel(status)}。`,
     riskFlags: outcome === "block"
       ? [...new Set([...request.riskFlags, "withheld_for_review"])]
       : request.riskFlags,
   };
+}
+
+function payoutStatusLabel(status: CreatorPayoutRequest["status"]): string {
+  if (status === "approved") return "已通过";
+  if (status === "paid") return "已支付";
+  if (status === "blocked") return "已拦截";
+  if (status === "rejected") return "已拒绝";
+  return "已申请";
 }
 
 export function applyPayoutResolutionToEarnings(
@@ -129,9 +137,9 @@ export function applyPayoutResolutionToEarnings(
 ): Record<string, CreatorEarning> {
   return Object.fromEntries(Object.entries(earnings).map(([id, earning]) => {
     if (!request.earningIds.includes(id)) return [id, earning];
-    if (request.status === "paid") return [id, { ...earning, status: "paid", note: `${earning.note} Paid by payout preview ${request.id}.` }];
-    if (request.status === "rejected") return [id, { ...earning, status: "available", note: `${earning.note} Payout preview ${request.id} rejected; returned to available.` }];
-    if (request.status === "blocked") return [id, { ...earning, status: "withheld", note: `${earning.note} Withheld by payout risk review ${request.id}.` }];
+    if (request.status === "paid") return [id, { ...earning, status: "paid", note: `${earning.note} 已由提现预览 ${request.id} 标记支付。` }];
+    if (request.status === "rejected") return [id, { ...earning, status: "available", note: `${earning.note} 提现预览 ${request.id} 已拒绝，收益退回可用。` }];
+    if (request.status === "blocked") return [id, { ...earning, status: "withheld", note: `${earning.note} 提现风险复核 ${request.id} 已暂扣。` }];
     return [id, earning];
   }));
 }

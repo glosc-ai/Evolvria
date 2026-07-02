@@ -33,13 +33,13 @@ export function estimateTurnCost(messages: Message[], userInput: string, outputT
 export function checkBudget(estimate: CostEstimate, budget: BudgetSettings): BudgetCheck {
   const reasons: string[] = [];
   if (estimate.inputTokens > budget.maxInputTokens) {
-    reasons.push(`Input context ${estimate.inputTokens} tokens exceeds limit ${budget.maxInputTokens}.`);
+    reasons.push(`输入上下文 ${estimate.inputTokens} tokens 超过上限 ${budget.maxInputTokens}。`);
   }
   if (estimate.outputTokens > budget.maxOutputTokens) {
-    reasons.push(`Estimated output ${estimate.outputTokens} tokens exceeds limit ${budget.maxOutputTokens}.`);
+    reasons.push(`预计输出 ${estimate.outputTokens} tokens 超过上限 ${budget.maxOutputTokens}。`);
   }
   if (estimate.estimatedCost > budget.maxEstimatedCostPerTurn) {
-    reasons.push(`Estimated cost ${estimate.estimatedCost.toFixed(6)} exceeds per-turn limit ${budget.maxEstimatedCostPerTurn.toFixed(6)}.`);
+    reasons.push(`预计成本 ${estimate.estimatedCost.toFixed(6)} 超过单轮上限 ${budget.maxEstimatedCostPerTurn.toFixed(6)}。`);
   }
   return {
     ok: reasons.length === 0,
@@ -49,8 +49,8 @@ export function checkBudget(estimate: CostEstimate, budget: BudgetSettings): Bud
 
 export function isRecoverableInputOverflow(check: BudgetCheck): boolean {
   return !check.ok
-    && check.reasons.some((reason) => reason.startsWith("Input context "))
-    && check.reasons.every((reason) => reason.startsWith("Input context "));
+    && check.reasons.some((reason) => reason.startsWith("输入上下文 "))
+    && check.reasons.every((reason) => reason.startsWith("输入上下文 "));
 }
 
 export function compactMessagesForBudget(

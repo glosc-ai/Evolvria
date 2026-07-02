@@ -7,7 +7,7 @@ export interface DraftVersionInput {
 
 export function prepareVersionForDraftEdit(current: ContentVersion, input: DraftVersionInput): ContentVersion {
   const nextVersion = normalizeVersion(input.version, current.version);
-  const nextChangelog = input.changelog?.trim() || current.changelog || "Local draft updated.";
+  const nextChangelog = input.changelog?.trim() || current.changelog || "本地草稿已更新。";
   const lockedStatus = current.status !== "draft";
   return {
     ...current,

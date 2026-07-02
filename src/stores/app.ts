@@ -231,7 +231,7 @@ export const useAppStore = defineStore("app", {
     },
     validateStoryline(storylineId: string): ValidationIssue[] {
       const storyline = this.getStoryline(storylineId);
-      if (!storyline) return [{ field: "storyline", severity: "error", message: "Storyline not found." }];
+      if (!storyline) return [{ field: "storyline", severity: "error", message: "未找到故事线。" }];
       return validateStorylinePackage({
         storyline,
         characters: this.storylineCharacters(storyline),
@@ -250,7 +250,7 @@ export const useAppStore = defineStore("app", {
         workspace: { ...this.envelope.workspace, updatedAt: nowIso() },
         audit: [
           ...this.envelope.audit,
-          { id: createId("audit"), type: reason, message: `Saved workspace: ${reason}`, createdAt: nowIso() },
+          { id: createId("audit"), type: reason, message: `已保存工作区：${reason}`, createdAt: nowIso() },
         ].slice(-80),
       };
       await saveWorkspace(this.envelope);
@@ -319,7 +319,7 @@ export const useAppStore = defineStore("app", {
       if (this.canRecoverContextOverflow(check, messages, content)) {
         return {
           ok: true,
-          reasons: [`Input context ${estimate.inputTokens} tokens will be summarized before generation.`],
+          reasons: [`输入上下文 ${estimate.inputTokens} tokens 将在生成前自动摘要。`],
         };
       }
       return check;
@@ -421,7 +421,7 @@ export const useAppStore = defineStore("app", {
             id: caseId,
             targetType: "chat",
             targetId: chat.id,
-            reason: `AI output post-check blocked: ${checkedResponse.flags.join(", ")}`,
+            reason: `AI 输出后置安全检查已拦截：${checkedResponse.flags.join(", ")}`,
             status: "open",
             createdAt: nowIso(),
             updatedAt: nowIso(),
@@ -445,7 +445,7 @@ export const useAppStore = defineStore("app", {
         }
         this.maybeCreateAutoSummary(chat.id, activeArc, activeArcAfter);
       } catch (error) {
-        const failed = createMessage(chat.id, "system", `AI provider 暂时失败：${error instanceof Error ? error.message : String(error)}。已保留你的输入，可切换 mock 或重试。`, "ooc", undefined, {
+        const failed = createMessage(chat.id, "system", `AI 提供方暂时失败：${error instanceof Error ? error.message : String(error)}。已保留你的输入，可切换模拟提供方或重试。`, "ooc", undefined, {
           safetyFlags: ["none"],
         });
         const current = this.envelope.entities.chats[chat.id];
@@ -479,13 +479,13 @@ export const useAppStore = defineStore("app", {
       if (droppedToSummarize.filter((message) => message.role !== "system").length >= 4) {
         const summary = this.recordSummaryChapter(chatId, droppedToSummarize);
         if (summary) {
-          this.lastBudgetWarning = `Context summarized before generation: ${summary.title}.`;
+          this.lastBudgetWarning = `已在生成前整理上下文摘要：${summary.title}。`;
           this.envelope.audit = [
             ...this.envelope.audit,
             {
               id: createId("audit"),
               type: "context_compacted",
-              message: `Compacted ${droppedToSummarize.length} older messages before AI generation.`,
+              message: `AI 生成前已压缩 ${droppedToSummarize.length} 条较早消息。`,
               createdAt: nowIso(),
             },
           ].slice(-80);
@@ -530,7 +530,7 @@ export const useAppStore = defineStore("app", {
       if (!chapter) throw new Error("summary_not_found");
       this.envelope.entities.summaryChapters[summaryId] = editSummaryChapter(chapter, {
         ...input,
-        note: "Manual summary edit from Chat",
+        note: "聊天中手动编辑摘要",
       });
       await this.persist("summary_updated");
     },
@@ -573,7 +573,7 @@ export const useAppStore = defineStore("app", {
           {
             id: createId("audit"),
             type: "auto_summary_created",
-            message: `Created ${summary.title} by ${decision.reason}.`,
+            message: `已因 ${decision.reason} 创建 ${summary.title}。`,
             createdAt: nowIso(),
           },
         ].slice(-80);
@@ -663,7 +663,7 @@ export const useAppStore = defineStore("app", {
             id: caseId,
             targetType: "chat",
             targetId: chat.id,
-            reason: `AI retry output post-check blocked: ${checkedResponse.flags.join(", ")}`,
+            reason: `AI 重试输出后置安全检查已拦截：${checkedResponse.flags.join(", ")}`,
             status: "open",
             createdAt: nowIso(),
             updatedAt: nowIso(),
@@ -688,7 +688,7 @@ export const useAppStore = defineStore("app", {
       const rollbackMessage = createMessage(
         chatId,
         "system",
-        `已回滚到 checkpoint：${checkpoint.label}。后续消息仍保留在存档实体中，但已从当前分支移除。`,
+        `已回滚到检查点：${checkpoint.label}。后续消息仍保留在存档实体中，但已从当前分支移除。`,
         "ooc",
         undefined,
         { safetyFlags: ["none"] },
@@ -728,7 +728,7 @@ export const useAppStore = defineStore("app", {
       const message = createMessage(
         chatId,
         "system",
-        "Chat archived. It remains recoverable from Saves and is no longer treated as the active Continue session.",
+        "聊天已归档。它仍可从“存档”恢复，并且不再作为当前继续会话。",
         "ooc",
         undefined,
         { safetyFlags: ["none"] },
@@ -796,7 +796,7 @@ export const useAppStore = defineStore("app", {
         throw new Error(`storyline_package_invalid: ${report.issues.filter((issue) => issue.severity === "error").map((issue) => issue.message).join(" ")}`);
       }
       const importedId = importStorylinePackageAsDraft(this.envelope, packageInput.envelope);
-      this.lastImportMessage = `Imported storyline package as local draft ${this.envelope.entities.storylines[importedId]?.title ?? importedId}.`;
+      this.lastImportMessage = `故事线内容包已导入为本地草稿：${this.envelope.entities.storylines[importedId]?.title ?? importedId}。`;
       await this.persist("storyline_package_imported");
       return importedId;
     },
@@ -810,7 +810,7 @@ export const useAppStore = defineStore("app", {
         type: "character",
         name: input.characterName.trim() || "未命名角色",
         subtitle: "本地草稿角色",
-        summary: "由 Creator Studio 创建的原创角色。",
+        summary: "由创作工作台创建的原创角色。",
         profile: "这是一个本地原创角色。请在后续编辑中补充动机、边界和说话风格。",
         voice: {
           tone: "自然、克制、有叙事感。",
@@ -826,7 +826,7 @@ export const useAppStore = defineStore("app", {
         defaultScenarioIds: [scenarioId],
         moderation: createModerationStatus("SFW", "draft"),
         visibility: "private",
-        createdBy: { id: "creator_local", name: "Local Creator" },
+        createdBy: { id: "creator_local", name: "本地创作者" },
         createdAt: now,
         updatedAt: now,
       };
@@ -849,7 +849,7 @@ export const useAppStore = defineStore("app", {
         moderation: createModerationStatus("SFW", "draft"),
         visibility: "private",
         version: { version: "0.1.0", changelog: "本地草稿创建。", status: "draft" },
-        createdBy: { id: "creator_local", name: "Local Creator" },
+        createdBy: { id: "creator_local", name: "本地创作者" },
         createdAt: now,
         updatedAt: now,
       };
@@ -965,17 +965,17 @@ export const useAppStore = defineStore("app", {
         attributes: [
           {
             id: attributeId,
-            name: input.attributeName.trim() || existing?.attributes[0]?.name || "Resolve",
-            description: input.attributeDescription.trim() || existing?.attributes[0]?.description || "General pressure, focus, and risk handling.",
+            name: input.attributeName.trim() || existing?.attributes[0]?.name || "意志",
+            description: input.attributeDescription.trim() || existing?.attributes[0]?.description || "处理压力、专注和风险的综合能力。",
             defaultValue: Number.isFinite(input.attributeDefaultValue) ? Number(input.attributeDefaultValue) : existing?.attributes[0]?.defaultValue ?? 1,
           },
         ],
         skills: [
           {
             id: skillId,
-            name: input.skillName.trim() || existing?.skills[0]?.name || "Read the Scene",
+            name: input.skillName.trim() || existing?.skills[0]?.name || "读势",
             attributeId,
-            description: input.skillDescription.trim() || existing?.skills[0]?.description || "Notice details before acting.",
+            description: input.skillDescription.trim() || existing?.skills[0]?.description || "行动前观察细节。",
           },
         ],
         difficultyTable: [
@@ -986,8 +986,8 @@ export const useAppStore = defineStore("app", {
         consequenceRules: [
           {
             id: consequenceId,
-            label: input.consequenceLabel.trim() || existing?.consequenceRules[0]?.label || "Pressure Clock",
-            description: input.consequenceDescription.trim() || existing?.consequenceRules[0]?.description || "On a miss, advance a local danger or cost.",
+            label: input.consequenceLabel.trim() || existing?.consequenceRules[0]?.label || "压力时钟",
+            description: input.consequenceDescription.trim() || existing?.consequenceRules[0]?.description || "失败时推进一个本地危险或代价。",
           },
         ],
       };
@@ -1000,7 +1000,7 @@ export const useAppStore = defineStore("app", {
           : storyline.supportedModes.filter((mode) => mode !== "fate"),
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Updated Fate Engine rules.",
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "已更新 Fate 裁定规则。",
         }),
         updatedAt: now,
       });
@@ -1046,7 +1046,7 @@ export const useAppStore = defineStore("app", {
         type: "character",
         name: input.name.trim() || "未命名角色",
         subtitle: input.subtitle?.trim() || "本地新增角色",
-        summary: input.summary.trim() || "由 Creator Studio 添加的原创角色。",
+        summary: input.summary.trim() || "由创作工作台添加的原创角色。",
         profile: input.profile.trim() || "这是一个本地原创角色。请补充身份、动机、冲突和边界。",
         voice: {
           tone: input.tone.trim() || "自然、有辨识度。",
@@ -1080,7 +1080,7 @@ export const useAppStore = defineStore("app", {
         ],
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Added a new local character draft.",
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "已添加新的本地角色草稿。",
         }),
         updatedAt: now,
       });
@@ -1119,8 +1119,8 @@ export const useAppStore = defineStore("app", {
       const scenario: Scenario = {
         id,
         storylineId: storyline.id,
-        title: input.title.trim() || `Scenario ${storyline.scenarioIds.length + 1}`,
-        summary: input.summary.trim() || "A new playable entrance for this storyline.",
+        title: input.title.trim() || `场景 ${storyline.scenarioIds.length + 1}`,
+        summary: input.summary.trim() || "这个故事线的新可玩入口。",
         opening: input.opening.trim() || "新的场景入口已经准备好回应玩家。",
         location: input.location?.trim() || undefined,
         participatingCharacterIds: storyline.cast.map((cast) => cast.characterId),
@@ -1136,7 +1136,7 @@ export const useAppStore = defineStore("app", {
         scenarioIds: [...storyline.scenarioIds, id],
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Added a new local scenario draft.",
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "已添加新的本地场景草稿。",
         }),
         updatedAt: now,
       });
@@ -1153,7 +1153,7 @@ export const useAppStore = defineStore("app", {
         mediaIds: [...new Set([...storyline.mediaIds, asset.id])],
         moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
         version: prepareVersionForDraftEdit(storyline.version, {
-          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Imported local media asset.",
+          changelog: storyline.version.status === "draft" ? storyline.version.changelog : "已导入本地媒体素材。",
         }),
         updatedAt: nowIso(),
       });
@@ -1165,7 +1165,7 @@ export const useAppStore = defineStore("app", {
       if (!storyline) throw new Error("storyline_not_found");
       const asset = await importTauriMedia(this.envelope.workspace.id, path.trim(), purpose);
       if (!asset) return undefined;
-      await this.attachMediaAssetToStoryline(storyline, asset, "native_media_imported", "Imported native media asset.");
+      await this.attachMediaAssetToStoryline(storyline, asset, "native_media_imported", "已导入本地媒体素材。");
       return asset.id;
     },
     async pickNativeMediaForStoryline(storylineId: string, purpose: MediaAsset["purpose"] = "cover"): Promise<string | undefined> {
@@ -1173,7 +1173,7 @@ export const useAppStore = defineStore("app", {
       if (!storyline) throw new Error("storyline_not_found");
       const asset = await pickAndImportTauriMedia(this.envelope.workspace.id, purpose);
       if (!asset) return undefined;
-      await this.attachMediaAssetToStoryline(storyline, asset, "native_media_picked", "Picked native media asset.");
+      await this.attachMediaAssetToStoryline(storyline, asset, "native_media_picked", "已选择本地媒体素材。");
       return asset.id;
     },
     async attachMediaAssetToStoryline(storyline: Storyline, asset: MediaAsset, persistReason: string, changelog: string) {
@@ -1396,13 +1396,13 @@ export const useAppStore = defineStore("app", {
       });
       await this.persist(persistReason);
     },
-    async confirmMediaLicense(assetId: string, note = "Confirmed original or licensed by local creator.") {
+    async confirmMediaLicense(assetId: string, note = "已由本地创作者确认原创或授权。") {
       const asset = this.envelope.entities.mediaAssets[assetId];
       if (!asset) return;
       this.envelope.entities.mediaAssets[assetId] = {
         ...asset,
         license: { kind: "owned", note },
-        source: { ...asset.source, label: asset.source.label || "Local creator owned asset" },
+        source: { ...asset.source, label: asset.source.label || "本地创作者自有素材" },
         safety: { ...asset.safety, state: "local_ready" },
       };
       await this.persist("media_license_confirmed");
@@ -1423,12 +1423,12 @@ export const useAppStore = defineStore("app", {
         altText: input.altText.trim() || asset.altText,
         source: {
           kind: input.sourceKind,
-          label: input.sourceLabel.trim() || asset.source.label || "Unspecified local source",
+          label: input.sourceLabel.trim() || asset.source.label || "未指定本地来源",
           url: input.sourceUrl?.trim() || undefined,
         },
         license: {
           kind: licenseKind,
-          note: input.licenseNote.trim() || (licenseKind === "unknown" ? "Ownership still needs confirmation." : "Confirmed by local creator."),
+          note: input.licenseNote.trim() || (licenseKind === "unknown" ? "所有权仍需确认。" : "已由本地创作者确认。"),
         },
         safety: {
           ...asset.safety,
@@ -1443,7 +1443,7 @@ export const useAppStore = defineStore("app", {
           ...storyline,
           moderation: resetModerationForDraftEdit(storyline.moderation, storyline.rating),
           version: prepareVersionForDraftEdit(storyline.version, {
-            changelog: storyline.version.status === "draft" ? storyline.version.changelog : "Updated media metadata.",
+            changelog: storyline.version.status === "draft" ? storyline.version.changelog : "已更新媒体元数据。",
           }),
           updatedAt: now,
         });
@@ -1467,7 +1467,7 @@ export const useAppStore = defineStore("app", {
     },
     async markStorylineLocalReady(storylineId: string): Promise<ValidationIssue[]> {
       const storyline = this.getStoryline(storylineId);
-      if (!storyline) return [{ field: "storyline", severity: "error", message: "Storyline not found." }];
+      if (!storyline) return [{ field: "storyline", severity: "error", message: "未找到故事线。" }];
       const issues = this.validateStoryline(storylineId);
       if (!canMarkLocalReady(issues)) return issues;
       const characterIds = storyline.cast.map((cast) => cast.characterId);
@@ -1506,13 +1506,13 @@ export const useAppStore = defineStore("app", {
         workspace: {
           ...envelope.workspace,
           id: importedId,
-          name: `${envelope.workspace.name} Imported`,
+          name: `${envelope.workspace.name}（已导入）`,
           updatedAt: nowIso(),
         },
       };
       await this.persist("workspace_imported");
       this.lastPackageReport = report;
-      this.lastImportMessage = `Imported JSON workspace as ${this.envelope.workspace.name}. Package check ${report.ok ? "passed" : "failed"}.`;
+      this.lastImportMessage = `JSON 工作区已导入为 ${this.envelope.workspace.name}。内容包校验${report.ok ? "通过" : "失败"}。`;
     },
     async importWorkspaceFile(file: File) {
       const name = file.name.toLowerCase();
@@ -1525,7 +1525,7 @@ export const useAppStore = defineStore("app", {
         }
         await this.persist("workspace_zip_imported");
         this.lastPackageReport = report;
-        this.lastImportMessage = `Imported zip workspace as ${this.envelope.workspace.name}. Package check passed.`;
+        this.lastImportMessage = `Zip 工作区已导入为 ${this.envelope.workspace.name}。内容包校验通过。`;
         return;
       }
       try {
@@ -1646,7 +1646,7 @@ export const useAppStore = defineStore("app", {
     },
     refreshSyncSnapshot() {
       this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
-      this.lastSyncLogMessage = "Device snapshot refreshed.";
+      this.lastSyncLogMessage = "设备快照已刷新。";
       return this.lastSyncSnapshot;
     },
     exportSyncOperationLog() {
@@ -1658,21 +1658,21 @@ export const useAppStore = defineStore("app", {
         JSON.stringify(operationLog, null, 2),
         "application/json;charset=utf-8",
       );
-      this.lastSyncLogMessage = `Exported ${operationLog.summary.operationCount} sync operation(s) and ${operationLog.summary.conflictCount} conflict record(s).`;
+      this.lastSyncLogMessage = `已导出 ${operationLog.summary.operationCount} 个同步操作和 ${operationLog.summary.conflictCount} 条冲突记录。`;
       return operationLog;
     },
     async importSyncOperationLogFile(file: File) {
       const parsed = JSON.parse(await file.text()) as unknown;
       const result = localSyncRepository.importOperationLog(this.envelope, parsed);
       this.lastSyncSnapshot = result.snapshot;
-      this.lastSyncLogMessage = `Imported ${result.importedOperations} operation(s), skipped ${result.skippedOperations}; imported ${result.importedConflicts} conflict record(s), skipped ${result.skippedConflicts}.`;
+      this.lastSyncLogMessage = `已导入 ${result.importedOperations} 个操作，跳过 ${result.skippedOperations} 个；已导入 ${result.importedConflicts} 条冲突记录，跳过 ${result.skippedConflicts} 条。`;
       await this.persist("sync_operation_log_imported");
       return result;
     },
     async disableSyncRetainingLocalData() {
       localSyncRepository.disableRetainingLocalData(this.envelope);
       this.lastSyncSnapshot = localSyncRepository.snapshot(this.envelope);
-      this.lastSyncLogMessage = "Private sync disabled. Local workspace, operation log and conflicts remain on this device.";
+      this.lastSyncLogMessage = "私有同步已关闭。本地工作区、操作日志和冲突记录仍保留在此设备上。";
       await this.persist("sync_disabled_local_retained");
       return this.lastSyncSnapshot;
     },
@@ -1693,7 +1693,7 @@ export const useAppStore = defineStore("app", {
       const issues = await this.markStorylineLocalReady(storylineId);
       if (issues.length) return issues;
       const storyline = this.getStoryline(storylineId);
-      if (!storyline) return [{ field: "storyline", severity: "error" as const, message: "Storyline not found." }];
+      if (!storyline) return [{ field: "storyline", severity: "error" as const, message: "未找到故事线。" }];
       const packageReport = verifyWorkspacePackage(createStorylineWorkspacePackage(this.envelope, storyline.id));
       this.lastPackageReport = packageReport;
       const packageIssues = packageReportToValidationIssues(packageReport);
@@ -1707,7 +1707,7 @@ export const useAppStore = defineStore("app", {
         version: { ...storyline.version, status: "submitted" },
         updatedAt: nowIso(),
       });
-      await this.submitLocalModerationCase("storyline", storylineId, "Submitted for local cloud-readiness review.");
+      await this.submitLocalModerationCase("storyline", storylineId, "已提交本地云端就绪审核。");
       return [];
     },
     async resolveModerationCase(caseId: string, status: "actioned" | "dismissed", outcome?: ModerationReviewOutcome) {
@@ -1774,7 +1774,7 @@ export const useAppStore = defineStore("app", {
       }
       await this.persist("moderation_case_appealed");
     },
-    async resolveModerationCaseAppeal(caseId: string, outcome: ModerationAppealOutcome, note = "Local appeal simulation decision.") {
+    async resolveModerationCaseAppeal(caseId: string, outcome: ModerationAppealOutcome, note = "本地申诉模拟决策。") {
       const moderationCase = this.envelope.entities.moderationCases[caseId];
       if (!moderationCase) return;
       const resolvedAt = nowIso();
@@ -1814,20 +1814,20 @@ export const useAppStore = defineStore("app", {
         amount: Math.max(0, Number(amount)),
         currency: "credit",
         note: status === "available"
-          ? "Local available earning preview. Cloud payout is not enabled."
-          : "Local estimate only. Cloud payout is not enabled.",
+          ? "本地可用收益预览。云端提现尚未启用。"
+          : "仅本地预估。云端提现尚未启用。",
         createdAt: nowIso(),
       };
       await this.persist("creator_earning_estimated");
       return id;
     },
-    async updateCreatorEarningStatus(earningId: string, status: CreatorEarning["status"], note = "Local creator earning status preview.") {
+    async updateCreatorEarningStatus(earningId: string, status: CreatorEarning["status"], note = "本地创作者收益状态预览。") {
       const earning = this.envelope.entities.creatorEarnings[earningId];
       if (!earning) return;
       this.envelope.entities.creatorEarnings[earningId] = updateCreatorEarningStatus(earning, status, note);
       await this.persist(`creator_earning_${status}`);
     },
-    async requestCreatorPayout(note = "Local payout preview request.") {
+    async requestCreatorPayout(note = "本地提现预览申请。") {
       const requestedAt = nowIso();
       const request = createCreatorPayoutRequest(Object.values(this.envelope.entities.creatorEarnings), {
         id: createId("payout"),
@@ -1840,7 +1840,7 @@ export const useAppStore = defineStore("app", {
       await this.persist("creator_payout_requested");
       return request.id;
     },
-    async resolveCreatorPayout(payoutId: string, outcome: CreatorPayoutResolution, note = "Local payout preview decision.") {
+    async resolveCreatorPayout(payoutId: string, outcome: CreatorPayoutResolution, note = "本地提现预览决策。") {
       const request = this.envelope.entities.creatorPayoutRequests[payoutId];
       if (!request) return;
       const resolved = resolveCreatorPayoutRequest(request, outcome, nowIso(), note);
@@ -1865,7 +1865,7 @@ export const useAppStore = defineStore("app", {
       await this.persist("credit_ledger_estimated");
       return id;
     },
-    async adjustCreditLedger(entryId: string, kind: CreditAdjustment["kind"], reason = "Local billing simulation adjustment.") {
+    async adjustCreditLedger(entryId: string, kind: CreditAdjustment["kind"], reason = "本地计费模拟调整。") {
       const entry = this.envelope.entities.creditLedger[entryId];
       if (!entry) return;
       const id = createId("adjustment");
@@ -1882,7 +1882,7 @@ export const useAppStore = defineStore("app", {
     },
     async backup(reason = "manual") {
       const meta = await backupWorkspace(this.envelope, reason);
-      this.lastBackupMessage = `Backup created: ${meta.id}`;
+      this.lastBackupMessage = `备份已创建：${meta.id}`;
       await this.refreshBackups();
       return meta;
     },
@@ -1891,7 +1891,7 @@ export const useAppStore = defineStore("app", {
     },
     async restoreWorkspaceFromBackup(backupId: string) {
       this.envelope = await restoreWorkspaceBackup(this.envelope, backupId);
-      this.lastBackupMessage = `Restored workspace from ${backupId}. A pre-restore backup was created when possible.`;
+      this.lastBackupMessage = `已从 ${backupId} 恢复工作区。若环境允许，已创建恢复前备份。`;
       await this.refreshBackups();
       await this.verifyCurrentWorkspacePackage();
     },
@@ -1908,16 +1908,16 @@ export const useAppStore = defineStore("app", {
       const nativeInventory = await getNativeAssetInventory(this.envelope.workspace.id);
       if (nativeInventory) {
         this.lastAssetInventory = nativeInventory;
-        this.lastAssetInventoryMessage = `Native asset inventory: ${nativeInventory.stats.declaredAssets} declared assets, ${nativeInventory.stats.physicalFiles} physical file(s).`;
+        this.lastAssetInventoryMessage = `本地素材清单：${nativeInventory.stats.declaredAssets} 个声明素材，${nativeInventory.stats.physicalFiles} 个实体文件。`;
         this.lastAssetMaintenancePlan = buildAssetMaintenancePlan(nativeInventory);
-        this.lastAssetMaintenanceMessage = `Asset maintenance plan: ${this.lastAssetMaintenancePlan.summary.totalActions} action(s), ${this.lastAssetMaintenancePlan.summary.publishBlockers} publish blocker(s).`;
+        this.lastAssetMaintenanceMessage = `素材维护计划：${this.lastAssetMaintenancePlan.summary.totalActions} 个动作，${this.lastAssetMaintenancePlan.summary.publishBlockers} 个发布阻断项。`;
         return nativeInventory;
       }
       const fallback = buildBrowserAssetInventory(this.envelope);
       this.lastAssetInventory = fallback;
-      this.lastAssetInventoryMessage = `Browser asset inventory uses metadata only: ${fallback.stats.declaredAssets} declared assets.`;
+      this.lastAssetInventoryMessage = `浏览器素材清单仅使用元数据：${fallback.stats.declaredAssets} 个声明素材。`;
       this.lastAssetMaintenancePlan = buildAssetMaintenancePlan(fallback);
-      this.lastAssetMaintenanceMessage = `Asset maintenance plan: ${this.lastAssetMaintenancePlan.summary.totalActions} action(s), ${this.lastAssetMaintenancePlan.summary.publishBlockers} publish blocker(s).`;
+      this.lastAssetMaintenanceMessage = `素材维护计划：${this.lastAssetMaintenancePlan.summary.totalActions} 个动作，${this.lastAssetMaintenancePlan.summary.publishBlockers} 个发布阻断项。`;
       return fallback;
     },
     async rebuildSqliteSearchIndex(previewQuery = "星烬") {
@@ -1925,11 +1925,11 @@ export const useAppStore = defineStore("app", {
       if (!report) {
         this.lastSqliteIndexReport = undefined;
         this.lastSqliteSearchHits = [];
-        this.lastSqliteIndexMessage = "Native SQLite index requires the Tauri desktop runtime. Browser preview uses the JSON repository search in Library.";
+        this.lastSqliteIndexMessage = "本地 SQLite 索引需要 Tauri 桌面运行时。浏览器预览请使用内容库中的 JSON 搜索。";
         return undefined;
       }
       this.lastSqliteIndexReport = report;
-      this.lastSqliteIndexMessage = `SQLite FTS index rebuilt with ${report.itemCount} item(s).`;
+      this.lastSqliteIndexMessage = `SQLite FTS 索引已重建，包含 ${report.itemCount} 项。`;
       await this.searchSqliteIndex(previewQuery);
       return report;
     },
@@ -1937,11 +1937,11 @@ export const useAppStore = defineStore("app", {
       const hits = await searchNativeSearchIndex(this.envelope.workspace.id, query, 8);
       if (!hits) {
         this.lastSqliteSearchHits = [];
-        this.lastSqliteIndexMessage = "Native SQLite search requires the Tauri desktop runtime. Use Library search in browser preview.";
+        this.lastSqliteIndexMessage = "本地 SQLite 搜索需要 Tauri 桌面运行时。浏览器预览请使用内容库搜索。";
         return [];
       }
       this.lastSqliteSearchHits = hits;
-      this.lastSqliteIndexMessage = `SQLite search returned ${hits.length} hit(s).`;
+      this.lastSqliteIndexMessage = `SQLite 搜索返回 ${hits.length} 个结果。`;
       return hits;
     },
     async previewSqliteMessagePage(chatId: string, pageSize = 80, offsetFromEnd = 0) {
@@ -1975,13 +1975,13 @@ export const useAppStore = defineStore("app", {
 
       if (nativePage) {
         this.lastSqliteMessagePage = nativePage;
-        this.lastSqliteMessagePageMessage = `Native SQLite message page: ${nativePage.messages.length} of ${nativePage.totalCount}.`;
+        this.lastSqliteMessagePageMessage = `原生 SQLite 消息分页：${nativePage.messages.length} / ${nativePage.totalCount}。`;
         return nativePage;
       }
 
       const fallbackPage = buildBrowserMessagePage(this.envelope, chatId, pageSize, offsetFromEnd);
       this.lastSqliteMessagePage = fallbackPage;
-      this.lastSqliteMessagePageMessage = `Browser JSON message page preview: ${fallbackPage.messages.length} of ${fallbackPage.totalCount}.`;
+      this.lastSqliteMessagePageMessage = `浏览器 JSON 消息分页预览：${fallbackPage.messages.length} / ${fallbackPage.totalCount}。`;
       return fallbackPage;
     },
     async resetToSeed() {
@@ -2016,7 +2016,7 @@ function importStorylinePackageAsDraft(targetEnvelope: SaveEnvelope, packageEnve
   const duplicated = duplicateStorylinePackage(packageEnvelope.entities, sourceStoryline.id, {
     titleSuffix: " 导入草稿",
     now,
-    creator: { id: "creator_local", name: "Local Creator" },
+    creator: { id: "creator_local", name: "本地创作者" },
   });
   const mediaIdMap = Object.fromEntries(
     collectStorylinePackageMediaIds(packageEnvelope, sourceStoryline)
@@ -2054,7 +2054,7 @@ function importStorylinePackageAsDraft(targetEnvelope: SaveEnvelope, packageEnve
     mediaIds: duplicated.storyline.mediaIds.map(remapMediaId),
     version: {
       ...duplicated.storyline.version,
-      changelog: "Imported from Evolvria storyline package.",
+      changelog: "从 Evolvria 故事线内容包导入。",
     },
   };
 
@@ -2068,7 +2068,7 @@ function importStorylinePackageAsDraft(targetEnvelope: SaveEnvelope, packageEnve
     {
       id: createId("audit"),
       type: "storyline_package_imported",
-      message: `Imported ${sourceStoryline.title} as ${storyline.title}.`,
+      message: `已将 ${sourceStoryline.title} 导入为 ${storyline.title}。`,
       createdAt: now,
     },
   ].slice(-80);
@@ -2098,13 +2098,13 @@ function packageReportToValidationIssues(report: PackageVerificationReport): Val
     .map((issue) => ({
       field: issue.field,
       severity: "error",
-      message: `Package verification failed: ${issue.message}`,
+      message: `内容包校验失败：${issue.message}`,
     }));
   for (const assetId of report.assetRefs.browserOnly) {
     issues.push({
       field: `assets.${assetId}`,
       severity: "error",
-      message: `Package verification failed: browser-only asset ${assetId} must be reimported with the Tauri desktop importer before submission.`,
+      message: `内容包校验失败：浏览器临时素材 ${assetId} 必须先用 Tauri 桌面导入器重新导入，才能提交。`,
     });
   }
   return issues;

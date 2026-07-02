@@ -121,9 +121,9 @@ export function resolveConflictRecord(conflict: SyncConflict, resolution: Confli
 }
 
 export function conflictResolutionNote(resolution: ConflictResolution): string {
-  if (resolution === "local") return "Kept the local field value and marked the remote operation acknowledged.";
-  if (resolution === "remote") return "Accepted the cloud field value into the local workspace.";
-  return "Created a local copy so both versions can continue independently.";
+  if (resolution === "local") return "已保留本地字段值，并将远端操作标记为已确认。";
+  if (resolution === "remote") return "已接受云端字段值并写入本地工作区。";
+  return "已创建本地副本，使两个版本可独立继续。";
 }
 
 export function buildSyncDeviceSnapshot(envelope: SaveEnvelope, generatedAt: string): SyncDeviceSnapshot {
@@ -152,7 +152,7 @@ export function buildSyncDeviceSnapshot(envelope: SaveEnvelope, generatedAt: str
       includesWorkspaceContent: false,
       includesChats: false,
       includesApiKeys: false,
-      note: "Snapshot only contains counts and sync metadata. It intentionally excludes Persona, chat text, media files and provider keys.",
+      note: "快照仅包含计数和同步元数据，并刻意排除玩家档案、聊天正文、媒体文件和提供方密钥。",
     },
   };
 }
@@ -181,7 +181,7 @@ export function createSyncOperationLogPackage(envelope: SaveEnvelope, exportedAt
     privacy: {
       includesApiKeys: false,
       mayIncludeEntityPatches: true,
-      note: "Operation patches can include titles or moderation metadata, but never include provider API keys. Do not use this as a public UGC package.",
+      note: "操作补丁可包含标题或审核元数据，但绝不包含提供方 API key。请勿将其作为公开用户内容包。",
     },
   };
 }

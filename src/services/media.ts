@@ -21,8 +21,8 @@ export async function importBrowserMedia(file: File, purpose: MediaAsset["purpos
     sizeBytes: file.size,
     variants: [],
     altText: file.name,
-    source: { kind: "imported", label: "Browser local file reference" },
-    license: { kind: "unknown", note: "Confirm ownership before local_ready or publish." },
+    source: { kind: "imported", label: "浏览器本地文件引用" },
+    license: { kind: "unknown", note: "请在标记本地就绪或发布前确认所有权。" },
     safety: createModerationStatus("SFW", "draft"),
     createdAt: nowIso(),
   };
@@ -44,9 +44,9 @@ export function createBrowserGeneratedImageAsset(input: {
     mimeType: input.mediaType || "image/png",
     sizeBytes: input.bytes.byteLength,
     variants: [],
-    altText: `Generated image: ${input.prompt.replace(/\s+/g, " ").slice(0, 120)}`,
-    source: { kind: "generated", label: `Browser generated image: ${input.model}` },
-    license: { kind: "owned", note: "Generated through the configured AI provider; review before publishing." },
+    altText: `生成图片：${input.prompt.replace(/\s+/g, " ").slice(0, 120)}`,
+    source: { kind: "generated", label: `浏览器生成图片：${input.model}` },
+    license: { kind: "owned", note: "通过已配置 AI 提供方生成；发布前请审校。" },
     safety: createModerationStatus("SFW", "draft"),
     createdAt: nowIso(),
   };

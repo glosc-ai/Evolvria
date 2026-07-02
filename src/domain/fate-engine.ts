@@ -115,7 +115,7 @@ export function fateCheckToText(check: FateCheck, config?: DungeonMindConfig): s
       ? `裁定结果：${outcomeLabel(check.outcome)}。`
       : "命运在幕后完成裁定。";
   return [
-    `Fate Check: ${check.intent}`,
+    `裁定检查：${check.intent}`,
     `裁定：${resolution || "默认规则"}。`,
     visibleRoll,
     `后果：${check.consequences.join("；")}`,

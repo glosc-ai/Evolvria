@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { CheckCircle2, Dices, Download, FileAudio, FileImage, PenTool, Play, PlusCircle, ShieldCheck, Upload, UserPlus } from "lucide-vue-next";
+import { labelFor, mediaKindLabel, mediaPurposeLabel } from "@/lib/display";
 import { useAppStore } from "@/stores/app";
 import { buildNarrativePromptBundle, redactPromptPreviewContent } from "@/services/ai/context";
 import type { ContentRating, DungeonMindConfig, MediaAsset } from "@/types/domain";
@@ -100,16 +101,16 @@ const fateForm = reactive<FateConfigDraft>({
   enabled: false,
   dice: "d20",
   visibility: "summary",
-  attributeName: "Resolve",
-  attributeDescription: "General pressure, focus, and risk handling.",
+  attributeName: "意志",
+  attributeDescription: "承受压力、保持专注并处理风险的综合能力。",
   attributeDefaultValue: 1,
-  skillName: "Read the Scene",
-  skillDescription: "Notice details before acting.",
+  skillName: "读势",
+  skillDescription: "行动前观察细节并判断局势。",
   difficultyEasy: 8,
   difficultyStandard: 12,
   difficultyHard: 16,
-  consequenceLabel: "Pressure Clock",
-  consequenceDescription: "On a miss, advance a local danger or cost.",
+  consequenceLabel: "压力时钟",
+  consequenceDescription: "失败时推进一个本地危险或代价。",
 });
 
 const selectedStory = computed(() => store.getStoryline(selectedStoryId.value, true));
@@ -148,7 +149,7 @@ const promptPreviewLayers = computed(() => (promptPreviewBundle.value?.layers ??
 watch(() => route.query, (query) => {
   const storyId = resolveStoryId(query.storyId);
   if (storyId) selectedStoryId.value = storyId;
-  if (query.duplicated === "1") feedback.value = "Duplicated as local draft.";
+  if (query.duplicated === "1") feedback.value = "已复制为本地草稿。";
 }, { immediate: true });
 
 watch(selectedStory, (story) => {
@@ -218,14 +219,14 @@ function resolveStoryId(value: unknown): string | undefined {
 async function createDraft() {
   const id = await store.createStorylineDraft(createForm);
   selectedStoryId.value = id;
-  feedback.value = "Draft created.";
+  feedback.value = "草稿已创建。";
 }
 
 async function exportSelectedPackage() {
   if (!selectedStory.value) return;
   try {
     const fileName = await store.exportStorylinePackage(selectedStory.value.id);
-    feedback.value = `Storyline package exported: ${fileName}.`;
+    feedback.value = `故事线内容包已导出：${fileName}。`;
   } catch (error) {
     feedback.value = error instanceof Error ? error.message : String(error);
   }
@@ -238,7 +239,7 @@ async function importStorylinePackage(event: Event) {
   try {
     const importedId = await store.importStorylinePackageFile(file);
     selectedStoryId.value = importedId;
-    feedback.value = `Storyline package imported as local draft.`;
+    feedback.value = "故事线内容包已作为本地草稿导入。";
   } catch (error) {
     feedback.value = error instanceof Error ? error.message : String(error);
   } finally {
@@ -247,13 +248,13 @@ async function importStorylinePackage(event: Event) {
 }
 
 async function saveEdits() {
-  await persistEdits("Draft saved.");
+  await persistEdits("草稿已保存。");
 }
 
 async function persistEdits(successMessage: string) {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before editing.";
+    feedback.value = "请先恢复内容包，再编辑。";
     return;
   }
   await store.updateStorylineDraft({ id: selectedStory.value.id, ...editForm });
@@ -278,14 +279,14 @@ async function persistEdits(successMessage: string) {
 
 async function autosaveEdits() {
   if (!selectedStory.value || selectedStoryDeleted.value || !draftDirty.value || store.saving) return;
-  await persistEdits("Autosaved draft.");
+  await persistEdits("草稿已自动保存。");
   lastAutosaveAt.value = new Date().toLocaleTimeString();
 }
 
 async function addScenario() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before adding scenarios.";
+    feedback.value = "请先恢复内容包，再添加场景。";
     return;
   }
   await store.addScenarioToStoryline({
@@ -299,13 +300,13 @@ async function addScenario() {
   addScenarioForm.summary = "";
   addScenarioForm.location = "";
   addScenarioForm.opening = "";
-  feedback.value = "Scenario added.";
+  feedback.value = "场景已添加。";
 }
 
 async function addCharacter() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before adding characters.";
+    feedback.value = "请先恢复内容包，再添加角色。";
     return;
   }
   await store.addCharacterToStoryline({
@@ -327,27 +328,27 @@ async function addCharacter() {
   addCharacterForm.profile = "";
   addCharacterForm.tone = "";
   addCharacterForm.goals = "";
-  feedback.value = "Character added.";
+  feedback.value = "角色已添加。";
 }
 
 async function markReady() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before marking local_ready.";
+    feedback.value = "请先恢复内容包，再标记本地就绪。";
     return;
   }
   const issues = await store.markStorylineLocalReady(selectedStory.value.id);
-  feedback.value = issues.length ? `Still blocked by ${issues.length} issue(s).` : "Marked local_ready.";
+  feedback.value = issues.length ? `仍被 ${issues.length} 个问题阻止。` : "已标记为本地就绪。";
 }
 
 async function runPreview(scenarioId?: string) {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before previewing.";
+    feedback.value = "请先恢复内容包，再预览。";
     return;
   }
   const chatId = await store.startStory(selectedStory.value.id, {
-    name: "Preview Persona",
+    name: "预览玩家档案",
     description: selectedStory.value.playerRole,
     scenarioId,
   });
@@ -357,13 +358,13 @@ async function runPreview(scenarioId?: string) {
 async function trashSelectedStory() {
   if (!selectedStory.value || selectedStoryDeleted.value) return;
   await store.trashStorylinePackage(selectedStory.value.id);
-  feedback.value = "Moved package to Trash. It is hidden from Library and can be restored here.";
+  feedback.value = "内容包已移入废纸篓。它会从内容库隐藏，并可在此恢复。";
 }
 
 async function restoreSelectedStory() {
   if (!selectedStory.value || !selectedStoryDeleted.value) return;
   await store.restoreStorylinePackage(selectedStory.value.id);
-  feedback.value = "Package restored.";
+  feedback.value = "内容包已恢复。";
 }
 
 async function onMediaSelected(event: Event) {
@@ -371,39 +372,39 @@ async function onMediaSelected(event: Event) {
   const file = input.files?.[0];
   if (!file || !selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing media.";
+    feedback.value = "请先恢复内容包，再导入媒体。";
     return;
   }
   await store.importMediaForStoryline(selectedStory.value.id, file, "cover");
   input.value = "";
-  feedback.value = "Media imported. Confirm license before local_ready.";
+  feedback.value = "媒体已导入。请在标记本地就绪前确认授权。";
 }
 
 async function importNativeMedia() {
   if (!selectedStory.value || !nativeImportForm.path.trim()) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing media.";
+    feedback.value = "请先恢复内容包，再导入媒体。";
     return;
   }
   const assetId = await store.importNativeMediaForStoryline(selectedStory.value.id, nativeImportForm.path, nativeImportForm.purpose);
   if (!assetId) {
-    feedback.value = "Native media import requires the Tauri desktop runtime.";
+    feedback.value = "本地媒体导入需要 Tauri 桌面运行时。";
     return;
   }
   nativeImportForm.path = "";
-  feedback.value = "Native media imported. Confirm license before local_ready.";
+  feedback.value = "本地媒体已导入。请在标记本地就绪前确认授权。";
 }
 
 async function pickNativeMedia() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before importing media.";
+    feedback.value = "请先恢复内容包，再导入媒体。";
     return;
   }
   const assetId = await store.pickNativeMediaForStoryline(selectedStory.value.id, nativeImportForm.purpose);
   feedback.value = assetId
-    ? "Native media picked and imported. Confirm license before local_ready."
-    : "Native media picker requires the Tauri desktop runtime or a selected file.";
+    ? "本地媒体已选择并导入。请在标记本地就绪前确认授权。"
+    : "媒体文件选择器需要 Tauri 桌面运行时或已选择的文件。";
 }
 
 async function importNativeVoiceReference() {
@@ -420,7 +421,7 @@ async function importNativeVoiceReference() {
     return;
   }
   nativeImportForm.path = "";
-  feedback.value = "本地语音参考已导入。请在 local_ready 前确认授权。";
+  feedback.value = "本地语音参考已导入。请在标记本地就绪前确认授权。";
 }
 
 async function pickNativeVoiceReference() {
@@ -433,7 +434,7 @@ async function pickNativeVoiceReference() {
   if (!characterId) return;
   const assetId = await store.pickNativeVoiceReferenceForCharacter(selectedStory.value.id, characterId);
   feedback.value = assetId
-    ? "本地语音参考已选择并导入。请在 local_ready 前确认授权。"
+    ? "本地语音参考已选择并导入。请在标记本地就绪前确认授权。"
     : "语音文件选择器需要 Tauri 桌面运行时或已选择的文件。";
 }
 
@@ -447,7 +448,7 @@ async function onVoiceReferenceSelected(characterId: string, event: Event) {
   }
   await store.importVoiceReferenceForCharacter(selectedStory.value.id, characterId, file);
   input.value = "";
-  feedback.value = "语音参考已导入。请在 local_ready 前确认授权。";
+  feedback.value = "语音参考已导入。请在标记本地就绪前确认授权。";
 }
 
 async function confirmVoiceReference(assetId: string) {
@@ -473,23 +474,23 @@ function mediaDraft(asset: MediaAsset): MediaDraft {
 
 async function saveMediaMetadata(asset: MediaAsset) {
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before editing media.";
+    feedback.value = "请先恢复内容包，再编辑媒体。";
     return;
   }
   const draft = mediaDraft(asset);
   await store.updateMediaAssetMetadata(asset.id, draft);
-  feedback.value = "Media metadata saved.";
+  feedback.value = "媒体元数据已保存。";
 }
 
 async function generateThumbnail(asset: MediaAsset) {
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before generating thumbnails.";
+    feedback.value = "请先恢复内容包，再生成缩略图。";
     return;
   }
   const variant = await store.generateMediaThumbnail(asset.id, 320);
   feedback.value = variant
-    ? `Thumbnail generated: ${variant.width ?? 0}x${variant.height ?? 0}.`
-    : "Thumbnail generation requires an image asset imported in the Tauri desktop runtime.";
+    ? `缩略图已生成：${variant.width ?? 0}x${variant.height ?? 0}。`
+    : "缩略图生成需要在 Tauri 桌面运行时导入的图片素材。";
 }
 
 function hydrateFateForm(config?: DungeonMindConfig) {
@@ -499,22 +500,22 @@ function hydrateFateForm(config?: DungeonMindConfig) {
   fateForm.enabled = config?.enabled ?? false;
   fateForm.dice = config?.dice ?? "d20";
   fateForm.visibility = config?.visibility ?? "summary";
-  fateForm.attributeName = attribute?.name ?? "Resolve";
-  fateForm.attributeDescription = attribute?.description ?? "General pressure, focus, and risk handling.";
+  fateForm.attributeName = attribute?.name ?? "意志";
+  fateForm.attributeDescription = attribute?.description ?? "承受压力、保持专注并处理风险的综合能力。";
   fateForm.attributeDefaultValue = attribute?.defaultValue ?? 1;
-  fateForm.skillName = skill?.name ?? "Read the Scene";
-  fateForm.skillDescription = skill?.description ?? "Notice details before acting.";
+  fateForm.skillName = skill?.name ?? "读势";
+  fateForm.skillDescription = skill?.description ?? "行动前观察细节并判断局势。";
   fateForm.difficultyEasy = config?.difficultyTable[0]?.target ?? 8;
   fateForm.difficultyStandard = config?.difficultyTable[1]?.target ?? 12;
   fateForm.difficultyHard = config?.difficultyTable[2]?.target ?? 16;
-  fateForm.consequenceLabel = consequence?.label ?? "Pressure Clock";
-  fateForm.consequenceDescription = consequence?.description ?? "On a miss, advance a local danger or cost.";
+  fateForm.consequenceLabel = consequence?.label ?? "压力时钟";
+  fateForm.consequenceDescription = consequence?.description ?? "失败时推进一个本地危险或代价。";
 }
 
 async function saveFateConfig() {
   if (!selectedStory.value) return;
   if (selectedStoryDeleted.value) {
-    feedback.value = "Restore this package before editing Fate rules.";
+    feedback.value = "请先恢复内容包，再编辑 Fate 裁定规则。";
     return;
   }
   await store.updateDungeonMindConfig({
@@ -525,7 +526,7 @@ async function saveFateConfig() {
     difficultyStandard: Number(fateForm.difficultyStandard),
     difficultyHard: Number(fateForm.difficultyHard),
   });
-  feedback.value = fateForm.enabled ? "Fate Engine rules saved." : "Fate Engine disabled.";
+  feedback.value = fateForm.enabled ? "Fate 裁定规则已保存。" : "Fate 裁定已关闭。";
 }
 </script>
 
@@ -533,119 +534,119 @@ async function saveFateConfig() {
   <section class="page">
     <div class="section-title">
       <div>
-        <p class="eyebrow">Creator Studio</p>
-        <h2>Draft, Validate, Preview</h2>
+        <p class="eyebrow">创作工作台</p>
+        <h2>草稿、校验、预览</h2>
       </div>
       <button class="secondary-button" :disabled="!selectedStory || selectedStoryDeleted" @click="runPreview()">
         <Play :size="16" />
-        Mock Preview
+        模拟预览
       </button>
     </div>
 
     <div class="page-grid">
       <div class="field-grid">
         <form class="panel field-grid" @submit.prevent="createDraft">
-          <h3><PenTool :size="17" /> New Storyline</h3>
+          <h3><PenTool :size="17" /> 新建故事线</h3>
           <label class="field-box">
-            <span>Storyline title</span>
+            <span>故事线标题</span>
             <input v-model="createForm.title" class="input" required placeholder="例如：苍白学院" />
           </label>
           <label class="field-box">
-            <span>Tagline</span>
+            <span>一句话钩子</span>
             <input v-model="createForm.tagline" class="input" placeholder="一句能让玩家开始的钩子" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <textarea v-model="createForm.summary" class="textarea" placeholder="世界、冲突、玩家身份" />
           </label>
           <label class="field-box">
-            <span>Main character</span>
+            <span>主角色</span>
             <input v-model="createForm.characterName" class="input" required placeholder="原创角色名" />
           </label>
           <label class="field-box">
-            <span>Opening scene</span>
+            <span>开场场景</span>
             <textarea v-model="createForm.opening" class="textarea" placeholder="第一幕开场文本" />
           </label>
-          <button class="primary-button" type="submit">Save New Draft</button>
+          <button class="primary-button" type="submit">保存新草稿</button>
         </form>
 
         <form v-if="selectedStory" class="panel field-grid" @submit.prevent="saveEdits">
-          <h3>Edit Package</h3>
+          <h3>编辑内容包</h3>
           <label class="field-box">
-            <span>Select package</span>
+            <span>选择内容包</span>
             <select v-model="selectedStoryId" class="select">
-              <optgroup label="Active packages">
+              <optgroup label="可用内容包">
                 <option v-for="story in store.storylines" :key="story.id" :value="story.id">{{ story.title }}</option>
               </optgroup>
-              <optgroup v-if="store.trashedStorylines.length" label="Trash">
-                <option v-for="story in store.trashedStorylines" :key="story.id" :value="story.id">{{ story.title }} (trashed)</option>
+              <optgroup v-if="store.trashedStorylines.length" label="废纸篓">
+                <option v-for="story in store.trashedStorylines" :key="story.id" :value="story.id">{{ story.title }}（已移入废纸篓）</option>
               </optgroup>
             </select>
           </label>
           <div v-if="selectedStoryDeleted" class="field-box">
-            <strong>In Trash</strong>
-            <span class="muted">This package is hidden from Library, search, start flow and sync-ready indexes until restored.</span>
+            <strong>位于废纸篓</strong>
+            <span class="muted">恢复之前，此内容包会从内容库、搜索、启动流程和同步就绪索引中隐藏。</span>
           </div>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Title</span>
+              <span>标题</span>
               <input v-model="editForm.title" class="input" />
             </label>
             <label class="field-box" style="width: 170px">
-              <span>Rating</span>
+              <span>分级</span>
               <select v-model="editForm.rating" class="select">
                 <option value="SFW">SFW</option>
                 <option value="M17">M17</option>
-                <option value="AdultLocked">AdultLocked</option>
+                <option value="AdultLocked">成人锁定</option>
               </select>
             </label>
           </div>
           <label class="field-box">
-            <span>Tagline</span>
+            <span>一句话钩子</span>
             <input v-model="editForm.tagline" class="input" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <textarea v-model="editForm.summary" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Premise</span>
+            <span>前提</span>
             <textarea v-model="editForm.premise" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Player role</span>
+            <span>玩家身份</span>
             <input v-model="editForm.playerRole" class="input" />
           </label>
           <label class="field-box">
-            <span>World rules</span>
+            <span>世界规则</span>
             <textarea v-model="editForm.worldRules" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Tags</span>
+            <span>标签</span>
             <input v-model="editForm.tags" class="input" />
           </label>
-          <h3>Version & Changelog</h3>
+          <h3>版本与变更记录</h3>
           <div class="row">
             <label class="field-box" style="width: 170px">
-              <span>Version</span>
+              <span>版本</span>
               <input v-model="editForm.version" class="input" placeholder="0.1.0" />
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Changelog</span>
-              <input v-model="editForm.changelog" class="input" placeholder="What changed in this draft" />
+              <span>变更记录</span>
+              <input v-model="editForm.changelog" class="input" placeholder="这次草稿改了什么" />
             </label>
           </div>
-          <h3>Primary Character</h3>
+          <h3>主角色</h3>
           <label class="field-box">
-            <span>Name</span>
+            <span>姓名</span>
             <input v-model="editForm.characterName" class="input" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <textarea v-model="editForm.characterSummary" class="textarea" />
           </label>
           <label class="field-box">
-            <span>Profile</span>
+            <span>档案</span>
             <textarea v-model="editForm.characterProfile" class="textarea" />
           </label>
           <label class="field-box">
@@ -653,113 +654,113 @@ async function saveFateConfig() {
             <input v-model="editForm.characterTone" class="input" />
           </label>
           <label class="field-box">
-            <span>Goals</span>
+            <span>目标</span>
             <input v-model="editForm.characterGoals" class="input" />
           </label>
-          <h3>Primary Scenario</h3>
+          <h3>主场景</h3>
           <label class="field-box">
-            <span>Title</span>
+            <span>标题</span>
             <input v-model="editForm.scenarioTitle" class="input" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <input v-model="editForm.scenarioSummary" class="input" />
           </label>
           <label class="field-box">
-            <span>Location</span>
+            <span>地点</span>
             <input v-model="editForm.scenarioLocation" class="input" />
           </label>
           <label class="field-box">
-            <span>Opening</span>
+            <span>开场</span>
             <textarea v-model="editForm.scenarioOpening" class="textarea" />
           </label>
           <div class="row">
-            <button class="primary-button" type="submit" :disabled="selectedStoryDeleted">Save Edits</button>
+            <button class="primary-button" type="submit" :disabled="selectedStoryDeleted">保存编辑</button>
             <button v-if="!selectedStoryDeleted" class="ghost-button" type="button" @click="trashSelectedStory">
-              Move to Trash
+              移入废纸篓
             </button>
             <button v-else class="ghost-button" type="button" @click="restoreSelectedStory">
-              Restore Package
+              恢复内容包
             </button>
           </div>
         </form>
       </div>
 
       <aside class="panel field-grid">
-        <h3>Validation</h3>
+        <h3>校验</h3>
         <p v-if="feedback" class="status-pill provider">{{ feedback }}</p>
         <p v-if="draftDirty || lastAutosaveAt" class="muted">
-          {{ draftDirty ? "Unsaved local edits" : `Last autosave ${lastAutosaveAt}` }}
+          {{ draftDirty ? "本地编辑尚未保存" : `上次自动保存 ${lastAutosaveAt}` }}
         </p>
         <div v-if="selectedStory" class="field-box">
           <strong>{{ selectedStory.title }}</strong>
-          <span class="muted">{{ selectedStory.version.version }} / {{ selectedStory.version.status }} / {{ selectedStory.moderation.state }} / {{ selectedStory.moderation.rating }}{{ selectedStory.deletedAt ? ` / trashed ${selectedStory.deletedAt}` : "" }}</span>
+          <span class="muted">{{ selectedStory.version.version }} / {{ labelFor(selectedStory.version.status) }} / {{ labelFor(selectedStory.moderation.state) }} / {{ selectedStory.moderation.rating }}{{ selectedStory.deletedAt ? ` / 已移入废纸篓 ${selectedStory.deletedAt}` : "" }}</span>
           <div class="cluster">
             <button class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="exportSelectedPackage">
               <Download :size="16" />
-              Export Story Package
+              导出故事内容包
             </button>
             <label class="ghost-button" style="cursor: pointer">
               <Upload :size="16" />
-              Import Story Package
+              导入故事内容包
               <input type="file" accept="application/json,.json,.evolvria.json" hidden @change="importStorylinePackage" />
             </label>
           </div>
           <span v-if="store.lastStorylinePackageExportPath" class="muted">
-            Last story package: {{ store.lastStorylinePackageExportPath }}
+            最近故事内容包：{{ store.lastStorylinePackageExportPath }}
           </span>
           <span v-if="store.lastImportMessage" class="muted">{{ store.lastImportMessage }}</span>
         </div>
         <div class="field-grid">
           <div v-for="issue in validationIssues" :key="`${issue.field}-${issue.message}`" class="field-box">
-            <strong>{{ issue.severity }}: {{ issue.field }}</strong>
+            <strong>{{ labelFor(issue.severity) }}：{{ issue.field }}</strong>
             <span class="muted">{{ issue.message }}</span>
           </div>
           <div v-if="!validationIssues.length" class="field-box">
-            <strong>Ready</strong>
-            <span class="muted">No validation issues.</span>
+            <strong>就绪</strong>
+            <span class="muted">没有校验问题。</span>
           </div>
         </div>
 
-        <div class="field-grid" aria-label="Prompt Preview">
-          <h3>Prompt Preview</h3>
-          <span v-if="promptPreviewContractVersion" class="muted">Contract {{ promptPreviewContractVersion }}</span>
+        <div class="field-grid" aria-label="提示词预览">
+          <h3>提示词预览</h3>
+          <span v-if="promptPreviewContractVersion" class="muted">契约 {{ promptPreviewContractVersion }}</span>
           <div v-if="promptPreviewLayers.length" class="prompt-preview">
             <details v-for="layer in promptPreviewLayers" :key="layer.name" class="field-box">
               <summary>
                 {{ layer.title }}
-                <span class="muted">priority {{ layer.priority }} · {{ layer.locked ? "locked" : "memory" }}</span>
+                <span class="muted">优先级 {{ layer.priority }} · {{ layer.locked ? "锁定" : "记忆" }}</span>
               </summary>
               <pre>{{ layer.content }}</pre>
             </details>
           </div>
           <div v-else class="field-box">
-            <strong>Preview unavailable</strong>
-            <span class="muted">Select an active package with at least one scenario and persona.</span>
+            <strong>暂不可预览</strong>
+            <span class="muted">请选择至少包含一个场景和玩家档案的可用内容包。</span>
           </div>
         </div>
 
         <label class="secondary-button" :style="{ cursor: selectedStoryDeleted ? 'not-allowed' : 'pointer' }">
           <FileImage :size="16" />
-          Import Media
+          导入媒体
           <input type="file" accept="image/*,audio/*,video/*" hidden :disabled="selectedStoryDeleted" @change="onMediaSelected" />
         </label>
 
         <form v-if="selectedStory" class="field-grid native-import-box" @submit.prevent="importNativeMedia">
-          <h3>Native Asset Import</h3>
+          <h3>本地素材导入</h3>
           <label class="field-box">
-            <span>Native asset path</span>
+            <span>本地素材路径</span>
             <input v-model="nativeImportForm.path" class="input" placeholder="/Users/me/Pictures/cover.png" />
           </label>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Purpose</span>
+              <span>用途</span>
               <select v-model="nativeImportForm.purpose" class="select">
-                <option value="cover">cover</option>
-                <option value="avatar">avatar</option>
-                <option value="background">background</option>
-                <option value="sprite">sprite</option>
-                <option value="reference">reference</option>
+                <option value="cover">封面</option>
+                <option value="avatar">头像</option>
+                <option value="background">背景</option>
+                <option value="sprite">立绘</option>
+                <option value="reference">参考</option>
               </select>
             </label>
             <label class="field-box" style="flex: 1">
@@ -772,10 +773,10 @@ async function saveFateConfig() {
           </div>
           <div class="row">
             <button class="secondary-button" type="submit" :disabled="selectedStoryDeleted || !nativeImportForm.path.trim()">
-              Import Native Asset
+              导入本地素材
             </button>
             <button class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="pickNativeMedia">
-              Pick Native Asset
+              选择本地素材
             </button>
             <button class="ghost-button" type="button" :disabled="selectedStoryDeleted || !nativeImportForm.path.trim()" @click="importNativeVoiceReference">
               <FileAudio :size="16" />
@@ -786,152 +787,152 @@ async function saveFateConfig() {
               选择本地语音
             </button>
           </div>
-          <p class="muted small">Desktop imports copy files into the workspace assets folder; browser fallback still uses non-portable file references.</p>
+          <p class="muted small">桌面端导入会把文件复制到工作区 assets 文件夹；浏览器预览仍使用不可移植的文件引用。</p>
         </form>
 
         <div class="field-grid">
           <div v-for="asset in selectedMedia" :key="asset.id" class="field-box">
-            <strong>{{ asset.purpose }} / {{ asset.kind }}</strong>
-            <span class="muted">{{ asset.mimeType }} · {{ asset.sizeBytes }} bytes</span>
+            <strong>{{ mediaPurposeLabel(asset.purpose) }} / {{ mediaKindLabel(asset.kind) }}</strong>
+            <span class="muted">{{ asset.mimeType }} · {{ asset.sizeBytes }} 字节</span>
             <label class="field-box">
-              <span>Alt text</span>
+              <span>替代文本</span>
               <input v-model="mediaDraft(asset).altText" class="input" placeholder="描述画面内容和用途" />
             </label>
             <div class="row">
               <label class="field-box" style="flex: 1">
-                <span>Source</span>
+                <span>来源</span>
                 <select v-model="mediaDraft(asset).sourceKind" class="select">
-                  <option value="original">original</option>
-                  <option value="generated">generated</option>
-                  <option value="imported">imported</option>
-                  <option value="placeholder">placeholder</option>
+                  <option value="original">原创</option>
+                  <option value="generated">生成</option>
+                  <option value="imported">导入</option>
+                  <option value="placeholder">占位</option>
                 </select>
               </label>
               <label class="field-box" style="flex: 1">
-                <span>License</span>
+                <span>授权</span>
                 <select v-model="mediaDraft(asset).licenseKind" class="select">
-                  <option value="owned">owned</option>
-                  <option value="cc0">cc0</option>
-                  <option value="licensed">licensed</option>
-                  <option value="unknown">unknown</option>
+                  <option value="owned">自有</option>
+                  <option value="cc0">CC0</option>
+                  <option value="licensed">已授权</option>
+                  <option value="unknown">未知</option>
                 </select>
               </label>
             </div>
             <label class="field-box">
-              <span>Source label</span>
+              <span>来源标签</span>
               <input v-model="mediaDraft(asset).sourceLabel" class="input" placeholder="原创作者、生成工具、素材库或导入来源" />
             </label>
             <label class="field-box">
-              <span>Source URL</span>
+              <span>来源 URL</span>
               <input v-model="mediaDraft(asset).sourceUrl" class="input" placeholder="可选，用于素材来源追溯" />
             </label>
             <label class="field-box">
-              <span>License note</span>
+              <span>授权说明</span>
               <textarea v-model="mediaDraft(asset).licenseNote" class="textarea" placeholder="授权范围、生成提示摘要或归属说明" />
             </label>
             <div class="row">
               <button class="secondary-button" type="button" :disabled="selectedStoryDeleted" @click="saveMediaMetadata(asset)">
-                Save Metadata
+                保存元数据
               </button>
               <button v-if="asset.kind === 'image'" class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="generateThumbnail(asset)">
                 <FileImage :size="16" />
-                Generate Thumbnail
+                生成缩略图
               </button>
               <button v-if="asset.license.kind === 'unknown'" class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="store.confirmMediaLicense(asset.id)">
                 <ShieldCheck :size="16" />
-                Quick Confirm
+                快速确认
               </button>
             </div>
-            <span v-if="asset.variants.length" class="muted">{{ asset.variants.length }} variant(s) generated</span>
+            <span v-if="asset.variants.length" class="muted">已生成 {{ asset.variants.length }} 个变体</span>
           </div>
         </div>
 
         <form v-if="selectedStory" class="field-grid" @submit.prevent="saveFateConfig">
-          <h3><Dices :size="17" /> Fate Engine</h3>
+          <h3><Dices :size="17" /> Fate 裁定引擎</h3>
           <label class="field-box">
-            <span>Enabled</span>
+            <span>启用</span>
             <select v-model="fateForm.enabled" class="select">
-              <option :value="true">enabled</option>
-              <option :value="false">disabled</option>
+              <option :value="true">启用</option>
+              <option :value="false">关闭</option>
             </select>
           </label>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Dice</span>
+              <span>骰子</span>
               <select v-model="fateForm.dice" class="select">
                 <option value="d20">d20</option>
                 <option value="2d6">2d6</option>
-                <option value="percentile">percentile</option>
-                <option value="custom">custom</option>
+                <option value="percentile">百分骰</option>
+                <option value="custom">自定义</option>
               </select>
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Visibility</span>
+              <span>可见性</span>
               <select v-model="fateForm.visibility" class="select">
-                <option value="hidden">hidden</option>
-                <option value="summary">summary</option>
-                <option value="full">full</option>
+                <option value="hidden">隐藏</option>
+                <option value="summary">摘要</option>
+                <option value="full">完整</option>
               </select>
             </label>
           </div>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Easy target</span>
+              <span>简单目标</span>
               <input v-model.number="fateForm.difficultyEasy" class="input" type="number" min="2" max="100" />
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Standard target</span>
+              <span>标准目标</span>
               <input v-model.number="fateForm.difficultyStandard" class="input" type="number" min="2" max="100" />
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Hard target</span>
+              <span>困难目标</span>
               <input v-model.number="fateForm.difficultyHard" class="input" type="number" min="2" max="100" />
             </label>
           </div>
           <label class="field-box">
-            <span>Attribute</span>
+            <span>属性</span>
             <input v-model="fateForm.attributeName" class="input" placeholder="例如：意志" />
           </label>
           <label class="field-box">
-            <span>Attribute description</span>
+            <span>属性描述</span>
             <textarea v-model="fateForm.attributeDescription" class="textarea" placeholder="该属性如何影响裁定" />
           </label>
           <label class="field-box">
-            <span>Default modifier</span>
+            <span>默认修正值</span>
             <input v-model.number="fateForm.attributeDefaultValue" class="input" type="number" min="-5" max="20" />
           </label>
           <label class="field-box">
-            <span>Skill</span>
+            <span>技能</span>
             <input v-model="fateForm.skillName" class="input" placeholder="例如：读势" />
           </label>
           <label class="field-box">
-            <span>Skill description</span>
+            <span>技能描述</span>
             <textarea v-model="fateForm.skillDescription" class="textarea" placeholder="技能触发条件或叙事用途" />
           </label>
           <label class="field-box">
-            <span>Consequence label</span>
+            <span>后果标签</span>
             <input v-model="fateForm.consequenceLabel" class="input" placeholder="例如：危机时钟" />
           </label>
           <label class="field-box">
-            <span>Consequence description</span>
+            <span>后果描述</span>
             <textarea v-model="fateForm.consequenceDescription" class="textarea" placeholder="失败或部分成功时怎样改变事实" />
           </label>
           <button class="secondary-button" type="submit" :disabled="selectedStoryDeleted">
             <Dices :size="16" />
-            Save Fate Rules
+            保存 Fate 规则
           </button>
         </form>
 
         <form v-if="selectedStory" class="field-grid" @submit.prevent="addCharacter">
-          <h3><UserPlus :size="17" /> Character Editor</h3>
+          <h3><UserPlus :size="17" /> 角色编辑器</h3>
           <div class="field-grid">
             <div v-for="character in selectedCharacters" :key="character.id" class="field-box">
               <strong>{{ character.name }}</strong>
-              <span class="muted">{{ character.subtitle || "No subtitle" }} · {{ character.summary }}</span>
+              <span class="muted">{{ character.subtitle || "无副标题" }} · {{ character.summary }}</span>
               <template v-if="character.voice.referenceAssetId">
                 <span class="muted">语音参考：{{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.altText }}</span>
                 <span class="muted">
-                  授权：{{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.license.kind }}
+                  授权：{{ labelFor(store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.license.kind) }}
                   · {{ store.envelope.entities.mediaAssets[character.voice.referenceAssetId]?.source.label }}
                 </span>
                 <button
@@ -953,33 +954,33 @@ async function saveFateConfig() {
             </div>
           </div>
           <label class="field-box">
-            <span>New character name</span>
+            <span>新角色姓名</span>
             <input v-model="addCharacterForm.name" class="input" required placeholder="例如：米娅" />
           </label>
           <label class="field-box">
-            <span>Subtitle</span>
+            <span>副标题</span>
             <input v-model="addCharacterForm.subtitle" class="input" placeholder="角色身份或短称" />
           </label>
           <div class="row">
             <label class="field-box" style="flex: 1">
-              <span>Role in cast</span>
+              <span>阵容定位</span>
               <input v-model="addCharacterForm.role" class="input" required placeholder="向导、对手、见证人..." />
             </label>
             <label class="field-box" style="flex: 1">
-              <span>Goals</span>
+              <span>目标</span>
               <input v-model="addCharacterForm.goals" class="input" required placeholder="守住秘密，找到失物" />
             </label>
           </div>
           <label class="field-box">
-            <span>Relationship seed</span>
+            <span>关系种子</span>
             <input v-model="addCharacterForm.relationshipSeed" class="input" required placeholder="与玩家或主角的初始关系" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <textarea v-model="addCharacterForm.summary" class="textarea" required placeholder="角色的一句话概念" />
           </label>
           <label class="field-box">
-            <span>Profile</span>
+            <span>档案</span>
             <textarea v-model="addCharacterForm.profile" class="textarea" required placeholder="身份、动机、冲突、边界" />
           </label>
           <label class="field-box">
@@ -988,47 +989,47 @@ async function saveFateConfig() {
           </label>
           <button class="secondary-button" type="submit" :disabled="selectedStoryDeleted">
             <UserPlus :size="16" />
-            Add Character
+            添加角色
           </button>
         </form>
 
         <form v-if="selectedStory" class="field-grid" @submit.prevent="addScenario">
-          <h3><PlusCircle :size="17" /> Scenario Editor</h3>
+          <h3><PlusCircle :size="17" /> 场景编辑器</h3>
           <div class="field-grid">
             <div v-for="scenario in selectedScenarios" :key="scenario.id" class="field-box">
               <strong>{{ scenario.order }}. {{ scenario.title }}</strong>
-              <span class="muted">{{ scenario.location || "No fixed location" }} · {{ scenario.summary }}</span>
+              <span class="muted">{{ scenario.location || "无固定地点" }} · {{ scenario.summary }}</span>
               <button class="ghost-button" type="button" :disabled="selectedStoryDeleted" @click="runPreview(scenario.id)">
                 <Play :size="16" />
-                Preview
+                预览
               </button>
             </div>
           </div>
           <label class="field-box">
-            <span>New scenario title</span>
+            <span>新场景标题</span>
             <input v-model="addScenarioForm.title" class="input" required placeholder="例如：钟楼第二次敲响" />
           </label>
           <label class="field-box">
-            <span>Summary</span>
+            <span>摘要</span>
             <input v-model="addScenarioForm.summary" class="input" required placeholder="这个入口的冲突和目标" />
           </label>
           <label class="field-box">
-            <span>Location</span>
+            <span>地点</span>
             <input v-model="addScenarioForm.location" class="input" placeholder="可选" />
           </label>
           <label class="field-box">
-            <span>Opening prompt</span>
+            <span>开场提示</span>
             <textarea v-model="addScenarioForm.opening" class="textarea" required placeholder="玩家进入该入口时看到的第一幕" />
           </label>
           <button class="secondary-button" type="submit" :disabled="selectedStoryDeleted">
             <PlusCircle :size="16" />
-            Add Scenario
+            添加场景
           </button>
         </form>
 
         <button class="primary-button" :disabled="!selectedStory || selectedStoryDeleted || !canReady" @click="markReady">
           <CheckCircle2 :size="16" />
-          Mark local_ready
+          标记本地就绪
         </button>
       </aside>
     </div>
